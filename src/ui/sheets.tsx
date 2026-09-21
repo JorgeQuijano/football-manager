@@ -1,6 +1,16 @@
 import { useRef, useState } from "react";
-import type { Position } from "@/engine";
-import { isAvailable, overallFor, squadOf, suitability } from "@/engine";
+import type { Player, Position, RoleId } from "@/engine";
+import {
+  autoLineup,
+  defaultRoleFor,
+  isAvailable,
+  overallFor,
+  ROLE_DEFS,
+  ROLE_GROUPS,
+  slotScoreFor,
+  squadOf,
+  suitability
+} from "@/engine";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -122,7 +132,7 @@ export function SettingsSheet({
                 table at the end of the season wins the league.
               </p>
               <p>
-                Set your line-up and mentality in Tactics, then hit Continue to
+                Set your line-up, roles and mentality in Tactics, then hit Continue to
                 play the next match. The game saves automatically on this device.
               </p>
             </div>
@@ -264,29 +274,81 @@ export function PlayerPickerSheet({
   const game = useGame((s) => s.game)!;
   const assignPlayer = useGame((s) => s.assignPlayer);
   const clearSlot = useGame((s) => s.clearSlot);
+  const setRole = useGame((s) => s.setRole);
 
   const squad = squadOf(game.players, game.userClubId);
   const lineup = game.lineup;
-  const current = picker
-    ? (picker.kind === "xi" ? lineup.starters : lineup.bench)[picker.index]
-    : null;
+  const isXi = picker?.kind === "xi";
   const slotPos: Position = picker?.slotPos ?? "MF";
+  const role: RoleId = isXi && picker
+    ? lineup.roles[picker.index] ?? defaultRoleFor(slotPos)
+    : defaultRoleFor(slotPos);
+  const currentId = picker
+    ? (picker.kind === "xi" ? lineup.starters : lineup.bench)[picker.index] 
+    : null;
+  const current = currentId ? squad.find((p) => p.id === currentId) : undefined;
+
   const sorted = [...squad].sort(
-    (a, b) =>
-      overallFor(b) * suitability(b, slotPos) - overallFor(a) * suitability(a, slotPos)
+    (a, b) => slotScoreFor(b, slotPos, role) - slotScoreFor(a, slotPos, role)
   );
+  const topId = sorted[0]?.id;
   const inLineup = new Set(
     [...lineup.starters, ...lineup.bench].filter((id): id is string => id !== null)
   );
+
+  const fx = game.fixtures.find(
+    (f) => !f.played && (f.homeId === game.userClubId || f.awayId === game.userClubId)
+  );
+  const oppClub = fx
+    ? game.clubs.find((c) => c.id === (fx.homeId === game.userClubId ? fx.awayId : fx.homeId))
+    : undefined;
+  let oppLine = "";
+  if (oppClub) {
+    const oppSquad = squadOf(game.players, oppClub.id);
+    const ol = autoLineup(oppSquad, oppClub.formation);
+    const oppXi = ol.starters
+      .map((id) => (id ? oppSquad.find((p) => p.id === id) : undefined))
+      .filter((p): p is Player => !!p);
+    const avg = oppXi.length
+      ? Math.round(oppXi.reduce((a, p) => a + overallFor(p), 0) / oppXi.length)
+      : 0;
+    oppLine = `${oppClub.short} next (avg ${avg})`;
+  }
 
   return (
     <Sheet open={!!picker} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="bottom" className="max-h-[80vh] overflow-y-auto">
         <SheetHeader>
           <SheetTitle>Pick a player</SheetTitle>
-          <SheetDescription>{slotPos} slot — best fits first</SheetDescription>
+          <SheetDescription>
+            {slotPos} slot — best fits first{oppLine ? ` · ${oppLine}` : ""}
+          </SheetDescription>
         </SheetHeader>
         <div className="space-y-1.5 px-4 pb-8">
+          {isXi && picker && (
+            <div className="mb-2 space-y-1">
+              <div className="flex gap-1.5">
+                {ROLE_GROUPS[slotPos].map((r) => (
+                  <button
+                    key={r}
+                    data-testid={`role-${r}`}
+                    onClick={() => setRole(picker.index, r)}
+                    className={`flex-1 rounded-lg border px-1 py-2 text-[11px] font-bold ${
+                      role === r
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-border text-muted-foreground"
+                    }`}
+                  >
+                    {ROLE_DEFS[r].label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Role: {ROLE_DEFS[role].label} — changes how the engine rates this slot
+              </p>
+            </div>
+          )}
+
           {current && (
             <button
               className="w-full rounded-lg border border-dashed border-border px-3 py-2 text-left text-xs font-semibold text-muted-foreground"
@@ -298,9 +360,14 @@ export function PlayerPickerSheet({
               Remove current player
             </button>
           )}
+
           {sorted.map((p) => {
             const available = isAvailable(p);
             const fitted = inLineup.has(p.id);
+            const isCurrent = current ? p.id === current.id : false;
+            const delta =
+              current && !isCurrent ? overallFor(p) - overallFor(current) : null;
+            const topPick = p.id === topId && !isCurrent;
             return (
               <button
                 key={p.id}
@@ -310,15 +377,27 @@ export function PlayerPickerSheet({
                   if (picker) assignPlayer(picker.kind, picker.index, p.id);
                   onClose();
                 }}
-                className={`flex w-full items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-left ${
-                  available ? "active:bg-secondary" : "opacity-40"
-                }`}
+                className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left ${
+                  isCurrent ? "border-primary/60" : "border-border"
+                } ${available ? "active:bg-secondary" : "opacity-40"}`}
               >
                 <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${posChip[p.pos]}`}>
                   {p.pos}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold">{p.name}</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate text-sm font-semibold">{p.name}</span>
+                    {topPick && (
+                      <span className="shrink-0 rounded bg-primary/15 px-1 py-0.5 text-[9px] font-bold text-primary">
+                        Top pick
+                      </span>
+                    )}
+                    {isCurrent && (
+                      <span className="shrink-0 rounded bg-secondary px-1 py-0.5 text-[9px] font-bold text-muted-foreground">
+                        In slot
+                      </span>
+                    )}
+                  </span>
                   <span className="text-[11px] text-muted-foreground">
                     {fitted ? "In line-up · " : ""}
                     {p.injuredWeeks > 0
@@ -326,6 +405,10 @@ export function PlayerPickerSheet({
                       : p.suspension > 0
                         ? "Suspended"
                         : `Cond ${p.condition}%`}
+                    {` · Fit ${Math.round(suitability(p, slotPos) * 100)}%`}
+                    {delta !== null && current
+                      ? ` · Δ ${delta >= 0 ? "+" : ""}${delta}`
+                      : ""}
                   </span>
                 </span>
                 <span className="text-sm font-extrabold tnum">{overallFor(p)}</span>

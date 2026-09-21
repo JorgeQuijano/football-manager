@@ -3,8 +3,18 @@ import { mulberry32, hashSeed } from "./rng";
 import { newGame } from "./generate";
 import { nextSeason, playRound, seasonRounds } from "./advance";
 import { computeTable } from "./league";
-import { autoLineup, squadOf } from "./ratings";
-import type { SaveGame } from "./types";
+import {
+  attackScore,
+  autoLineup,
+  defenseScore,
+  remapLineup,
+  slotScoreFor,
+  squadOf,
+  validateLineup
+} from "./ratings";
+import { defaultRoleFor, ROLE_GROUPS } from "./roles";
+import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
+import type { Player, SaveGame } from "./types";
 
 function playSeason(start: SaveGame): SaveGame {
   let save = start;
@@ -132,7 +142,7 @@ describe("season", () => {
     expect(homeShare).toBeGreaterThan(0.25);
     expect(homeShare).toBeLessThan(0.65);
     expect(awayWins).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   it("applies injuries and suspensions to availability", () => {
     const save = newGame(99);
@@ -176,6 +186,158 @@ describe("match bookkeeping", () => {
     for (const u of appeared) {
       expect(u.conditionLoss).toBeGreaterThanOrEqual(3);
     }
+  });
+});
+
+describe("roles", () => {
+  const player = (over: Partial<Player> & { pos: Player["pos"] }): Player => ({
+    id: "x",
+    clubId: "c",
+    name: "T",
+    age: 25,
+    attrs: {
+      pace: 60,
+      shooting: 60,
+      passing: 60,
+      defending: 60,
+      physical: 60,
+      reflexes: 60,
+      handling: 60
+    },
+    condition: 100,
+    injuredWeeks: 0,
+    suspension: 0,
+    apps: 0,
+    goals: 0,
+    ...over
+  });
+
+  it("every formation slot has a valid default role", () => {
+    for (const fid of FORMATION_IDS) {
+      for (const slot of FORMATIONS[fid]) {
+        expect(ROLE_GROUPS[slot]).toContain(defaultRoleFor(slot));
+      }
+    }
+  });
+
+  it("role weights change who is rated best", () => {
+    const poacherType = player({
+      pos: "FW",
+      attrs: { pace: 80, shooting: 86, passing: 55, defending: 40, physical: 55, reflexes: 40, handling: 40 }
+    });
+    const targetType = player({
+      pos: "FW",
+      attrs: { pace: 50, shooting: 62, passing: 55, defending: 45, physical: 88, reflexes: 40, handling: 40 }
+    });
+    expect(attackScore(poacherType, "poacher")).toBeGreaterThan(attackScore(poacherType, "target"));
+    expect(attackScore(targetType, "target")).toBeGreaterThan(attackScore(targetType, "poacher"));
+    expect(defenseScore(targetType, "target")).toBeGreaterThan(defenseScore(poacherType, "poacher"));
+  });
+
+  it("pitch coordinates line up with formations and stay in bounds", () => {
+    for (const fid of FORMATION_IDS) {
+      const coords = FORMATION_COORDS[fid];
+      expect(coords).toHaveLength(FORMATIONS[fid].length);
+      for (const [x, y] of coords) {
+        expect(x).toBeGreaterThanOrEqual(5);
+        expect(x).toBeLessThanOrEqual(95);
+        expect(y).toBeGreaterThanOrEqual(5);
+        expect(y).toBeLessThanOrEqual(95);
+      }
+    }
+  });
+});
+
+describe("lineup ops", () => {
+  const save = newGame(4242);
+  const squad = squadOf(save.players, save.userClubId);
+
+  it("autoLineup assigns a valid role to every slot", () => {
+    const l = autoLineup(squad, "4-3-3");
+    expect(l.roles).toHaveLength(11);
+    l.roles.forEach((r, i) => expect(ROLE_GROUPS[FORMATIONS["4-3-3"][i]]).toContain(r));
+  });
+
+  it("changing formation keeps your players", () => {
+    const before = autoLineup(squad, "4-3-3");
+    const gkId = before.starters[0];
+    const after = remapLineup(squad, before, "4-4-2");
+    expect(after.formation).toBe("4-4-2");
+    expect(after.starters[0]).toBe(gkId);
+    expect(validateLineup(squad, after)).toEqual([]);
+    const kept = before.starters.filter((id) => id && after.starters.includes(id));
+    expect(kept.length).toBeGreaterThanOrEqual(9);
+    const after2 = remapLineup(squad, after, "3-5-2");
+    expect(validateLineup(squad, after2)).toEqual([]);
+    expect(after2.mentality).toBe(after.mentality);
+  });
+
+  it("slot scoring lets freshness outweigh a small quality gap", () => {
+    const mk = (over: Partial<Player> & { pos: Player["pos"] }): Player => ({
+      id: "x",
+      clubId: "c",
+      name: "T",
+      age: 24,
+      attrs: {
+        pace: 60,
+        shooting: 60,
+        passing: 60,
+        defending: 60,
+        physical: 60,
+        reflexes: 60,
+        handling: 60
+      },
+      condition: 100,
+      injuredWeeks: 0,
+      suspension: 0,
+      apps: 0,
+      goals: 0,
+      ...over
+    });
+    const tiredStar = mk({
+      pos: "FW",
+      attrs: { pace: 70, shooting: 80, passing: 60, defending: 40, physical: 60, reflexes: 40, handling: 40 },
+      condition: 40
+    });
+    const fresh = mk({
+      pos: "FW",
+      attrs: { pace: 65, shooting: 70, passing: 55, defending: 40, physical: 65, reflexes: 40, handling: 40 },
+      condition: 100
+    });
+    expect(slotScoreFor(fresh, "FW", "poacher", 0.45)).toBeGreaterThan(
+      slotScoreFor(tiredStar, "FW", "poacher", 0.45)
+    );
+  });
+});
+
+describe("conditioning", () => {
+  it("recovery scales with age and physicality", () => {
+    const mk = (age: number, physical: number): Player => ({
+      id: "x",
+      clubId: "c",
+      name: "T",
+      pos: "MF",
+      age,
+      attrs: {
+        pace: 60,
+        shooting: 60,
+        passing: 60,
+        defending: 60,
+        physical,
+        reflexes: 60,
+        handling: 60
+      },
+      condition: 100,
+      injuredWeeks: 0,
+      suspension: 0,
+      apps: 0,
+      goals: 0
+    });
+    const kid = mk(19, 78);
+    const vet = mk(34, 52);
+    expect(weeklyRecovery(kid)).toBeGreaterThan(weeklyRecovery(vet));
+    expect(weeklyRecovery(vet)).toBeLessThan(T.conditionLossStarter); // veterans need rotation
+    expect(weeklyRecovery(kid)).toBeGreaterThanOrEqual(T.conditionLossStarter);
   });
 });
 

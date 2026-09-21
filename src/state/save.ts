@@ -1,13 +1,27 @@
 import { del, get, set } from "idb-keyval";
 import type { SaveGame } from "@/engine";
+import { defaultRoleFor, FORMATIONS, ROLE_GROUPS } from "@/engine";
 
 const KEY = "fm-save-v1";
+
+/** Repair saves written by older versions: backfill missing or invalid slot roles. */
+export function normalizeSave(save: SaveGame): SaveGame {
+  const slots = FORMATIONS[save.lineup?.formation] ?? [];
+  if (slots.length) {
+    const roles = save.lineup.roles;
+    save.lineup.roles = slots.map((slot, i) => {
+      const r = roles?.[i];
+      return r && ROLE_GROUPS[slot].includes(r) ? r : defaultRoleFor(slot);
+    });
+  }
+  return save;
+}
 
 export async function loadSave(): Promise<SaveGame | null> {
   try {
     const raw = await get<SaveGame>(KEY);
     if (!raw || raw.saveVersion !== 1 || !Array.isArray(raw.players)) return null;
-    return raw;
+    return normalizeSave(raw);
   } catch {
     return null;
   }
@@ -44,7 +58,7 @@ export function parseSaveFile(text: string): SaveGame | null {
       Array.isArray(data.players) &&
       Array.isArray(data.fixtures)
     ) {
-      return data as SaveGame;
+      return normalizeSave(data as SaveGame);
     }
     return null;
   } catch {

@@ -5,11 +5,20 @@ import type {
   Mentality,
   Player,
   PlayerUpdate,
-  Position
+  Position,
+  RoleId
 } from "./types";
 import { pick, pickWeighted, randInt, type Rng } from "./rng";
 import { T } from "./tuning";
-import { attackScore, defenseScore, overallFor, suitability } from "./ratings";
+import {
+  attackScore,
+  attackStrength,
+  defenseScore,
+  defenseStrength,
+  overallFor,
+  suitability
+} from "./ratings";
+import { defaultRoleFor, ROLE_DEFS } from "./roles";
 
 export interface MatchInputs {
   round: number;
@@ -21,6 +30,8 @@ export interface MatchInputs {
   awayBench: Player[];
   homeMentality: Mentality;
   awayMentality: Mentality;
+  homeRoles: RoleId[];
+  awayRoles: RoleId[];
   rng: Rng;
 }
 
@@ -113,6 +124,11 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
     played.add(p.id);
   }
 
+  const roleOf = new Map<string, RoleId>();
+  inp.homeXI.forEach((p, i) => roleOf.set(p.id, inp.homeRoles[i] ?? defaultRoleFor(p.pos)));
+  inp.awayXI.forEach((p, i) => roleOf.set(p.id, inp.awayRoles[i] ?? defaultRoleFor(p.pos)));
+  const roleFor = (p: Player): RoleId => roleOf.get(p.id) ?? defaultRoleFor(p.pos);
+
   const upd = (p: Player): PlayerUpdate => {
     let u = updates.get(p.id);
     if (!u) {
@@ -130,25 +146,18 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
     return u;
   };
 
-  const cond = (p: Player) => 0.72 + 0.28 * (p.condition / 100);
+  const rolesOf = (s: Side): RoleId[] => s.xi.map((p) => roleFor(p));
 
-  const teamAtt = (s: Side, isHome: boolean) => {
-    const out = s.xi.filter((p) => p.pos !== "GK");
-    if (!out.length) return 25;
-    const mean = out.reduce((acc, p) => acc + attackScore(p) * cond(p), 0) / out.length;
-    return mean * T.mentality[s.mentality].att * (isHome ? T.homeAdvantage : 1);
-  };
-  const teamDef = (s: Side) => {
-    if (!s.xi.length) return 25;
-    const mean = s.xi.reduce((acc, p) => acc + defenseScore(p) * cond(p), 0) / s.xi.length;
-    return mean * T.mentality[s.mentality].def;
-  };
+  const teamAtt = (s: Side, isHome: boolean) =>
+    attackStrength(s.xi, rolesOf(s), s.mentality) * (isHome ? T.homeAdvantage : 1);
+  const teamDef = (s: Side) => defenseStrength(s.xi, rolesOf(s), s.mentality);
 
-  const enter = (s: Side, p: Player, minute: number) => {
+  const enter = (s: Side, p: Player, minute: number, role: RoleId) => {
     s.bench.splice(s.bench.indexOf(p), 1);
     s.xi.push(p);
     entryMinute.set(p.id, minute);
     played.add(p.id);
+    roleOf.set(p.id, role);
     s.subs++;
   };
 
@@ -172,11 +181,16 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
     const shooter = pickWeighted(
       rng,
       shooters,
-      (p) => (p.pos === "FW" ? 4 : p.pos === "MF" ? 2.4 : 0.7) * (0.5 + p.attrs.shooting / 100)
+      (p) =>
+        (p.pos === "FW" ? 4 : p.pos === "MF" ? 2.4 : 0.7) *
+        (0.5 + p.attrs.shooting / 100) *
+        ROLE_DEFS[roleFor(p)].shot
     );
     const gk = def.xi.find((p) => p.pos === "GK") ?? def.xi[0];
-    const finish = shooter.attrs.shooting * 0.7 + shooter.attrs.pace * 0.3;
-    const gkSkill = gk ? defenseScore(gk) : 50;
+    const finish =
+      (shooter.attrs.shooting * 0.7 + shooter.attrs.pace * 0.3) *
+      ROLE_DEFS[roleFor(shooter)].finish;
+    const gkSkill = gk ? defenseScore(gk, roleFor(gk)) : 50;
     let pGoal = T.conversionBase * (1 + (finish - 60) / 120) * (1 + (60 - gkSkill) / 160);
     pGoal = clamp(pGoal, 0.04, 0.3);
 
@@ -266,7 +280,7 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
 
   const processInjury = (s: Side, minute: number) => {
     if (!s.xi.length) return;
-    const victim = pick(rng, s.xi);
+    const victim = pickWeighted(rng, s.xi, (p) => 1 + Math.max(0, 80 - p.condition) / 50);
     const weeks = randInt(rng, T.injuryWeeks[0], T.injuryWeeks[1]);
     removeFromPitch(s, victim, minute);
     upd(victim).injuredWeeks = weeks;
@@ -280,7 +294,7 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
     if (s.subs < T.maxSubs) {
       const repl = pickFromBench(s, victim.pos);
       if (repl) {
-        enter(s, repl, minute);
+        enter(s, repl, minute, roleFor(victim));
         events.push({
           minute,
           type: "sub",
@@ -297,13 +311,12 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
     if (rng() < 0.5) return;
     const outfield = s.xi.filter((p) => p.pos !== "GK");
     if (!outfield.length) return;
-    const outP = outfield.reduce((worst, p) =>
-      attackScore(p) + defenseScore(p) < attackScore(worst) + defenseScore(worst) ? p : worst
-    );
+    const val = (p: Player) => attackScore(p, roleFor(p)) + defenseScore(p, roleFor(p));
+    const outP = outfield.reduce((worst, p) => (val(p) < val(worst) ? p : worst));
     const repl = pickFromBench(s, outP.pos);
     if (!repl) return;
     removeFromPitch(s, outP, minute);
-    enter(s, repl, minute);
+    enter(s, repl, minute, roleFor(outP));
     events.push({
       minute,
       type: "sub",

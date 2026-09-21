@@ -1,7 +1,16 @@
-import type { FormationId, Lineup, Player, Position } from "./types";
-import { BENCH_SLOTS, FORMATIONS } from "./tuning";
+import type {
+  FormationId,
+  Lineup,
+  Mentality,
+  Player,
+  Position,
+  RoleId
+} from "./types";
+import { BENCH_SLOTS, FORMATIONS, T } from "./tuning";
+import { defaultRoleFor, roleAttack, roleDefense, ROLE_GROUPS } from "./roles";
 
 const clamp = (v: number, lo = 1, hi = 99) => Math.round(Math.max(lo, Math.min(hi, v)));
+const cond = (p: Player) => 0.72 + 0.28 * (p.condition / 100);
 
 export function overallFor(p: Player): number {
   const a = p.attrs;
@@ -17,7 +26,9 @@ export function overallFor(p: Player): number {
   }
 }
 
-export function attackScore(p: Player): number {
+/** Attack contribution. With a role, uses the role's attribute weights. */
+export function attackScore(p: Player, role?: RoleId): number {
+  if (role) return roleAttack(p, role);
   const a = p.attrs;
   switch (p.pos) {
     case "GK":
@@ -31,7 +42,9 @@ export function attackScore(p: Player): number {
   }
 }
 
-export function defenseScore(p: Player): number {
+/** Defensive contribution. With a role, uses the role's attribute weights. */
+export function defenseScore(p: Player, role?: RoleId): number {
+  if (role) return roleDefense(p, role);
   const a = p.attrs;
   switch (p.pos) {
     case "GK":
@@ -45,6 +58,30 @@ export function defenseScore(p: Player): number {
   }
 }
 
+/** Team attack strength — mean of outfield contributions, condition- and mentality-adjusted. */
+export function attackStrength(players: Player[], roles: RoleId[], mentality: Mentality): number {
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < players.length; i++) {
+    const p = players[i];
+    if (p.pos === "GK") continue;
+    sum += attackScore(p, roles[i] ?? defaultRoleFor(p.pos)) * cond(p);
+    n++;
+  }
+  if (!n) return 25;
+  return (sum / n) * T.mentality[mentality].att;
+}
+
+/** Team defence strength — mean across the XI. */
+export function defenseStrength(players: Player[], roles: RoleId[], mentality: Mentality): number {
+  if (!players.length) return 25;
+  let sum = 0;
+  for (let i = 0; i < players.length; i++) {
+    sum += defenseScore(players[i], roles[i] ?? defaultRoleFor(players[i].pos)) * cond(players[i]);
+  }
+  return (sum / players.length) * T.mentality[mentality].def;
+}
+
 /** 1 = natural, lower = worse fit. Used for sorting pickers and auto-picks. */
 export function suitability(p: Player, slot: Position): number {
   if ((p.pos === "GK") !== (slot === "GK")) return 0.5;
@@ -54,23 +91,56 @@ export function suitability(p: Player, slot: Position): number {
   return d === 1 ? 0.92 : 0.85;
 }
 
+/**
+ * How good a player is for a specific slot + role + condition.
+ * Used by the picker ordering, "Top pick" badges and rest suggestions.
+ */
+export function slotScoreFor(p: Player, slot: Position, role?: RoleId, condWeight = 0.25): number {
+  const r = role ?? defaultRoleFor(slot);
+  const attW = slot === "FW" ? 0.7 : slot === "MF" ? 0.5 : slot === "DF" ? 0.3 : 0.05;
+  const base = attW * attackScore(p, r) + (1 - attW) * defenseScore(p, r);
+  return base * suitability(p, slot) * (1 - condWeight + condWeight * (p.condition / 100));
+}
+
 export function isAvailable(p: Player): boolean {
   return p.injuredWeeks === 0 && p.suspension === 0;
 }
 
-/** Fill every slot of a formation with the best available player for that slot. */
-export function autoLineup(players: Player[], formationId: FormationId): Lineup {
+export interface AutoPickOptions {
+  freshest?: boolean;
+  mentality?: Mentality;
+}
+
+/**
+ * Fill every slot of a formation with the best available player.
+ * `mentality` biases selection toward attack or defence; `freshest`
+ * weighs condition, for rotation after a heavy schedule.
+ */
+export function autoLineup(
+  players: Player[],
+  formationId: FormationId,
+  opts: AutoPickOptions = {}
+): Lineup {
   const slots = FORMATIONS[formationId];
   const avail = players.filter(isAvailable);
   const used = new Set<string>();
 
+  const scoreFor = (p: Player, slot: Position): number => {
+    let s = overallFor(p) * suitability(p, slot);
+    if (slot !== "GK" && (opts.mentality === "att" || opts.mentality === "def")) {
+      const mix = 0.45;
+      const r = defaultRoleFor(slot);
+      const sided = opts.mentality === "att" ? attackScore(p, r) : defenseScore(p, r);
+      s = (1 - mix) * s + mix * sided;
+    }
+    if (opts.freshest) s *= 0.55 + 0.45 * (p.condition / 100);
+    return s;
+  };
+
   const starters = slots.map((slot) => {
     const best = avail
       .filter((p) => !used.has(p.id))
-      .sort(
-        (x, y) =>
-          overallFor(y) * suitability(y, slot) - overallFor(x) * suitability(x, slot)
-      )[0];
+      .sort((x, y) => scoreFor(y, slot) - scoreFor(x, slot))[0];
     if (!best) return null;
     used.add(best.id);
     return best.id;
@@ -89,7 +159,9 @@ export function autoLineup(players: Player[], formationId: FormationId): Lineup 
   else if (benchGk) bench.push(benchGk.id);
   while (bench.length < BENCH_SLOTS) bench.push(null);
 
-  return { formation: formationId, starters, bench, mentality: "bal" };
+  const roles = slots.map((slot) => defaultRoleFor(slot));
+
+  return { formation: formationId, starters, bench, mentality: opts.mentality ?? "bal", roles };
 }
 
 /** Problems with a user lineup — empty slots, wrong GK count, unavailable players. */
@@ -115,6 +187,7 @@ export function validateLineup(players: Player[], lineup: Lineup): string[] {
 /**
  * Repair a lineup so it is playable: drop unavailable players, refill gaps with
  * the best available replacements. Used silently before simulating a match.
+ * Slot roles are preserved and normalized.
  */
 export function fixLineup(players: Player[], lineup: Lineup): Lineup {
   const byId = new Map(players.map((p) => [p.id, p]));
@@ -164,7 +237,58 @@ export function fixLineup(players: Player[], lineup: Lineup): Lineup {
     return null;
   });
 
-  return { ...lineup, starters: fixed, bench: filledBench };
+  const roles = slots.map((slot, i) => {
+    const r = lineup.roles?.[i];
+    return r && ROLE_GROUPS[slot].includes(r) ? r : defaultRoleFor(slot);
+  });
+
+  return { ...lineup, starters: fixed, bench: filledBench, roles };
+}
+
+/**
+ * Change formation while keeping the squad's players in place: players move to
+ * the same position in the new shape where possible, overflow drops to the
+ * bench, and only genuine gaps get auto-filled.
+ */
+export function remapLineup(players: Player[], lineup: Lineup, formationId: FormationId): Lineup {
+  const oldSlots = FORMATIONS[lineup.formation];
+  const newSlots = FORMATIONS[formationId];
+  const byId = new Map(players.map((p) => [p.id, p] as const));
+  const starters: (string | null)[] = newSlots.map(() => null);
+  const roles: RoleId[] = newSlots.map((slot) => defaultRoleFor(slot));
+  const used = new Set<number>();
+
+  for (let i = 0; i < newSlots.length; i++) {
+    const want = newSlots[i];
+    for (let j = 0; j < oldSlots.length; j++) {
+      if (used.has(j) || oldSlots[j] !== want) continue;
+      const id = lineup.starters[j];
+      if (!id || !byId.has(id)) continue;
+      starters[i] = id;
+      const carried = lineup.roles?.[j];
+      if (carried && ROLE_GROUPS[want].includes(carried)) roles[i] = carried;
+      used.add(j);
+      break;
+    }
+  }
+
+  // overflow players go to empty bench spots if there is room
+  const bench = [...lineup.bench];
+  for (let j = 0; j < oldSlots.length; j++) {
+    if (used.has(j)) continue;
+    const id = lineup.starters[j];
+    if (!id || !byId.has(id)) continue;
+    const empty = bench.indexOf(null);
+    if (empty >= 0) bench[empty] = id;
+  }
+
+  return fixLineup(players, {
+    formation: formationId,
+    starters,
+    bench,
+    mentality: lineup.mentality,
+    roles
+  });
 }
 
 export function squadOf(players: Player[], clubId: string): Player[] {

@@ -263,3 +263,10 @@ Rough effort shape (not a promise): M0 = 2–4 evenings · M1 ≈ 1 week · M2 =
 - `lfrmonteiro99/football_fantasy` — tick-based engine design notes (Laravel SSE backend; useful engine structure reference: causal event chains, fatigue, set pieces, commentary builder).
 - `NicholasHutfilz/boardroomfc` — Next.js + Supabase, AI-driven sim (backend-heavy).
 - Takeaway: existing OSS attempts lean backend-heavy; our MVP deliberately local-only, static-deployable.
+
+---
+
+## 8. Changelog
+
+- 2026-09-21 — MVP built & deployed (deterministic engine, mobile-first screens, PWA, GitHub Pages).
+- 2026-09-21 — **Tactics v2**: slot roles (11 roles, attribute-weighted attack/defense/shot/finish), real fitness loop (age/physical-based recovery, condition bars on chips, injury risk scales with fatigue), true per-formation pitch geometry with out-of-position flags, picker with role choice + Top pick/Δ-vs-incumbent/fit sorting, auto-pick menu (Best XI / Freshest XI), one-tap "Rest them" suggestions, team-strength strip vs next opponent.

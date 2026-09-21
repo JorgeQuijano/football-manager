@@ -1,9 +1,10 @@
-import type { Lineup, MatchResult, Player, SaveGame } from "./types";
+import type { Lineup, MatchResult, Player, RoleId, SaveGame } from "./types";
 import { hashSeed, mulberry32 } from "./rng";
 import { autoLineup, fixLineup, isAvailable, squadOf } from "./ratings";
+import { defaultRoleFor } from "./roles";
 import { buildFixtures } from "./league";
 import { simulateMatch } from "./match";
-import { T } from "./tuning";
+import { weeklyRecovery } from "./tuning";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -13,6 +14,7 @@ interface Resolved {
   xi: Player[];
   bench: Player[];
   mentality: "def" | "bal" | "att";
+  roles: RoleId[];
 }
 
 function resolveSide(save: SaveGame, clubId: string): Resolved {
@@ -25,16 +27,23 @@ function resolveSide(save: SaveGame, clubId: string): Resolved {
     lineup = autoLineup(squadOf(save.players, clubId), club.formation);
   }
   const byId = new Map(save.players.map((p) => [p.id, p] as const));
-  const xi = lineup.starters
-    .map((id) => (id ? byId.get(id) : undefined))
-    .filter((p): p is Player => !!p && isAvailable(p));
+  const xi: Player[] = [];
+  const roles: RoleId[] = [];
+  lineup.starters.slice(0, 11).forEach((id, i) => {
+    const p = id ? byId.get(id) : undefined;
+    if (p && isAvailable(p)) {
+      xi.push(p);
+      roles.push(lineup.roles[i] ?? defaultRoleFor(p.pos));
+    }
+  });
   const bench = lineup.bench
     .map((id) => (id ? byId.get(id) : undefined))
     .filter((p): p is Player => !!p && isAvailable(p));
   return {
     xi,
     bench,
-    mentality: clubId === save.userClubId ? save.lineup.mentality : "bal"
+    mentality: clubId === save.userClubId ? save.lineup.mentality : "bal",
+    roles
   };
 }
 
@@ -68,6 +77,8 @@ export function playRound(input: SaveGame): { save: SaveGame; userMatch?: MatchR
       awayBench: away.bench,
       homeMentality: home.mentality,
       awayMentality: away.mentality,
+      homeRoles: home.roles,
+      awayRoles: away.roles,
       rng
     });
 
@@ -96,7 +107,7 @@ export function playRound(input: SaveGame): { save: SaveGame; userMatch?: MatchR
   for (const p of save.players) {
     if (p.injuredWeeks > 0 && !playedIds.has(p.id)) p.injuredWeeks--;
     if (p.suspension > 0 && !playedIds.has(p.id)) p.suspension--;
-    p.condition = Math.min(100, p.condition + T.conditionRecovery);
+    p.condition = Math.min(100, p.condition + weeklyRecovery(p));
   }
 
   save.lastResults = results;

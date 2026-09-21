@@ -1,6 +1,18 @@
 export type Position = "GK" | "DF" | "MF" | "FW";
 export type Mentality = "def" | "bal" | "att";
 export type FormationId = "4-4-2" | "4-3-3" | "4-2-3-1" | "3-5-2" | "5-3-2";
+export type RoleId =
+  | "keeper"
+  | "sweeper"
+  | "stopper"
+  | "bpd"
+  | "wb"
+  | "b2b"
+  | "playmaker"
+  | "bwm"
+  | "poacher"
+  | "target"
+  | "presser";
 
 export interface PlayerAttrs {
   pace: number;
@@ -92,6 +104,7 @@ export interface Lineup {
   starters: (string | null)[]; // 11 slots
   bench: (string | null)[]; // 7 slots
   mentality: Mentality;
+  roles: RoleId[]; // one per starter slot
 }
 
 export interface TableRow {
