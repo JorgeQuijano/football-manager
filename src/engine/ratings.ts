@@ -286,6 +286,11 @@ export function remapLineup(
     if (empty >= 0) bench[empty] = id;
   }
 
+  // an explicit role on a target slot (custom formations) is the formation's intent
+  to.slots.forEach((slot, i) => {
+    if (slot.role && ROLE_GROUPS[slot.pos].includes(slot.role)) roles[i] = slot.role;
+  });
+
   return fixLineup(
     players,
     {

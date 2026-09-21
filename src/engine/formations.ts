@@ -1,6 +1,6 @@
-import type { FormationDef, FormationId, FormationSlot, RoleId } from "./types";
+import type { FormationDef, FormationId, FormationSlot, Position, RoleId } from "./types";
 import { FORMATIONS, FORMATION_COORDS, FORMATION_IDS } from "./tuning";
-import { laneFits } from "./roles";
+import { laneFits, ROLE_GROUPS } from "./roles";
 
 /** The five built-ins, materialized as full FormationDefs (pos + coordinates). */
 const BUILTIN: Record<FormationId, FormationDef> = Object.fromEntries(
@@ -49,6 +49,29 @@ export function scratchSlots(): FormationSlot[] {
 }
 
 /**
+ * The band of the pitch each position family may occupy.
+ * Keeps shapes sensible: defenders stay behind the halfway line, forwards up top.
+ */
+export const SLOT_ZONES: Record<
+  Position,
+  { xMin: number; xMax: number; yMin: number; yMax: number }
+> = {
+  GK: { xMin: 38, xMax: 62, yMin: 82, yMax: 94 },
+  DF: { xMin: 6, xMax: 94, yMin: 48, yMax: 90 },
+  MF: { xMin: 6, xMax: 94, yMin: 26, yMax: 72 },
+  FW: { xMin: 6, xMax: 94, yMin: 8, yMax: 48 }
+};
+
+/** Clamp a candidate position into the zone its position family is allowed to occupy. */
+export function clampToZone(pos: Position, x: number, y: number): { x: number; y: number } {
+  const z = SLOT_ZONES[pos];
+  return {
+    x: Math.round(Math.min(z.xMax, Math.max(z.xMin, x))),
+    y: Math.round(Math.min(z.yMax, Math.max(z.yMin, y)))
+  };
+}
+
+/**
  * Formation-aware default roles, index-aligned with each built-in's slots.
  * Wide slots get wide-lane roles, holding bands get holders, attacking bands
  * get creators — so auto-picked lineups arrive already shaped to the formation.
@@ -82,11 +105,13 @@ export function defaultRoleForSlot(slot: FormationSlot): RoleId {
 const slotLaneOf = (slot: FormationSlot): boolean =>
   slot.pos !== "GK" && Math.abs(slot.x - 50) >= 32;
 
-/** Resolve the default role line-up for any formation (built-in template or geometry). */
+/** Resolve the default role line-up for any formation (built-in template or geometry + slot roles). */
 export function roleTemplate(def: FormationDef): RoleId[] {
   const tpl = TEMPLATES[def.id as FormationId];
   if (tpl) return [...tpl];
-  return def.slots.map((s) => defaultRoleForSlot(s));
+  return def.slots.map((s) =>
+    s.role && ROLE_GROUPS[s.pos].includes(s.role) ? s.role : defaultRoleForSlot(s)
+  );
 }
 
 /** Every template role must be legal for its slot's group and lane — used by tests. */

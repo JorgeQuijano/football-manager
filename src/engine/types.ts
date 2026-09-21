@@ -121,6 +121,7 @@ export interface FormationSlot {
   pos: Position;
   x: number; // 0 = left touchline, 100 = right
   y: number; // 0 = opponent goal, 100 = own goal
+  role?: RoleId; // optional preferred role (custom formations — must belong to `pos`)
 }
 
 export interface FormationDef {

@@ -12,7 +12,7 @@ import {
   squadOf,
   validateLineup
 } from "./ratings";
-import { builtinFormation, resolveFormation, roleTemplate, scratchSlots, validateFormation, validateTemplate } from "./formations";
+import { builtinFormation, clampToZone, resolveFormation, roleTemplate, scratchSlots, SLOT_ZONES, validateFormation, validateTemplate } from "./formations";
 import { defaultRoleFor, laneFits, roleFinish, ROLE_DEFS, ROLE_GROUPS } from "./roles";
 import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
 import type { Player, SaveGame } from "./types";
@@ -460,6 +460,39 @@ describe("formations", () => {
     expect(tpl[2]).toBe("stopper");
     tpl.forEach((r, i) => expect(laneFits(r, def.slots[i])).toBe(true));
     expect(validateTemplate(def, tpl)).toEqual([]);
+  });
+
+  it("built-in slots sit inside their position zones, and clamping works", () => {
+    for (const fid of FORMATION_IDS) {
+      const def = builtinFormation(fid);
+      def.slots.forEach((slot) => {
+        const z = SLOT_ZONES[slot.pos];
+        expect(slot.x).toBeGreaterThanOrEqual(z.xMin);
+        expect(slot.x).toBeLessThanOrEqual(z.xMax);
+        expect(slot.y).toBeGreaterThanOrEqual(z.yMin);
+        expect(slot.y).toBeLessThanOrEqual(z.yMax);
+      });
+    }
+    expect(clampToZone("DF", 50, 20).y).toBe(48);
+    expect(clampToZone("FW", 50, 80).y).toBe(48);
+    expect(clampToZone("GK", 10, 50)).toEqual({ x: 38, y: 82 });
+    expect(clampToZone("MF", 150, -5)).toEqual({ x: 94, y: 26 });
+  });
+
+  it("custom slot roles drive the role template and formation remaps", () => {
+    const slots = scratchSlots();
+    slots[9] = { pos: "FW", x: 40, y: 20, role: "target" };
+    slots[10] = { ...slots[10], role: "keeper" }; // invalid for FW → ignored
+    const def = { id: "cf-roles", name: "Roles", slots };
+    const tpl = roleTemplate(def);
+    expect(tpl[9]).toBe("target");
+    expect(tpl[10]).toBe("af");
+    const save = newGame(777);
+    const squad = squadOf(save.players, save.userClubId);
+    const base = autoLineup(squad, builtinFormation("4-3-3"));
+    const remapped = remapLineup(squad, base, builtinFormation("4-3-3"), def);
+    expect(remapped.roles[9]).toBe("target");
+    expect(remapped.roles[10]).toBe("af");
   });
 });
 

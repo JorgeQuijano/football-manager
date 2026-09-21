@@ -23,7 +23,7 @@ src/engine/
   rng.ts         mulberry32 PRNG, FNV-1a hashSeed(), randInt/pick/pickWeighted
   tuning.ts      All balance constants (T), built-in FORMATIONS + FORMATION_COORDS, weeklyRecovery()
   roles.ts       26 roles: weight vectors + shot/finish/assist biases + lane, role groups
-  formations.ts  builtinFormation(), resolveFormation(), validateFormation(), scratchSlots(), roleTemplate()
+  formations.ts  builtinFormation(), resolveFormation(), validateFormation(), scratchSlots(), roleTemplate(), SLOT_ZONES/clampToZone()
   ratings.ts     Scores (overall/attack/defense), team strengths, suitability, auto/fix/remap/validate lineup
   league.ts      Fixtures (double round-robin), league table, form guide
   generate.ts    newGame(): clubs, squads, attributes, fixtures, initial lineup
@@ -39,7 +39,7 @@ Dependency direction: `rng`/`types` are leaves; `tuning`, `roles`, `formations`,
 - `Player` — `pos` (GK/DF/MF/FW), 7 attributes (`pace, shooting, passing, defending, physical, reflexes, handling`), `condition` 0–100, `injuredWeeks`, `suspension`, `apps`, `goals`, `assists`.
 - `Club` — `strength` (generation-time offset), `formation` (AI preference; always a built-in).
 - `Fixture` — `round`, `homeId`, `awayId`, `played`, goals once played.
-- `FormationSlot` — `{ pos, x, y }`; **x 0=left→100=right, y 0=opponent goal→100=own goal**.
+- `FormationSlot` — `{ pos, x, y, role? }`; **x 0=left→100=right, y 0=opponent goal→100=own goal**; optional `role` = builder-chosen default role (must belong to `pos`).
 - `FormationDef` — `{ id, name, slots[11] }`; `id` is a built-in `FormationId` or a custom `cf-…`.
 - `Lineup` — `formation: string` (resolved via `resolveFormation`), `starters[11]`, `bench[7]`, `mentality`, `roles[11]` (one `RoleId` per **slot**, not per player).
 - `PlayerUpdate` — what a match wants applied to a player: `minutes, goals, assists, yellow, red, injuredWeeks, conditionLoss`. Players with 0 minutes get no update.
@@ -115,6 +115,8 @@ Dependency direction: `rng`/`types` are leaves; `tuning`, `roles`, `formations`,
 - Custom formations: `FormationDef`s stored in `save.customFormations` (id `cf-…`). `validateFormation` requires exactly 11 slots, exactly 1 GK, coords within 3..97. `scratchSlots()` returns a neutral 4-4-2 clone as the builder starting shape.
 - `resolveFormation(id, customs)` checks customs first, then built-ins. **Rule: new code takes a resolved `FormationDef`; never index `FORMATIONS[id]` directly** — that's how custom shapes flow through simulation for free.
 - `roleTemplate(def)` gives every formation its default role line-up: hand-written per built-in (wide slots get wide-lane roles, holding bands get holders, attacking bands get creators) and geometry-derived for custom shapes (`defaultRoleForSlot`). Used by auto-pick, kick-off repair and formation remaps; a test enforces group validity and lane fit.
+- **Zones** (`SLOT_ZONES`): each position family is confined to a band — GK x 38–62 / y 82–94, DF y 48–90, MF y 26–72, FW y 8–48 (outfield x 6–94). `clampToZone(pos, x, y)` is what the builder uses, so a defender can never be dragged into midfield. Built-ins are test-enforced to sit inside their zones; legacy out-of-zone customs still load and clamp on their next edit.
+- `FormationSlot.role?` — optional per-slot preferred role the builder can set (custom formations only). `roleTemplate()` honours it for customs and formation remaps stamp it onto the lineup; an invalid role is silently ignored, so old saves and hand-edited files degrade gracefully.
 
 ## 8. Match simulation (`match.ts`)
 
@@ -174,7 +176,7 @@ Workflow: edit → `npm test` (calibration test guards avg goals 1.6–4.2 and h
 
 ## 13. Testing & tooling
 
-- `src/engine/engine.test.ts` — rng determinism; generation invariants (squad shape, attr bounds, 90 fixtures / 18 rounds / home-away balance); season table consistency; **determinism golden** (seed 7 twice); calibration across 40 seasons (30 s timeout — keep it); availability handling; season rollover; match bookkeeping (everyone who appeared is rated); roles (26 profiles unique, defaults valid per slot, finishing-weight orderings, assist/shot bias sanity); lineup ops (auto roles, remap keeps players); conditioning (recovery scaling); formations (built-ins valid, custom validation, custom fill/remap, templates lane-aware, geometry defaults).
+- `src/engine/engine.test.ts` — rng determinism; generation invariants (squad shape, attr bounds, 90 fixtures / 18 rounds / home-away balance); season table consistency; **determinism golden** (seed 7 twice); calibration across 40 seasons (30 s timeout — keep it); availability handling; season rollover; match bookkeeping (everyone who appeared is rated); roles (26 profiles unique, defaults valid per slot, finishing-weight orderings, assist/shot bias sanity); lineup ops (auto roles, remap keeps players); conditioning (recovery scaling); formations (built-ins valid, custom validation, custom fill/remap, templates lane-aware, geometry defaults, zones enforced, slot roles wired).
 - `src/state/save.test.ts` — `normalizeSave` migration cases (roles, customs, vanished formation).
 - CLI: `npm run sim -- --seed 42 [--match] [--seasons 3]` — headless season(s) with optional commentary dump.
 

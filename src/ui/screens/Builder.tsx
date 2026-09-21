@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
-import type { FormationDef, FormationSlot, Position } from "@/engine";
-import { scratchSlots, validateFormation } from "@/engine";
+import type { FormationSlot, Position, RoleId } from "@/engine";
+import { clampToZone, ROLE_DEFS, ROLE_GROUPS, scratchSlots, SLOT_ZONES, validateFormation, laneFits } from "@/engine";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -19,6 +19,12 @@ const POS_LABEL: Record<Position, string> = {
   DF: "Defender",
   MF: "Midfielder",
   FW: "Forward"
+};
+const ZONE_HINTS: Record<Position, string> = {
+  GK: "Stays in the box — goalkeepers never leave it.",
+  DF: "Defensive band: your box up to the halfway line.",
+  MF: "Middle third only.",
+  FW: "Attacking third only."
 };
 
 interface DragState {
@@ -54,6 +60,14 @@ export function Builder() {
 
   const errors = validateFormation({ id, name, slots });
 
+  const sheetSlot = posSheet !== null ? slots[posSheet] : null;
+  const sheetRoles = useMemo(() => {
+    if (!sheetSlot) return [];
+    return [...ROLE_GROUPS[sheetSlot.pos]].sort(
+      (a, b) => Number(laneFits(b, sheetSlot)) - Number(laneFits(a, sheetSlot))
+    );
+  }, [sheetSlot]);
+
   const onDown = (e: React.PointerEvent<HTMLButtonElement>, idx: number) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     dragRef.current = { idx, sx: e.clientX, sy: e.clientY, active: false };
@@ -67,9 +81,11 @@ export function Builder() {
     if (!d.active && moved > 10) d.active = true;
     if (!d.active) return;
     const r = pitchRef.current.getBoundingClientRect();
-    const x = Math.min(94, Math.max(6, ((e.clientX - r.left) / r.width) * 100));
-    const y = Math.min(94, Math.max(8, ((e.clientY - r.top) / r.height) * 100));
-    setSlots((prev) => prev.map((s, j) => (j === d.idx ? { ...s, x, y } : s)));
+    const rawX = ((e.clientX - r.left) / r.width) * 100;
+    const rawY = ((e.clientY - r.top) / r.height) * 100;
+    setSlots((prev) =>
+      prev.map((s, j) => (j === d.idx ? { ...s, ...clampToZone(s.pos, rawX, rawY) } : s))
+    );
   };
 
   const onUp = () => {
@@ -77,6 +93,24 @@ export function Builder() {
     dragRef.current = null;
     setDragIdx(null);
     if (d && !d.active) setPosSheet(d.idx);
+  };
+
+  const setSlotPos = (pos: Position) => {
+    if (posSheet === null) return;
+    setSlots((prev) =>
+      prev.map((s, j) => {
+        if (j !== posSheet) return s;
+        const role = s.role && ROLE_GROUPS[pos].includes(s.role) ? s.role : undefined;
+        return { ...s, pos, ...clampToZone(pos, s.x, s.y), role };
+      })
+    );
+  };
+
+  const setSlotRole = (role: RoleId | null) => {
+    if (posSheet === null) return;
+    setSlots((prev) =>
+      prev.map((s, j) => (j === posSheet ? { ...s, role: role ?? undefined } : s))
+    );
   };
 
   const save = () => {
@@ -142,6 +176,18 @@ export function Builder() {
               <div className="absolute bottom-0 left-1/2 h-9 w-36 -translate-x-1/2 border-x border-t border-primary" />
             </div>
 
+            {dragIdx !== null &&
+              (() => {
+                const z = SLOT_ZONES[slots[dragIdx].pos];
+                return (
+                  <div
+                    data-testid="bf-zone"
+                    className="pointer-events-none absolute left-0 right-0 border-y border-dashed border-primary/50 bg-primary/10"
+                    style={{ top: `${z.yMin}%`, height: `${z.yMax - z.yMin}%` }}
+                  />
+                );
+              })()}
+
             {slots.map((slot, i) => (
               <button
                 key={i}
@@ -165,14 +211,14 @@ export function Builder() {
                   {slot.pos}
                 </span>
                 <span className="mt-0.5 block text-[9px] leading-tight text-muted-foreground tnum">
-                  {i + 1}
+                  {slot.role ? ROLE_DEFS[slot.role].short : i + 1}
                 </span>
               </button>
             ))}
           </div>
 
           <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            Drag a slot to move it · tap to change its position
+            Slots stay in their position's zone · drag to move within it · tap for position &amp; role
           </p>
         </CardContent>
       </Card>
@@ -201,18 +247,14 @@ export function Builder() {
             <SheetTitle>Slot {posSheet !== null ? posSheet + 1 : ""}</SheetTitle>
             <SheetDescription>Exactly one goalkeeper is required.</SheetDescription>
           </SheetHeader>
-          <div className="grid grid-cols-4 gap-1.5 px-4 pb-6 pt-1">
+          <div className="grid grid-cols-4 gap-1.5 px-4 pt-1">
             {POSITIONS.map((pos) => (
               <button
                 key={pos}
                 data-testid={`bf-pos-${pos}`}
-                onClick={() => {
-                  if (posSheet === null) return;
-                  setSlots((prev) => prev.map((s, j) => (j === posSheet ? { ...s, pos } : s)));
-                  setPosSheet(null);
-                }}
+                onClick={() => setSlotPos(pos)}
                 className={`rounded-lg border px-1 py-3 text-[11px] font-bold ${
-                  posSheet !== null && slots[posSheet].pos === pos
+                  sheetSlot?.pos === pos
                     ? "border-primary bg-primary/15 text-primary"
                     : "border-border text-muted-foreground"
                 }`}
@@ -221,6 +263,51 @@ export function Builder() {
               </button>
             ))}
           </div>
+          {sheetSlot && (
+            <p className="px-4 pt-1.5 text-[10px] text-muted-foreground" data-testid="bf-zone-hint">
+              {ZONE_HINTS[sheetSlot.pos]}
+            </p>
+          )}
+
+          {sheetSlot && (
+            <div className="px-4 pb-6 pt-3">
+              <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Default role
+              </div>
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                <button
+                  data-testid="bf-role-auto"
+                  onClick={() => setSlotRole(null)}
+                  className={`shrink-0 rounded-lg border px-2.5 py-2 text-[11px] font-bold ${
+                    !sheetSlot.role
+                      ? "border-primary bg-primary/15 text-primary"
+                      : "border-border text-muted-foreground"
+                  }`}
+                >
+                  Auto
+                </button>
+                {sheetRoles.map((r) => (
+                  <button
+                    key={r}
+                    data-testid={`bf-role-${r}`}
+                    onClick={() => setSlotRole(r)}
+                    className={`shrink-0 rounded-lg border px-2.5 py-2 text-[11px] font-bold ${
+                      sheetSlot.role === r
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-border text-muted-foreground"
+                    }`}
+                  >
+                    {ROLE_DEFS[r].short}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
+                {sheetSlot.role
+                  ? `${ROLE_DEFS[sheetSlot.role].label} — ${ROLE_DEFS[sheetSlot.role].desc}`
+                  : "Auto picks the best-fit role for where this slot sits."}
+              </p>
+            </div>
+          )}
         </SheetContent>
       </Sheet>
     </div>
