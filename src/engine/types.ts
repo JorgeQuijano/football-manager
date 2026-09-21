@@ -99,8 +99,20 @@ export interface MatchResult {
   scorers: { playerId: string; name: string; clubId: string; minute: number }[];
 }
 
+export interface FormationSlot {
+  pos: Position;
+  x: number; // 0 = left touchline, 100 = right
+  y: number; // 0 = opponent goal, 100 = own goal
+}
+
+export interface FormationDef {
+  id: string; // built-in FormationId or custom "cf-…" id
+  name: string;
+  slots: FormationSlot[]; // 11 slots
+}
+
 export interface Lineup {
-  formation: FormationId;
+  formation: string; // built-in FormationId or custom formation id
   starters: (string | null)[]; // 11 slots
   bench: (string | null)[]; // 7 slots
   mentality: Mentality;
@@ -130,6 +142,7 @@ export interface SaveGame {
   players: Player[];
   fixtures: Fixture[];
   lineup: Lineup;
+  customFormations: FormationDef[];
   lastResults: MatchResult[];
   lastUserMatch?: MatchResult;
 }

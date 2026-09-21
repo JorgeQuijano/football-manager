@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type {
-  FormationId,
+  FormationDef,
   Lineup,
   MatchResult,
   Mentality,
@@ -10,13 +10,14 @@ import type {
 } from "@/engine";
 import {
   autoLineup,
+  builtinFormation,
   fixLineup,
-  FORMATIONS,
   isAvailable,
   newGame,
   nextSeason,
   playRound,
   remapLineup,
+  resolveFormation,
   ROLE_GROUPS,
   seasonRounds,
   slotScoreFor,
@@ -25,7 +26,15 @@ import {
 } from "@/engine";
 import { loadSave, persistSave } from "./save";
 
-export type Screen = "new" | "home" | "squad" | "tactics" | "league" | "match" | "seasonEnd";
+export type Screen =
+  | "new"
+  | "home"
+  | "squad"
+  | "tactics"
+  | "league"
+  | "match"
+  | "seasonEnd"
+  | "builder";
 export type SlotRef = { kind: "xi" | "bench"; index: number };
 
 interface AppState {
@@ -33,6 +42,7 @@ interface AppState {
   game: SaveGame | null;
   screen: Screen;
   reveal: MatchResult | null;
+  builderFor: string | null; // custom formation id being edited (null = creating)
 
   init: () => Promise<void>;
   startNewGame: (clubId: string) => void;
@@ -40,7 +50,7 @@ interface AppState {
   finishMatch: () => void;
   startNextSeason: () => void;
   setScreen: (s: Screen) => void;
-  setFormation: (f: FormationId) => void;
+  setFormation: (f: string) => void;
   setMentality: (m: Mentality) => void;
   setRole: (index: number, role: RoleId) => void;
   assignPlayer: (kind: "xi" | "bench", index: number, playerId: string) => void;
@@ -48,6 +58,9 @@ interface AppState {
   swapSlots: (a: SlotRef, b: SlotRef) => void;
   autoPick: (mode?: "best" | "freshest") => number;
   applySuggestions: () => number;
+  setBuilderFor: (id: string | null) => void;
+  saveCustomFormation: (def: FormationDef) => void;
+  deleteCustomFormation: (id: string) => void;
   resetGame: () => void;
   importSave: (save: SaveGame) => void;
 }
@@ -60,11 +73,15 @@ const schedulePersist = (game: SaveGame | null) => {
   }, 400);
 };
 
+const defFor = (game: SaveGame, id: string): FormationDef =>
+  resolveFormation(id, game.customFormations) ?? builtinFormation("4-3-3");
+
 export const useGame = create<AppState>()((set, get) => ({
   loaded: false,
   game: null,
   screen: "new",
   reveal: null,
+  builderFor: null,
 
   init: async () => {
     const save = await loadSave();
@@ -74,7 +91,7 @@ export const useGame = create<AppState>()((set, get) => ({
   startNewGame: (clubId) => {
     const seed = Math.floor(Math.random() * 1_000_000) + 1;
     const game = newGame(seed, clubId);
-    set({ game, screen: "home", reveal: null });
+    set({ game, screen: "home", reveal: null, builderFor: null });
     schedulePersist(game);
   },
 
@@ -112,7 +129,10 @@ export const useGame = create<AppState>()((set, get) => ({
   setFormation: (formation) => {
     const { game } = get();
     if (!game || formation === game.lineup.formation) return;
-    const lineup = remapLineup(squadOf(game.players, game.userClubId), game.lineup, formation);
+    const to = resolveFormation(formation, game.customFormations);
+    if (!to) return;
+    const from = defFor(game, game.lineup.formation);
+    const lineup = remapLineup(squadOf(game.players, game.userClubId), game.lineup, from, to);
     const save = { ...game, lineup };
     set({ game: save });
     schedulePersist(save);
@@ -129,8 +149,8 @@ export const useGame = create<AppState>()((set, get) => ({
   setRole: (index, role) => {
     const { game } = get();
     if (!game) return;
-    const slot = FORMATIONS[game.lineup.formation][index];
-    if (!slot || !ROLE_GROUPS[slot].includes(role)) return;
+    const slotPos = defFor(game, game.lineup.formation).slots[index]?.pos;
+    if (!slotPos || !ROLE_GROUPS[slotPos].includes(role)) return;
     const lineup: Lineup = structuredClone(game.lineup);
     lineup.roles[index] = role;
     const save = { ...game, lineup };
@@ -196,10 +216,14 @@ export const useGame = create<AppState>()((set, get) => ({
   autoPick: (mode = "best") => {
     const { game } = get();
     if (!game) return 0;
-    const lineup = autoLineup(squadOf(game.players, game.userClubId), game.lineup.formation, {
-      freshest: mode === "freshest",
-      mentality: game.lineup.mentality
-    });
+    const lineup = autoLineup(
+      squadOf(game.players, game.userClubId),
+      defFor(game, game.lineup.formation),
+      {
+        freshest: mode === "freshest",
+        mentality: game.lineup.mentality
+      }
+    );
     let changes = 0;
     lineup.starters.forEach((id, i) => {
       if (id !== game.lineup.starters[i]) changes++;
@@ -215,8 +239,9 @@ export const useGame = create<AppState>()((set, get) => ({
     if (!game) return 0;
     const squad = squadOf(game.players, game.userClubId);
     const byId = new Map(squad.map((p) => [p.id, p] as const));
-    const lineup = fixLineup(squad, structuredClone(game.lineup));
-    const slots = FORMATIONS[lineup.formation];
+    const def = defFor(game, game.lineup.formation);
+    const lineup = fixLineup(squad, structuredClone(game.lineup), def);
+    const slots = def.slots;
     let changes = 0;
 
     for (let i = 0; i < lineup.starters.length; i++) {
@@ -229,8 +254,8 @@ export const useGame = create<AppState>()((set, get) => ({
         .filter((p): p is Player => !!p && isAvailable(p))
         .sort(
           (a, b) =>
-            slotScoreFor(b, slots[i], lineup.roles[i], 0.45) -
-            slotScoreFor(a, slots[i], lineup.roles[i], 0.45)
+            slotScoreFor(b, slots[i].pos, lineup.roles[i], 0.45) -
+            slotScoreFor(a, slots[i].pos, lineup.roles[i], 0.45)
         )[0];
       if (!alt) continue;
       // tired but fit: only swap for a meaningfully fresher option
@@ -250,13 +275,47 @@ export const useGame = create<AppState>()((set, get) => ({
     return changes;
   },
 
+  setBuilderFor: (id) => set({ builderFor: id }),
+
+  saveCustomFormation: (def) => {
+    const { game } = get();
+    if (!game) return;
+    const customs = [...game.customFormations.filter((f) => f.id !== def.id), def];
+    const from = defFor(game, game.lineup.formation);
+    const lineup = remapLineup(squadOf(game.players, game.userClubId), game.lineup, from, def);
+    const save = { ...game, customFormations: customs, lineup };
+    set({ game: save, screen: "tactics", builderFor: null });
+    schedulePersist(save);
+  },
+
+  deleteCustomFormation: (id) => {
+    const { game } = get();
+    if (!game) return;
+    const customs = game.customFormations.filter((f) => f.id !== id);
+    let save: SaveGame = { ...game, customFormations: customs };
+    if (game.lineup.formation === id) {
+      const from = defFor(game, id);
+      save = {
+        ...save,
+        lineup: remapLineup(
+          squadOf(game.players, game.userClubId),
+          game.lineup,
+          from,
+          builtinFormation("4-3-3")
+        )
+      };
+    }
+    set({ game: save });
+    schedulePersist(save);
+  },
+
   resetGame: () => {
-    set({ game: null, screen: "new", reveal: null });
+    set({ game: null, screen: "new", reveal: null, builderFor: null });
     void persistSave(null);
   },
 
   importSave: (save) => {
-    set({ game: save, screen: "home", reveal: null });
+    set({ game: save, screen: "home", reveal: null, builderFor: null });
     schedulePersist(save);
   }
 }));

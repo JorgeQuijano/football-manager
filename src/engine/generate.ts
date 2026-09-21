@@ -2,6 +2,7 @@ import type { Club, FormationId, Lineup, Player, Position, SaveGame } from "./ty
 import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
 import { FORMATIONS, T } from "./tuning";
 import { autoLineup } from "./ratings";
+import { builtinFormation } from "./formations";
 import { buildFixtures } from "./league";
 
 export const CLUB_DEFS: ReadonlyArray<{ name: string; short: string; color: string }> = [
@@ -124,7 +125,7 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
   const fixtures = buildFixtures(clubs, 1, seed);
   const lineup: Lineup = autoLineup(
     players.filter((p) => p.clubId === chosen),
-    "4-3-3"
+    builtinFormation("4-3-3")
   );
 
   return {
@@ -137,6 +138,7 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     players,
     fixtures,
     lineup,
+    customFormations: [],
     lastResults: []
   };
 }

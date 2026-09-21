@@ -1,6 +1,7 @@
 import type { Lineup, MatchResult, Player, RoleId, SaveGame } from "./types";
 import { hashSeed, mulberry32 } from "./rng";
 import { autoLineup, fixLineup, isAvailable, squadOf } from "./ratings";
+import { builtinFormation, resolveFormation } from "./formations";
 import { defaultRoleFor } from "./roles";
 import { buildFixtures } from "./league";
 import { simulateMatch } from "./match";
@@ -21,10 +22,12 @@ function resolveSide(save: SaveGame, clubId: string): Resolved {
   const club = save.clubs.find((c) => c.id === clubId)!;
   let lineup: Lineup;
   if (clubId === save.userClubId) {
-    lineup = fixLineup(squadOf(save.players, clubId), save.lineup);
+    const def =
+      resolveFormation(save.lineup.formation, save.customFormations) ?? builtinFormation("4-3-3");
+    lineup = fixLineup(squadOf(save.players, clubId), save.lineup, def);
     save.lineup = lineup; // persist repairs
   } else {
-    lineup = autoLineup(squadOf(save.players, clubId), club.formation);
+    lineup = autoLineup(squadOf(save.players, clubId), builtinFormation(club.formation));
   }
   const byId = new Map(save.players.map((p) => [p.id, p] as const));
   const xi: Player[] = [];
@@ -140,7 +143,11 @@ export function nextSeason(input: SaveGame): SaveGame {
     p.apps = 0;
     p.goals = 0;
   }
-  save.lineup = autoLineup(squadOf(save.players, save.userClubId), save.lineup.formation);
+  const def =
+    resolveFormation(save.lineup.formation, save.customFormations) ?? builtinFormation("4-3-3");
+  save.lineup = autoLineup(squadOf(save.players, save.userClubId), def, {
+    mentality: save.lineup.mentality
+  });
   save.lastResults = [];
   save.lastUserMatch = undefined;
   return save;

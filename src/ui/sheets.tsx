@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { Player, Position, RoleId } from "@/engine";
 import {
   autoLineup,
+  builtinFormation,
   defaultRoleFor,
   isAvailable,
   overallFor,
@@ -305,7 +306,7 @@ export function PlayerPickerSheet({
   let oppLine = "";
   if (oppClub) {
     const oppSquad = squadOf(game.players, oppClub.id);
-    const ol = autoLineup(oppSquad, oppClub.formation);
+    const ol = autoLineup(oppSquad, builtinFormation(oppClub.formation));
     const oppXi = ol.starters
       .map((id) => (id ? oppSquad.find((p) => p.id === id) : undefined))
       .filter((p): p is Player => !!p);

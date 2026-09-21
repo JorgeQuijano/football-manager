@@ -1,12 +1,12 @@
 import type {
-  FormationId,
+  FormationDef,
   Lineup,
   Mentality,
   Player,
   Position,
   RoleId
 } from "./types";
-import { BENCH_SLOTS, FORMATIONS, T } from "./tuning";
+import { BENCH_SLOTS, T } from "./tuning";
 import { defaultRoleFor, roleAttack, roleDefense, ROLE_GROUPS } from "./roles";
 
 const clamp = (v: number, lo = 1, hi = 99) => Math.round(Math.max(lo, Math.min(hi, v)));
@@ -116,12 +116,8 @@ export interface AutoPickOptions {
  * `mentality` biases selection toward attack or defence; `freshest`
  * weighs condition, for rotation after a heavy schedule.
  */
-export function autoLineup(
-  players: Player[],
-  formationId: FormationId,
-  opts: AutoPickOptions = {}
-): Lineup {
-  const slots = FORMATIONS[formationId];
+export function autoLineup(players: Player[], def: FormationDef, opts: AutoPickOptions = {}): Lineup {
+  const slots = def.slots.map((s) => s.pos);
   const avail = players.filter(isAvailable);
   const used = new Set<string>();
 
@@ -161,7 +157,7 @@ export function autoLineup(
 
   const roles = slots.map((slot) => defaultRoleFor(slot));
 
-  return { formation: formationId, starters, bench, mentality: opts.mentality ?? "bal", roles };
+  return { formation: def.id, starters, bench, mentality: opts.mentality ?? "bal", roles };
 }
 
 /** Problems with a user lineup — empty slots, wrong GK count, unavailable players. */
@@ -189,7 +185,7 @@ export function validateLineup(players: Player[], lineup: Lineup): string[] {
  * the best available replacements. Used silently before simulating a match.
  * Slot roles are preserved and normalized.
  */
-export function fixLineup(players: Player[], lineup: Lineup): Lineup {
+export function fixLineup(players: Player[], lineup: Lineup, def: FormationDef): Lineup {
   const byId = new Map(players.map((p) => [p.id, p]));
   const used = new Set<string>();
 
@@ -201,7 +197,7 @@ export function fixLineup(players: Player[], lineup: Lineup): Lineup {
     return id;
   };
 
-  const slots = FORMATIONS[lineup.formation];
+  const slots = def.slots.map((s) => s.pos);
   const avail = players.filter(isAvailable);
   const starters = lineup.starters.slice(0, 11);
 
@@ -250,9 +246,14 @@ export function fixLineup(players: Player[], lineup: Lineup): Lineup {
  * the same position in the new shape where possible, overflow drops to the
  * bench, and only genuine gaps get auto-filled.
  */
-export function remapLineup(players: Player[], lineup: Lineup, formationId: FormationId): Lineup {
-  const oldSlots = FORMATIONS[lineup.formation];
-  const newSlots = FORMATIONS[formationId];
+export function remapLineup(
+  players: Player[],
+  lineup: Lineup,
+  from: FormationDef,
+  to: FormationDef
+): Lineup {
+  const oldSlots = from.slots.map((s) => s.pos);
+  const newSlots = to.slots.map((s) => s.pos);
   const byId = new Map(players.map((p) => [p.id, p] as const));
   const starters: (string | null)[] = newSlots.map(() => null);
   const roles: RoleId[] = newSlots.map((slot) => defaultRoleFor(slot));
@@ -282,13 +283,17 @@ export function remapLineup(players: Player[], lineup: Lineup, formationId: Form
     if (empty >= 0) bench[empty] = id;
   }
 
-  return fixLineup(players, {
-    formation: formationId,
-    starters,
-    bench,
-    mentality: lineup.mentality,
-    roles
-  });
+  return fixLineup(
+    players,
+    {
+      formation: to.id,
+      starters,
+      bench,
+      mentality: lineup.mentality,
+      roles
+    },
+    to
+  );
 }
 
 export function squadOf(players: Player[], clubId: string): Player[] {

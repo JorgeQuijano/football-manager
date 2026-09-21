@@ -2,6 +2,7 @@ export * from "./types";
 export * from "./rng";
 export * from "./tuning";
 export * from "./roles";
+export * from "./formations";
 export * from "./ratings";
 export * from "./league";
 export * from "./generate";

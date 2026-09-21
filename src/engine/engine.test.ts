@@ -12,6 +12,7 @@ import {
   squadOf,
   validateLineup
 } from "./ratings";
+import { builtinFormation, resolveFormation, validateFormation } from "./formations";
 import { defaultRoleFor, ROLE_GROUPS } from "./roles";
 import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
 import type { Player, SaveGame } from "./types";
@@ -166,7 +167,10 @@ describe("season", () => {
     expect(s2.round).toBe(1);
     expect(s2.fixtures).toHaveLength(90);
     expect(s2.fixtures.every((f) => !f.played)).toBe(true);
-    const lineup = autoLineup(squadOf(s2.players, s2.userClubId), s2.lineup.formation);
+    const lineup = autoLineup(
+      squadOf(s2.players, s2.userClubId),
+      resolveFormation(s2.lineup.formation, s2.customFormations)!
+    );
     expect(lineup.starters.filter(Boolean)).toHaveLength(11);
   });
 });
@@ -253,21 +257,21 @@ describe("lineup ops", () => {
   const squad = squadOf(save.players, save.userClubId);
 
   it("autoLineup assigns a valid role to every slot", () => {
-    const l = autoLineup(squad, "4-3-3");
+    const l = autoLineup(squad, builtinFormation("4-3-3"));
     expect(l.roles).toHaveLength(11);
     l.roles.forEach((r, i) => expect(ROLE_GROUPS[FORMATIONS["4-3-3"][i]]).toContain(r));
   });
 
   it("changing formation keeps your players", () => {
-    const before = autoLineup(squad, "4-3-3");
+    const before = autoLineup(squad, builtinFormation("4-3-3"));
     const gkId = before.starters[0];
-    const after = remapLineup(squad, before, "4-4-2");
+    const after = remapLineup(squad, before, builtinFormation("4-3-3"), builtinFormation("4-4-2"));
     expect(after.formation).toBe("4-4-2");
     expect(after.starters[0]).toBe(gkId);
     expect(validateLineup(squad, after)).toEqual([]);
     const kept = before.starters.filter((id) => id && after.starters.includes(id));
     expect(kept.length).toBeGreaterThanOrEqual(9);
-    const after2 = remapLineup(squad, after, "3-5-2");
+    const after2 = remapLineup(squad, after, builtinFormation("4-4-2"), builtinFormation("3-5-2"));
     expect(validateLineup(squad, after2)).toEqual([]);
     expect(after2.mentality).toBe(after.mentality);
   });
@@ -338,6 +342,52 @@ describe("conditioning", () => {
     expect(weeklyRecovery(kid)).toBeGreaterThan(weeklyRecovery(vet));
     expect(weeklyRecovery(vet)).toBeLessThan(T.conditionLossStarter); // veterans need rotation
     expect(weeklyRecovery(kid)).toBeGreaterThanOrEqual(T.conditionLossStarter);
+  });
+});
+
+describe("formations", () => {
+  it("built-ins resolve with 11 slots and pass validation", () => {
+    for (const fid of FORMATION_IDS) {
+      const def = builtinFormation(fid);
+      expect(def.slots).toHaveLength(11);
+      expect(validateFormation(def)).toEqual([]);
+    }
+  });
+
+  it("custom formations resolve by id and flag problems", () => {
+    const custom = { id: "cf-test", name: "Test", slots: builtinFormation("4-4-2").slots.map((s) => ({ ...s })) };
+    custom.slots[5] = { pos: "FW", x: 12, y: 30 };
+    expect(resolveFormation("cf-test", [custom])?.id).toBe("cf-test");
+    expect(resolveFormation("nope", [custom])).toBeUndefined();
+    expect(resolveFormation("cf-test", undefined)).toBeUndefined();
+    expect(validateFormation(custom)).toEqual([]);
+
+    const twoGk = { ...custom, slots: custom.slots.map((s, i) => (i === 1 ? { ...s, pos: "GK" as const } : s)) };
+    expect(validateFormation(twoGk).length).toBeGreaterThan(0);
+    const short = { ...custom, slots: custom.slots.slice(0, 10) };
+    expect(validateFormation(short).length).toBeGreaterThan(0);
+    const off = { ...custom, slots: custom.slots.map((s, i) => (i === 2 ? { ...s, x: 150 } : s)) };
+    expect(validateFormation(off).length).toBeGreaterThan(0);
+  });
+
+  it("autoLineup fills a custom shape; remap keeps the GK and stays valid", () => {
+    const save = newGame(4242);
+    const squad = squadOf(save.players, save.userClubId);
+    const custom = {
+      id: "cf-a",
+      name: "A",
+      slots: builtinFormation("4-4-2").slots.map((s) => ({ ...s }))
+    };
+    custom.slots[9] = { pos: "FW", x: 30, y: 12 };
+    custom.slots[10] = { pos: "FW", x: 70, y: 12 };
+    const l = autoLineup(squad, custom);
+    expect(l.starters.filter(Boolean)).toHaveLength(11);
+    expect(l.formation).toBe("cf-a");
+    expect(l.roles).toHaveLength(11);
+    const remapped = remapLineup(squad, l, custom, builtinFormation("4-4-2"));
+    expect(remapped.formation).toBe("4-4-2");
+    expect(remapped.starters[0]).toBe(l.starters[0]);
+    expect(validateLineup(squad, remapped)).toEqual([]);
   });
 });
 
