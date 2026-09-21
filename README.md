@@ -28,6 +28,7 @@ npm run preview                        # serve the production build
 - Deterministic engine: same seed + same decisions = same season (seeded RNG, no hidden state).
 - Everything runs locally — no backend. The save lives in IndexedDB and can be exported as JSON (Settings → Export).
 - The game is a PWA: offline after first load, installable to the home screen.
+- Engine internals are documented for contributors in `docs/ENGINE.md` — deliberately not surfaced anywhere in the game UI.
 
 ## Repo layout
 
@@ -35,4 +36,5 @@ npm run preview                        # serve the production build
 - `src/state/` — zustand store + save/load/export
 - `src/ui/` — screens and sheets
 - `scripts/sim.ts` — headless season CLI
+- `docs/ENGINE.md` — engine reference (data model, simulation, roles, conditioning, tuning, invariants) — **repo-only, not user-facing**
 - `REQUIREMENTS.md` — MVP scope · `component-libraries.md` — UI research · `theme-preview.html` — Tunnel palette preview
