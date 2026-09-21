@@ -9,19 +9,28 @@ import type {
   SaveGame
 } from "@/engine";
 import {
+  addLiveChange,
   autoLineup,
   builtinFormation,
+  changeMinute,
+  completeRound,
+  finalizeLive,
   fixLineup,
   isAvailable,
   newGame,
   nextSeason,
-  playRound,
+  playersById,
+  prepareRound,
   remapLineup,
   resolveFormation,
+  resumeSecondHalf,
   ROLE_GROUPS,
   seasonRounds,
+  skipToFullTime,
+  skipToHalfTime,
   slotScoreFor,
   squadOf,
+  startLive,
   T
 } from "@/engine";
 import { loadSave, persistSave } from "./save";
@@ -48,6 +57,12 @@ interface AppState {
   startNewGame: (clubId: string) => void;
   advance: () => void;
   finishMatch: () => void;
+  liveSub: (outId: string, inId: string) => string | null;
+  liveMentality: (m: Mentality) => void;
+  liveRole: (slot: number, role: RoleId) => void;
+  startSecondHalf: () => void;
+  skipTo: (to: "ht" | "ft") => void;
+  setPlayhead: (m: number) => void;
   startNextSeason: () => void;
   setScreen: (s: Screen) => void;
   setFormation: (f: string) => void;
@@ -66,6 +81,7 @@ interface AppState {
 }
 
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
+let lastPlayheadPersist = 0;
 const schedulePersist = (game: SaveGame | null) => {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
@@ -76,6 +92,10 @@ const schedulePersist = (game: SaveGame | null) => {
 const defFor = (game: SaveGame, id: string): FormationDef =>
   resolveFormation(id, game.customFormations) ?? builtinFormation("4-3-3");
 
+/** The match is finished once the playback has reached the end of the second half. */
+const matchOver = (live: NonNullable<SaveGame["live"]>): boolean =>
+  live.half === 2 && live.playhead >= live.state.total;
+
 export const useGame = create<AppState>()((set, get) => ({
   loaded: false,
   game: null,
@@ -85,7 +105,7 @@ export const useGame = create<AppState>()((set, get) => ({
 
   init: async () => {
     const save = await loadSave();
-    set({ game: save, loaded: true, screen: save ? "home" : "new" });
+    set({ game: save, loaded: true, screen: save ? (save.live ? "match" : "home") : "new" });
   },
 
   startNewGame: (clubId) => {
@@ -98,22 +118,127 @@ export const useGame = create<AppState>()((set, get) => ({
   advance: () => {
     const { game } = get();
     if (!game) return;
+    if (game.live) {
+      set({ screen: "match" });
+      return;
+    }
     if (game.round > seasonRounds(game)) {
       set({ screen: "seasonEnd" });
       return;
     }
-    const { save, userMatch } = playRound(game);
-    set({ game: save, reveal: userMatch ?? null, screen: userMatch ? "match" : "home" });
+    const prepared = prepareRound(game);
+    const live = startLive(prepared);
+    if (!live) {
+      const save = completeRound(prepared, undefined);
+      set({ game: save, reveal: null, screen: "home" });
+      schedulePersist(save);
+      return;
+    }
+    const save = { ...prepared, live };
+    set({ game: save, reveal: null, screen: "match" });
     schedulePersist(save);
   },
 
   finishMatch: () => {
     const { game } = get();
     if (!game) return;
+    if (game.live) {
+      const result = finalizeLive(game.live);
+      const save = completeRound({ ...game, live: undefined }, result);
+      set({
+        game: save,
+        reveal: result,
+        screen: save.round > seasonRounds(save) ? "seasonEnd" : "home"
+      });
+      schedulePersist(save);
+      return;
+    }
     set({
       reveal: null,
       screen: game.round > seasonRounds(game) ? "seasonEnd" : "home"
     });
+  },
+
+  liveSub: (outId, inId) => {
+    const { game } = get();
+    if (!game?.live) return "No live match.";
+    if (matchOver(game.live)) return "The match is over.";
+    const side = game.live.state.userSide ?? "home";
+    const players = playersById(game);
+    const minute = changeMinute(game.live);
+    const res = addLiveChange(game.live, players, { minute, kind: "sub", side, outId, inId });
+    if (res.error) return res.error;
+    const save = { ...game, live: res.live! };
+    set({ game: save });
+    schedulePersist(save);
+    return null;
+  },
+
+  liveMentality: (m) => {
+    const { game } = get();
+    if (!game?.live) return;
+    if (matchOver(game.live)) return;
+    const side = game.live.state.userSide ?? "home";
+    const minute = changeMinute(game.live);
+    const players = playersById(game);
+    const res = addLiveChange(game.live, players, { minute, kind: "mentality", side, mentality: m });
+    if (res.error) return;
+    const lineup = { ...game.lineup, mentality: m };
+    const save = { ...game, lineup, live: res.live! };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  liveRole: (slot, role) => {
+    const { game } = get();
+    if (!game?.live) return;
+    if (matchOver(game.live)) return;
+    const side = game.live.state.userSide ?? "home";
+    const minute = changeMinute(game.live);
+    const players = playersById(game);
+    const res = addLiveChange(game.live, players, { minute, kind: "role", side, slot, role });
+    if (res.error) return;
+    const roles = [...game.lineup.roles];
+    if (side === "home" || side === "away") roles[slot] = role;
+    const save = { ...game, lineup: { ...game.lineup, roles }, live: res.live! };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  startSecondHalf: () => {
+    const { game } = get();
+    if (!game?.live || game.live.half !== 1) return;
+    const players = playersById(game);
+    const live = resumeSecondHalf(game.live, players);
+    const save = { ...game, live };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  skipTo: (to) => {
+    const { game } = get();
+    if (!game?.live) return;
+    const players = playersById(game);
+    const live =
+      to === "ht"
+        ? game.live.half === 1
+          ? skipToHalfTime(game.live)
+          : game.live
+        : skipToFullTime(game.live, players);
+    const save = { ...game, live };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  setPlayhead: (m) => {
+    const { game } = get();
+    if (!game?.live) return;
+    set({ game: { ...game, live: { ...game.live, playhead: m } } });
+    const now = Date.now();
+    if (now - lastPlayheadPersist > 10000) {
+      lastPlayheadPersist = now;
+      schedulePersist(get().game);
+    }
   },
 
   startNextSeason: () => {

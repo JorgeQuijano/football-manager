@@ -117,6 +117,79 @@ export interface MatchResult {
   scorers: { playerId: string; name: string; clubId: string; minute: number }[];
 }
 
+// --- live match (pauseable, resumable, renderable) ---------------------------------
+
+export type StrokeOut = "turnover" | "out" | "foul" | "goal" | "save" | "block" | "miss";
+
+/** One possession phase rendered on the 2D pitch: a pass chain + how it ended. */
+export interface Stroke {
+  m: number; // minute
+  h: 0 | 1; // 1 = home in possession
+  p: number[]; // pass chain as formation slot indices (0..10)
+  o: StrokeOut;
+  t?: number; // target x of the final ball (shot / out), 0..100 in the attacking frame
+  b?: number; // other-side slot involved: keeper (save), blocker (block), interceptor (turnover)
+  r?: number; // index into `events` this stroke produced
+}
+
+export interface MatchSideState {
+  clubId: string;
+  name: string;
+  short: string;
+  slots: (string | null)[]; // player id per formation slot (null = sent off / empty)
+  poss: Position[]; // designed position of each SLOT (from the formation, not the occupant)
+  roles: RoleId[]; // role per slot
+  coords: [number, number][]; // formation x/y per slot (x: 0-100 L→R, y: 0-100 opp goal→own goal)
+  bench: string[]; // player ids still available to come on
+  mentality: Mentality;
+  goals: number;
+  subs: number; // substitutions used (max T.maxSubs)
+  windows: number; // in-match substitution windows used (max T.subWindowsMax)
+}
+
+export interface MatchState {
+  round: number;
+  homeId: string;
+  awayId: string;
+  minute: number; // last simulated minute (0 = not started)
+  total: number; // 90 + stoppage
+  rngState: number;
+  userSide?: "home" | "away";
+  home: MatchSideState;
+  away: MatchSideState;
+  events: MatchEvent[];
+  timeline: Stroke[];
+  ratings: Record<string, number>;
+  updates: Record<string, PlayerUpdate>;
+  yellows: Record<string, number>;
+  entryMinute: Record<string, number>;
+  exitMinute: Record<string, number>;
+  played: string[];
+  scorers: { playerId: string; name: string; clubId: string; minute: number }[];
+  /** per player: which side (0 home / 1 away) and natural position — for post-match ratings */
+  pin: Record<string, { s: 0 | 1; pos: Position }>;
+}
+
+/** A manager action applied mid-match; replayed deterministically when re-simulating. */
+export interface LiveChange {
+  minute: number;
+  kind: "sub" | "mentality" | "role";
+  side: "home" | "away";
+  outId?: string;
+  inId?: string;
+  mentality?: Mentality;
+  slot?: number;
+  role?: RoleId;
+}
+
+export interface LiveMatch {
+  base: MatchState; // start-of-current-half snapshot (timeline included up to its minute)
+  state: MatchState; // current state simulated to the end of the current half
+  half: 1 | 2;
+  changes: LiveChange[]; // changes made in the current half (replayed on rebuild)
+  playhead: number; // playback minute for the UI (persisted so reloads resume)
+}
+
 export interface FormationSlot {
   pos: Position;
   x: number; // 0 = left touchline, 100 = right
@@ -164,4 +237,5 @@ export interface SaveGame {
   customFormations: FormationDef[];
   lastResults: MatchResult[];
   lastUserMatch?: MatchResult;
+  live?: LiveMatch;
 }

@@ -27,8 +27,9 @@ src/engine/
   ratings.ts     Scores (overall/attack/defense), team strengths, suitability, auto/fix/remap/validate lineup
   league.ts      Fixtures (double round-robin), league table, form guide
   generate.ts    newGame(): clubs, squads, attributes, fixtures, initial lineup
-  match.ts       Minute-tick match simulation → MatchResult (events, ratings, updates, scorers)
-  advance.ts     playRound(), nextSeason() — orchestration and application of consequences
+  match.ts       Minute-tick match simulation → MatchResult; state-based (startMatch/advanceTo/finalizeMatch) + the possession timeline
+  live.ts        Live match: startLive, addLiveChange, resumeSecondHalf, skip helpers, matchStats
+  advance.ts     prepareRound(), completeRound(), playRound(), nextSeason() — orchestration
   index.ts       Barrel export
 ```
 
@@ -133,6 +134,14 @@ Per minute, per side:
 
 Commentary: >3 text variants per event type; events carry `minute`, `type`, optional `clubId`/`playerId`, and rendered text — the UI is a dumb renderer.
 
+**Live match (halves, changes, timeline).** The engine is state-based so the user's fixture can pause. `startMatch(inputs)` builds a plain-data `MatchState` (per slot: player id, designed position, role, coordinates; plus bench, mentality, goals, subs, windows, rng state — fully serializable); `advanceTo(state, minute, players)` simulates forward (pure); `finalizeMatch(state)` produces the `MatchResult`. `simulateMatch` = start + advance + finalize, so AI matches and live matches share every formula — a test asserts that **splitting at 45' reproduces the one-shot result exactly**.
+
+The timeline: each minute emits possession phases as `Stroke`s — `{ m, h (home?), p (pass chain as slot indices), o (turnover | out | foul | goal | save | block | miss), t (end x), b (other-side slot: keeper/blocker/interceptor), r (event index) }`. Chances resolve exactly as above; the pass chain is walk-built from a deep initiator to the chosen shooter (forward passes favoured). Minutes without a chance still get a chain ending in a turnover or out of play; cards add a `foul` stroke. The 2D view renders strokes directly, and possession/shots stats derive from them.
+
+Manager changes replay deterministically: `LiveMatch` keeps `base` (the snapshot at the start of the current half) + a journal of `LiveChange`s (sub / mentality / role, each stamped with its application minute). Any change re-simulates from `base` with the journal replayed — the tail changes, everything before the change stays byte-identical. `playhead` (playback minute) is persisted with the match, so reloads resume where you were; `normalizeSave` drops the live match if the round moved on.
+
+**Substitution rules (Premier League): max 5 subs; 3 in-match windows; half-time substitutions are free** (`state.minute === 45`); a player who leaves the pitch cannot return. Enforced by `substitutionError` in `match.ts`; the UI shows its messages verbatim.
+
 ## 9. Conditioning
 
 - Cost: a 90' starter loses ~16–19 condition (minutes-scaled, plus jitter); subs ~half.
@@ -142,7 +151,9 @@ Commentary: >3 text variants per event type; events carry `minute`, `type`, opti
 
 ## 10. Season orchestration (`advance.ts`)
 
-- `playRound(save)`: clones the save; for each unplayed fixture in the current round resolves both sides — **user side** via `fixLineup` on the stored lineup (repairs persisted), **AI sides** via `autoLineup` on the club's preferred formation (custom shapes are the user's privilege); simulates; applies updates (apps++, goals, red → next-match ban, injuries, condition with floor 5); marks fixtures played; then, between rounds, decrements bans/injuries for players who sat out and applies `weeklyRecovery` to everyone. Sets `lastResults` / `lastUserMatch`, increments `round`. Returns `{ save, userMatch }`.
+- `prepareRound(save)`: clones the save; resolves and simulates every **non-user** fixture of the round (user side via `fixLineup`, AI sides via `autoLineup`); applies updates (apps++, goals, red → next-match ban, injuries, condition with floor 5); marks fixtures played; leaves the user's fixture unplayed; sets `lastResults`.
+- `completeRound(save, userResult?)`: applies the user result (fixture marked played, `lastUserMatch`, appended to `lastResults`), then between-rounds recovery/bans for everyone who sat out, and `round++`. The store pairs `prepareRound` with the live match (`startLive` → playback → `completeRound`) on Done.
+- `playRound(save)`: prepare + one-shot user match + complete — kept for tests, tooling and the instant path. Returns `{ save, userMatch }`.
 - `nextSeason(save)`: season+1, round 1, fresh fixtures; age +1 (cap 40), condition 100, bans/injuries cleared, apps/goals reset; lineup re-picked on the current formation (built-in or custom), mentality preserved.
 
 ## 11. Save format & migration (`src/state/save.ts`)
@@ -152,7 +163,8 @@ Commentary: >3 text variants per event type; events carry `minute`, `type`, opti
   - backfills `customFormations` for pre-custom saves;
   - drops invalid custom formations (`validateFormation`);
   - backfills / repairs `lineup.roles` (invalid for slot → default);
-  - if the stored formation no longer resolves (deleted custom), rebuilds the lineup on 4-3-3.
+  - if the stored formation no longer resolves (deleted custom), rebuilds the lineup on 4-3-3;
+  - validates `save.live`: dropped unless the user's fixture for `save.round` is still unplayed and the state is well-formed; the playhead is clamped into `[0, total]`.
 - **Rule: any schema change extends `normalizeSave`.** Old saves must keep loading; bump `saveVersion` only for changes that cannot be repaired.
 
 ## 12. Balance tuning guide (`tuning.ts`)
@@ -171,13 +183,15 @@ Commentary: >3 text variants per event type; events carry `minute`, `type`, opti
 | `conditionLossStarter` (16) | harsher fatigue | pairs with `weeklyRecovery` coefficients |
 | `tiredThreshold` (65) | earlier rotation prompts | UI-facing |
 | `subMinute` (62) / `maxSubs` (5) | more/less bench impact | |
+| `subWindowsMax` (3) | more/fewer in-match sub windows | PL = 3 windows + free half-time |
+| `chainPasses` (2–5) | longer/shorter possession chains | 2D timeline density; no effect on results |
 
 Workflow: edit → `npm test` (calibration test guards avg goals 1.6–4.2 and home-win share 0.25–0.65; current ≈ 2.7) → `npm run sim -- --seed 42 --match` to eyeball a season.
 
 ## 13. Testing & tooling
 
-- `src/engine/engine.test.ts` — rng determinism; generation invariants (squad shape, attr bounds, 90 fixtures / 18 rounds / home-away balance); season table consistency; **determinism golden** (seed 7 twice); calibration across 40 seasons (30 s timeout — keep it); availability handling; season rollover; match bookkeeping (everyone who appeared is rated); roles (26 profiles unique, defaults valid per slot, finishing-weight orderings, assist/shot bias sanity); lineup ops (auto roles, remap keeps players); conditioning (recovery scaling); formations (built-ins valid, custom validation, custom fill/remap, templates lane-aware, geometry defaults, zones enforced, slot roles wired).
-- `src/state/save.test.ts` — `normalizeSave` migration cases (roles, customs, vanished formation).
+- `src/engine/engine.test.ts` — rng determinism; generation invariants (squad shape, attr bounds, 90 fixtures / 18 rounds / home-away balance); season table consistency; **determinism golden** (seed 7 twice); calibration across 40 seasons (30 s timeout — keep it); availability handling; season rollover; match bookkeeping (everyone who appeared is rated); roles (26 profiles unique, defaults valid per slot, finishing-weight orderings, assist/shot bias sanity); lineup ops (auto roles, remap keeps players); conditioning (recovery scaling); formations (built-ins valid, custom validation, custom fill/remap, templates lane-aware, geometry defaults, zones enforced, slot roles wired); **live match** (half split ≡ one-shot byte-for-byte, timeline invariants, PL sub rules: 5 subs / 3 windows / free half-time window / no returns; second-half changes carry over).
+- `src/state/save.test.ts` — `normalizeSave` migration cases (roles, customs, vanished formation, stale live match).
 - CLI: `npm run sim -- --seed 42 [--match] [--seasons 3]` — headless season(s) with optional commentary dump.
 
 Invariants any change must keep green:
@@ -192,7 +206,7 @@ Invariants any change must keep green:
 
 - **New role**: add the id to `RoleId` (`types.ts`), a `RoleDef` (weights, biases, lane, description) in `roles.ts`, a `FIN` vector, and list it in `ROLE_GROUPS`. Sim, picker, and chips pick it up automatically; the profile-uniqueness test guards against copy-paste roles.
 - **New built-in formation**: append to `FORMATIONS` *and* `FORMATION_COORDS` with identical lengths/order (`FORMATION_IDS` derives itself); the alignment test will catch mistakes.
-- **New match event**: extend `MatchEventType`, emit from `match.ts` with text variants, render in `MatchScreen`. Keep events self-describing (text pre-rendered).
+- **New match event**: extend `MatchEventType`, emit from `match.ts` with text variants, add a corresponding `Stroke` for the 2D view, render in `MatchScreen`. Keep events self-describing (text pre-rendered).
 - **New attribute**: touches generation skews, all `overallFor`/role vectors, and the player sheet — treat as a schema change and extend `normalizeSave`.
 - **Changed behavior in lineups**: keep it going through `autoLineup` / `fixLineup` / `remapLineup` so the builder, Tactics, and simulation stay consistent — do not special-case custom formations anywhere.
 

@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { MatchState, RoleId, Mentality } from "@/engine";
+import { T, finalizeLive, laneFits, matchStats, ROLE_DEFS, ROLE_GROUPS } from "@/engine";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle
+} from "@/components/ui/sheet";
 import { useGame } from "@/state/store";
-import { initials } from "@/ui/format";
-import type { MatchEvent } from "@/engine";
+import { posChip } from "@/ui/format";
+import { drawFrame, slotScreen, type Frame, type FramePlayer } from "@/ui/matchPitch";
 
 const eventClass: Record<string, string> = {
   goal: "text-primary font-bold",
@@ -18,123 +27,739 @@ const eventClass: Record<string, string> = {
   kickoff: "text-muted-foreground"
 };
 
-export function MatchScreen() {
-  const reveal = useGame((s) => s.reveal);
-  const game = useGame((s) => s.game)!;
-  const finishMatch = useGame((s) => s.finishMatch);
-  const [minute, setMinute] = useState(0);
-  const feedRef = useRef<HTMLDivElement>(null);
+type Side = "home" | "away";
 
-  const total = useMemo(
-    () => Math.max(90, ...((reveal?.events ?? []).map((e) => e.minute))),
-    [reveal]
-  );
+export function MatchScreen() {
+  const game = useGame((s) => s.game)!;
+  const setScreen = useGame((s) => s.setScreen);
+  const live = game.live;
+  useEffect(() => {
+    if (!live) setScreen("home");
+  }, [live, setScreen]);
+  if (!live) return null;
+  return <LiveMatchScreen />;
+}
+
+function LiveMatchScreen() {
+  const game = useGame((s) => s.game)!;
+  const live = useGame((s) => s.game!.live)!;
+  const finishMatch = useGame((s) => s.finishMatch);
+  const liveSub = useGame((s) => s.liveSub);
+  const liveMentality = useGame((s) => s.liveMentality);
+  const liveRole = useGame((s) => s.liveRole);
+  const startSecondHalf = useGame((s) => s.startSecondHalf);
+  const skipTo = useGame((s) => s.skipTo);
+  const setPlayhead = useGame((s) => s.setPlayhead);
+
+  const st = live.state;
+  const homeClub = game.clubs.find((c) => c.id === st.homeId)!;
+  const awayClub = game.clubs.find((c) => c.id === st.awayId)!;
+  const userSide: Side = st.userSide ?? "home";
+  const userClub = userSide === "home" ? homeClub : awayClub;
+
+  const [ui, setUi] = useState({ minute: live.playhead, si: 0, gh: 0, ga: 0 });
+  const [playing, setPlaying] = useState(true);
+  const [speed, setSpeed] = useState(2);
+  const [htReady, setHtReady] = useState(false);
+  const [ftReady, setFtReady] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [pendingOut, setPendingOut] = useState<string | null>(null);
+  const [subErr, setSubErr] = useState<string | null>(null);
+  const [expandedSlot, setExpandedSlot] = useState<number | null>(null);
+
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const feedRef = useRef<HTMLDivElement>(null);
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  const stateRef = useRef(st);
+  stateRef.current = st;
+  const colorsRef = useRef({ home: homeClub.color, away: awayClub.color });
+  colorsRef.current = { home: homeClub.color, away: awayClub.color };
+
+  const clock = useRef({
+    si: 0,
+    pp: 0,
+    t: 0,
+    ballX: 50,
+    ballY: 50,
+    minute: 0,
+    playing: true,
+    speed: 2,
+    poss: null as null | Side,
+    pts: [] as { x: number; y: number }[],
+    durs: [] as number[],
+    anim: new Map<string, { x: number; y: number }>(),
+    flashT: 0,
+    uiT: 0,
+    persistT: 0,
+    halfDone: false,
+    fullDone: false
+  });
+
+  const cbRef = useRef({
+    onUi: (_m: number, _si: number, _gh: number, _ga: number) => {},
+    onHalf: () => {},
+    onFull: () => {},
+    persist: (_m: number) => {}
+  });
+  cbRef.current = {
+    onUi: (m, si, gh, ga) => setUi({ minute: m, si, gh, ga }),
+    onHalf: () => setHtReady(true),
+    onFull: () => setFtReady(true),
+    persist: (m) => setPlayhead(m)
+  };
+
+  const jumpTo = (minute: number) => {
+    const c = clock.current;
+    const s = stateRef.current;
+    const idx = s.timeline.findIndex((x) => x.m > minute);
+    c.si = idx < 0 ? s.timeline.length : idx;
+    c.pp = 0;
+    c.t = 0;
+    c.pts = [];
+    c.durs = [];
+    c.minute = Math.max(0, Math.min(minute, s.total));
+  };
 
   useEffect(() => {
-    const iv = setInterval(() => {
-      setMinute((m) => (m >= total ? m : Math.min(total, m + 4)));
-    }, 240);
-    return () => clearInterval(iv);
-  }, [total]);
+    const C = clock.current;
+    C.si = (() => {
+      const s = stateRef.current;
+      const idx = s.timeline.findIndex((x) => x.m > liveRef.current.playhead);
+      return idx < 0 ? s.timeline.length : idx;
+    })();
+    C.minute = liveRef.current.playhead;
+    let raf = 0;
+    let last = performance.now();
+
+    const mirrors = () => {
+      const u = liveRef.current.state.userSide ?? "home";
+      return { home: u === "away", away: u === "home" };
+    };
+    const sideOf = (side: Side) =>
+      side === "home" ? stateRef.current.home : stateRef.current.away;
+    const sideMirror = (side: Side) => (side === "home" ? mirrors().home : mirrors().away);
+    const attacksUp = (side: Side) => !sideMirror(side);
+    const shiftedPos = (side: Side, slot: number) => {
+      const p = slotScreen(sideOf(side), slot, sideMirror(side));
+      const poss = C.poss;
+      if (!poss) return p;
+      const d = attacksUp(side) ? -1 : 1;
+      const dy = side === poss ? 7 * d : -4 * d;
+      return { x: p.x, y: Math.max(1, Math.min(99, p.y + dy)) };
+    };
+
+    const enterStroke = () => {
+      const st2 = stateRef.current;
+      const s = st2.timeline[C.si];
+      C.pts = [];
+      C.durs = [];
+      if (!s) return;
+      C.poss = s.h ? "home" : "away";
+      const pts = [{ x: C.ballX, y: C.ballY }];
+      const durs: number[] = [];
+      const first = s.p.length ? shiftedPos(C.poss, s.p[0]) : null;
+      if (first) {
+        pts.push(first);
+        durs.push(0.16);
+      }
+      for (let i = 0; i + 1 < s.p.length; i++) {
+        pts.push(shiftedPos(C.poss, s.p[i + 1]));
+        durs.push(0.3);
+      }
+      const lastPt = pts[pts.length - 1];
+      const other: Side = C.poss === "home" ? "away" : "home";
+      const up = attacksUp(C.poss);
+      const mirror = sideMirror(C.poss);
+      const mouthX = s.t !== undefined ? (mirror ? 100 - s.t : s.t) : 50;
+      const goalY = up ? 1.5 : 98.5;
+      let end: { x: number; y: number } | null = null;
+      let dur = 0.35;
+      switch (s.o) {
+        case "turnover":
+          if (s.b !== undefined) {
+            end = shiftedPos(other, s.b);
+            dur = 0.4;
+          }
+          break;
+        case "out":
+          end = { x: s.t !== undefined ? (mirror ? 100 - s.t : s.t) : 4, y: lastPt.y };
+          dur = 0.35;
+          break;
+        case "foul":
+          end = { ...lastPt };
+          dur = 0.65;
+          break;
+        case "goal":
+          end = { x: mouthX, y: goalY };
+          dur = 0.5;
+          break;
+        case "save":
+          end = s.b !== undefined ? shiftedPos(other, s.b) : { x: mouthX, y: goalY };
+          dur = 0.55;
+          break;
+        case "block":
+          end = s.b !== undefined ? shiftedPos(other, s.b) : lastPt;
+          dur = 0.45;
+          break;
+        case "miss":
+          end = { x: mouthX, y: up ? -4 : 104 };
+          dur = 0.5;
+          break;
+      }
+      if (end) {
+        pts.push(end);
+        durs.push(dur);
+      }
+      C.pts = pts;
+      C.durs = durs;
+      C.pp = 0;
+      C.t = 0;
+    };
+
+    const tick = (dt: number) => {
+      const st2 = stateRef.current;
+      const lv = liveRef.current;
+      const tl = st2.timeline;
+      if (C.flashT > 0) C.flashT = Math.max(0, C.flashT - dt);
+
+      for (const side of ["home", "away"] as const) {
+        for (let i = 0; i < 11; i++) {
+          const key = side + ":" + i;
+          const tgt = shiftedPos(side, i);
+          const cur = C.anim.get(key) ?? { x: tgt.x, y: tgt.y };
+          const k = Math.min(1, dt * 4.5);
+          cur.x += (tgt.x - cur.x) * k;
+          cur.y += (tgt.y - cur.y) * k;
+          C.anim.set(key, cur);
+        }
+      }
+
+      if (C.playing && C.si < tl.length) {
+        if (!C.pts.length) enterStroke();
+        C.t += dt * C.speed;
+        while (C.durs.length && C.t >= C.durs[C.pp]) {
+          C.t -= C.durs[C.pp];
+          C.pp++;
+          if (C.pp >= C.durs.length) {
+            const done = tl[C.si];
+            C.si++;
+            C.pp = 0;
+            C.t = 0;
+            C.pts = [];
+            C.durs = [];
+            if (done) {
+              C.minute = done.m;
+              if (done.o === "goal") {
+                C.flashT = 1.5;
+                C.ballX = 50;
+                C.ballY = 50;
+                C.poss = null;
+              }
+            }
+            if (C.si < tl.length) enterStroke();
+            break;
+          }
+        }
+        if (C.pts.length && C.durs.length) {
+          const ai = Math.min(C.pp, C.pts.length - 1);
+          const a = C.pts[ai];
+          const b = C.pts[Math.min(ai + 1, C.pts.length - 1)];
+          const dd = C.durs[Math.min(C.pp, C.durs.length - 1)] || 1;
+          const q = Math.min(1, C.t / dd);
+          const e = q * q * (3 - 2 * q);
+          C.ballX = a.x + (b.x - a.x) * e;
+          C.ballY = a.y + (b.y - a.y) * e;
+          const cur = tl[C.si];
+          if (cur) C.minute = cur.m;
+        }
+      }
+
+      if (C.si >= tl.length) {
+        if (lv.half === 1 && !C.halfDone) {
+          C.halfDone = true;
+          C.playing = false;
+          cbRef.current.onHalf();
+        } else if (lv.half === 2 && !C.fullDone && st2.minute >= st2.total) {
+          C.fullDone = true;
+          C.playing = false;
+          cbRef.current.onFull();
+        }
+      }
+
+      C.uiT += dt;
+      if (C.uiT > 0.25) {
+        C.uiT = 0;
+        let gh = 0;
+        let ga = 0;
+        for (let i = 0; i <= C.si && i < tl.length; i++) {
+          const s = tl[i];
+          if (s.o !== "goal") continue;
+          const counted = i < C.si || C.pp >= Math.max(0, C.durs.length - 1);
+          if (counted) {
+            if (s.h) gh++;
+            else ga++;
+          }
+        }
+        cbRef.current.onUi(C.minute, C.si, gh, ga);
+      }
+      C.persistT += dt;
+      if (C.persistT > 2.5) {
+        C.persistT = 0;
+        cbRef.current.persist(Math.round(C.minute));
+      }
+    };
+
+    const buildFrame = (): Frame => {
+      const players: FramePlayer[] = [];
+      for (const side of ["home", "away"] as const) {
+        for (let i = 0; i < 11; i++) {
+          const cur = C.anim.get(side + ":" + i);
+          if (cur) players.push({ x: cur.x, y: cur.y, num: i + 1, side });
+        }
+      }
+      return {
+        players,
+        ball: { x: C.ballX, y: C.ballY },
+        flash: C.flashT > 0 ? "GOAL!" : null
+      };
+    };
+
+    const loop = (now: number) => {
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      tick(dt);
+      const cv = canvasRef.current;
+      if (cv) {
+        const col = colorsRef.current;
+        drawFrame(cv, buildFrame(), col.home, col.away);
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight });
-  }, [minute]);
+  }, [ui.si]);
 
-  if (!reveal) return null;
+  const setPlayingBoth = (v: boolean) => {
+    clock.current.playing = v;
+    setPlaying(v);
+  };
+  const togglePlay = () => setPlayingBoth(!clock.current.playing);
+  const cycleSpeed = () => {
+    const n = speed === 1 ? 2 : speed === 2 ? 4 : 1;
+    clock.current.speed = n;
+    setSpeed(n);
+  };
 
-  const home = game.clubs.find((c) => c.id === reveal.homeId)!;
-  const away = game.clubs.find((c) => c.id === reveal.awayId)!;
-  const goalsShown = (clubId: string) =>
-    reveal.events.filter((e) => e.type === "goal" && e.clubId === clubId && e.minute <= minute)
-      .length;
-  const shownEvents = reveal.events.filter((e) => e.minute <= minute);
-  const done = minute >= total;
+  const afterLiveChange = () => {
+    const l = useGame.getState().game?.live;
+    if (l) jumpTo(l.playhead);
+  };
 
-  const userPlayers = new Set(
-    game.players.filter((p) => p.clubId === game.userClubId).map((p) => p.id)
+  const onSkipHT = () => {
+    skipTo("ht");
+    afterLiveChange();
+  };
+  const onSkipFT = () => {
+    skipTo("ft");
+    setHtReady(false);
+    const l = useGame.getState().game?.live;
+    jumpTo(l ? l.state.total : st.total);
+    setPlayingBoth(false);
+    setFtReady(true);
+  };
+  const onStartSecondHalf = () => {
+    startSecondHalf();
+    setHtReady(false);
+    const l = useGame.getState().game?.live;
+    if (l) jumpTo(l.playhead);
+    setPlayingBoth(true);
+  };
+
+  const openChanges = () => {
+    setPlayingBoth(false);
+    setSubErr(null);
+    setPendingOut(null);
+    setExpandedSlot(null);
+    setSheetOpen(true);
+  };
+
+  const applySub = (inId: string) => {
+    if (!pendingOut) return;
+    const err = liveSub(pendingOut, inId);
+    setSubErr(err);
+    if (!err) {
+      setPendingOut(null);
+      afterLiveChange();
+    }
+  };
+
+  const stats = useMemo(() => matchStats(st, Math.max(0, ui.minute)), [st, ui.minute]);
+  const halfStats = useMemo(() => matchStats(st, 45), [st]);
+  const ft = useMemo(() => (ftReady ? finalizeLive(live) : null), [ftReady, live]);
+
+  const shownEvents = useMemo(
+    () => st.events.filter((e) => e.minute <= ui.minute),
+    [st.events, ui.minute]
   );
-  const performers = done
-    ? Object.entries(reveal.ratings)
-        .filter(([id]) => userPlayers.has(id))
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-    : [];
+
+  const userPlayers = useMemo(
+    () => new Set(game.players.filter((p) => p.clubId === userClub.id).map((p) => p.id)),
+    [game.players, userClub.id]
+  );
+  const performers = useMemo(() => {
+    if (!ft) return [];
+    return Object.entries(ft.ratings)
+      .filter(([id]) => userPlayers.has(id))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
+  }, [ft, userPlayers]);
+
+  const side = st[userSide];
+  const byId = (id: string | null | undefined) =>
+    id ? game.players.find((p) => p.id === id) : undefined;
+  const possPct = Math.round(stats.possHome * 100);
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-md flex-col px-4 pb-6 pt-6">
-      <div className="rounded-2xl border border-border bg-card p-4">
-        <div className="flex items-center justify-between">
-          <TeamBadge name={home.name} short={home.short} color={home.color} />
-          <div className="text-center">
-            <div className="text-3xl font-extrabold tracking-tight tnum">
-              {goalsShown(home.id)}–{goalsShown(away.id)}
+    <div className="mx-auto flex min-h-dvh max-w-md flex-col px-4 pb-6 pt-4">
+      <Card>
+        <CardContent className="p-3">
+          <div className="flex items-center justify-between gap-2">
+            <TeamBadge name={homeClub.name} short={homeClub.short} color={homeClub.color} />
+            <div className="text-center">
+              <div className="text-3xl font-extrabold tracking-tight tnum" data-testid="match-score">
+                {ui.gh}–{ui.ga}
+              </div>
+              <div className="text-[11px] font-semibold text-muted-foreground tnum" data-testid="match-minute">
+                {ui.minute > 90 ? "90+" : Math.max(0, Math.floor(ui.minute))}'
+                {htReady && st.minute === 45 ? " · HT" : ""}
+              </div>
             </div>
-            <div className="text-[11px] font-semibold text-muted-foreground tnum">
-              {Math.min(minute, 90)}'
+            <TeamBadge name={awayClub.name} short={awayClub.short} color={awayClub.color} right />
+          </div>
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-secondary">
+            <div
+              className="h-full bg-primary"
+              style={{ width: `${Math.min(100, (ui.minute / st.total) * 100)}%` }}
+            />
+          </div>
+          <div className="mt-1.5 flex justify-between text-[10px] font-semibold text-muted-foreground tnum">
+            <span>Poss {possPct}% · Shots {stats.shotsHome}</span>
+            <span>
+              Shots {stats.shotsAway} · Poss {100 - possPct}%
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="relative mt-3 overflow-hidden rounded-2xl border border-border">
+        <canvas ref={canvasRef} data-testid="match-pitch" className="block h-[52vh] w-full" />
+        {htReady && !ftReady && (
+          <div className="absolute inset-0 grid place-items-center bg-background/75 p-4" data-testid="ht-panel">
+            <div className="w-full max-w-xs rounded-2xl border border-border bg-card p-4 text-center">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Half time
+              </div>
+              <div className="mt-1 text-2xl font-extrabold tnum">
+                {st.home.short} {st.home.goals}–{st.away.goals} {st.away.short}
+              </div>
+              <div className="mt-1 text-[11px] text-muted-foreground tnum">
+                Poss {Math.round(halfStats.possHome * 100)}% · Shots {halfStats.shotsHome}–
+                {halfStats.shotsAway}
+              </div>
+              <div className="mt-3 grid gap-2">
+                <Button
+                  data-testid="ht-changes"
+                  variant="secondary"
+                  className="h-11 w-full font-bold"
+                  onClick={openChanges}
+                >
+                  Make changes (subs · roles · mentality)
+                </Button>
+                <Button
+                  data-testid="ht-resume"
+                  className="h-11 w-full font-bold"
+                  onClick={onStartSecondHalf}
+                >
+                  Start second half
+                </Button>
+                <button
+                  data-testid="ht-skipft"
+                  className="text-[11px] font-semibold text-muted-foreground"
+                  onClick={onSkipFT}
+                >
+                  Skip to full time
+                </button>
+              </div>
             </div>
           </div>
-          <TeamBadge name={away.name} short={away.short} color={away.color} right />
-        </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-secondary">
-          <div
-            className="h-full bg-primary transition-[width] duration-200"
-            style={{ width: `${Math.min(100, (minute / total) * 100)}%` }}
-          />
-        </div>
+        )}
+        {ftReady && (
+          <div className="absolute inset-0 grid place-items-center bg-background/80 p-4" data-testid="ft-panel">
+            <div className="w-full max-w-xs rounded-2xl border border-border bg-card p-4 text-center">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Full time
+              </div>
+              <div className="mt-1 text-2xl font-extrabold tnum">
+                {st.home.short} {st.home.goals}–{st.away.goals} {st.away.short}
+              </div>
+              {performers.length > 0 && (
+                <ul className="mt-2 space-y-1 text-left">
+                  {performers.map(([id, rating]) => {
+                    const p = game.players.find((x) => x.id === id);
+                    return (
+                      <li key={id} className="flex items-center justify-between text-sm">
+                        <span>{p?.name ?? id}</span>
+                        <span className="font-bold text-primary tnum">{rating.toFixed(1)}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              <Button
+                data-testid="match-done"
+                className="mt-3 h-11 w-full text-base font-bold"
+                onClick={finishMatch}
+              >
+                Done
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 grid grid-cols-5 gap-1.5">
+        <Button
+          data-testid="pb-play"
+          variant="secondary"
+          className="h-10 font-bold"
+          onClick={togglePlay}
+          disabled={ftReady}
+        >
+          {playing ? "Pause" : "Play"}
+        </Button>
+        <Button
+          data-testid="pb-speed"
+          variant="secondary"
+          className="h-10 font-bold tnum"
+          onClick={cycleSpeed}
+        >
+          {speed}x
+        </Button>
+        <Button
+          data-testid="pb-changes"
+          variant="secondary"
+          className="h-10 text-[11px] font-bold"
+          onClick={openChanges}
+          disabled={ftReady}
+        >
+          Changes
+        </Button>
+        <Button
+          data-testid="pb-ht"
+          variant="secondary"
+          className="h-10 text-[11px] font-bold"
+          onClick={onSkipHT}
+          disabled={live.half === 2 || htReady || ftReady}
+        >
+          → HT
+        </Button>
+        <Button
+          data-testid="pb-ft"
+          variant="secondary"
+          className="h-10 text-[11px] font-bold"
+          onClick={onSkipFT}
+          disabled={ftReady}
+        >
+          → FT
+        </Button>
       </div>
 
       <div
         ref={feedRef}
         data-testid="commentary"
-        className="mt-4 max-h-[46vh] flex-1 space-y-2 overflow-y-auto rounded-2xl border border-border bg-card p-4"
+        className="mt-3 max-h-[26vh] flex-1 space-y-1.5 overflow-y-auto rounded-2xl border border-border bg-card p-3"
       >
-        {shownEvents.map((e: MatchEvent, i) => (
+        {shownEvents.map((e, i) => (
           <div key={i} className={`flex gap-2 text-[13px] leading-snug ${eventClass[e.type] ?? ""}`}>
             <span className="w-8 shrink-0 text-right text-[11px] text-muted-foreground tnum">
-              {e.minute > 90 ? `90+` : e.minute}'
+              {e.minute > 90 ? "90+" : e.minute}'
             </span>
             <span>{e.text}</span>
           </div>
         ))}
       </div>
 
-      {!done ? (
-        <Button
-          data-testid="skip"
-          variant="secondary"
-          className="mt-4 h-12 w-full font-bold"
-          onClick={() => setMinute(total)}
-        >
-          Skip to full time
-        </Button>
-      ) : (
-        <div className="mt-4 space-y-3">
-          {performers.length > 0 && (
-            <div className="rounded-2xl border border-border bg-card p-4">
-              <div className="eyebrow">Top performers</div>
-              <ul className="mt-2 space-y-1">
-                {performers.map(([id, rating]) => {
-                  const p = game.players.find((x) => x.id === id)!;
+      <Sheet open={sheetOpen} onOpenChange={(o) => !o && setSheetOpen(false)}>
+        <SheetContent side="bottom">
+          <SheetHeader>
+            <SheetTitle>
+              Match changes — {userClub.short} {userSide === "home" ? "(home)" : "(away)"}
+            </SheetTitle>
+          </SheetHeader>
+          <div className="max-h-[66vh] space-y-4 overflow-y-auto px-4 pb-6 pt-1" data-testid="ch-sheet">
+            <div className="rounded-xl border border-border bg-card px-3 py-2 text-[11px] font-semibold text-muted-foreground tnum">
+              Subs {side.subs}/{T.maxSubs} · Windows {side.windows}/{T.subWindowsMax} (half time
+              always free)
+            </div>
+
+            <div>
+              <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Mentality
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(["def", "bal", "att"] as Mentality[]).map((m) => (
+                  <button
+                    key={m}
+                    data-testid={`ch-ment-${m}`}
+                    onClick={() => {
+                      liveMentality(m);
+                      afterLiveChange();
+                    }}
+                    className={`rounded-lg border px-2 py-2.5 text-[11px] font-bold uppercase ${
+                      side.mentality === m
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-border text-muted-foreground"
+                    }`}
+                  >
+                    {m === "def" ? "Defensive" : m === "bal" ? "Balanced" : "Attacking"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Substitutions {pendingOut ? "· pick the player coming on" : "· pick who comes off"}
+              </div>
+              {subErr && (
+                <p className="mb-1.5 rounded-lg border border-[#FFB020]/40 bg-[#FFB020]/10 px-2 py-1.5 text-[11px] text-[#FFB020]" data-testid="ch-err">
+                  {subErr}
+                </p>
+              )}
+              <div className="space-y-1">
+                {pendingOut === null
+                  ? side.slots.map((id, i) => {
+                      if (!id) return null;
+                      const p = byId(id);
+                      if (!p) return null;
+                      return (
+                        <button
+                          key={id}
+                          data-testid={`ch-out-${i}`}
+                          onClick={() => {
+                            setSubErr(null);
+                            setPendingOut(id);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg border border-border px-2 py-2 text-left text-[12px]"
+                        >
+                          <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${posChip[side.poss[i]]}`}>
+                            {side.poss[i]}
+                          </span>
+                          <span className="flex-1 truncate font-semibold">{p.name}</span>
+                          <span className="tnum text-[10px] text-muted-foreground">
+                            {ROLE_DEFS[side.roles[i]].short} · {p.condition}%
+                          </span>
+                        </button>
+                      );
+                    })
+                  : side.bench.map((id) => {
+                      const p = byId(id);
+                      if (!p) return null;
+                      return (
+                        <button
+                          key={id}
+                          data-testid={`ch-in-${id}`}
+                          onClick={() => applySub(id)}
+                          className="flex w-full items-center gap-2 rounded-lg border border-primary/50 bg-primary/5 px-2 py-2 text-left text-[12px]"
+                        >
+                          <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${posChip[p.pos]}`}>
+                            {p.pos}
+                          </span>
+                          <span className="flex-1 truncate font-semibold">{p.name}</span>
+                          <span className="tnum text-[10px] text-muted-foreground">{p.condition}%</span>
+                        </button>
+                      );
+                    })}
+              </div>
+              {pendingOut && (
+                <button
+                  className="mt-1.5 text-[11px] font-semibold text-muted-foreground"
+                  onClick={() => setPendingOut(null)}
+                >
+                  Cancel — {byId(pendingOut)?.name} stays on
+                </button>
+              )}
+            </div>
+
+            <div>
+              <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Roles
+              </div>
+              <div className="space-y-1">
+                {side.slots.map((id, i) => {
+                  if (!id) return null;
+                  const p = byId(id);
+                  if (!p) return null;
+                  const open = expandedSlot === i;
+                  const slotLike = { pos: side.poss[i], x: side.coords[i][0], y: side.coords[i][1] };
+                  const roles = open
+                    ? [...ROLE_GROUPS[side.poss[i]]].sort(
+                        (a, b) => Number(laneFits(b, slotLike)) - Number(laneFits(a, slotLike))
+                      )
+                    : [];
                   return (
-                    <li key={id} className="flex items-center justify-between text-sm">
-                      <span>{p.name}</span>
-                      <span className="font-bold text-primary tnum">{rating.toFixed(1)}</span>
-                    </li>
+                    <div key={id} className="rounded-lg border border-border">
+                      <button
+                        data-testid={`ch-role-${i}`}
+                        onClick={() => setExpandedSlot(open ? null : i)}
+                        className="flex w-full items-center gap-2 px-2 py-2 text-left text-[12px]"
+                      >
+                        <span className="flex-1 truncate font-semibold">
+                          {p.name}
+                          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                            {side.poss[i]}
+                          </span>
+                        </span>
+                        <span className="text-[10px] font-bold text-primary">
+                          {ROLE_DEFS[side.roles[i]].short}
+                        </span>
+                      </button>
+                      {open && (
+                        <div className="flex gap-1.5 overflow-x-auto px-2 pb-2">
+                          {roles.map((r: RoleId) => (
+                            <button
+                              key={r}
+                              data-testid={`ch-rolechip-${r}`}
+                              onClick={() => {
+                                liveRole(i, r);
+                                setExpandedSlot(null);
+                                afterLiveChange();
+                              }}
+                              className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold ${
+                                side.roles[i] === r
+                                  ? "border-primary bg-primary/15 text-primary"
+                                  : "border-border text-muted-foreground"
+                              }`}
+                            >
+                              {ROLE_DEFS[r].short}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
-              </ul>
+              </div>
             </div>
-          )}
-          <Button
-            data-testid="match-done"
-            className="h-12 w-full text-base font-bold"
-            onClick={finishMatch}
-          >
-            Done
-          </Button>
-        </div>
-      )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
@@ -151,16 +776,14 @@ function TeamBadge({
   right?: boolean;
 }) {
   return (
-    <div className={`flex w-[35%] items-center gap-2 ${right ? "flex-row-reverse" : ""}`}>
+    <div className={`flex w-[34%] items-center gap-2 ${right ? "flex-row-reverse" : ""}`}>
       <span
         className="grid size-8 shrink-0 place-items-center rounded-full text-[10px] font-extrabold"
         style={{ backgroundColor: color, color: "#0B1B12" }}
       >
         {short}
       </span>
-      <span className={`truncate text-xs font-semibold ${right ? "text-right" : ""}`}>
-        {name}
-      </span>
+      <span className={`truncate text-xs font-semibold ${right ? "text-right" : ""}`}>{name}</span>
     </div>
   );
 }

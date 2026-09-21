@@ -34,6 +34,11 @@ export const T = {
   /** substitutions */
   subMinute: 62,
   maxSubs: 5,
+  /** in-match substitution windows (PL rules: 3 windows + half-time, 5 subs) */
+  subWindowsMax: 3,
+
+  /** possession timeline (2D match view) */
+  chainPasses: [2, 5] as [number, number],
 
   ratingBase: 6.0
 };

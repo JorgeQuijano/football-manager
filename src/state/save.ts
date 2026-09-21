@@ -31,6 +31,31 @@ export function normalizeSave(save: SaveGame): SaveGame {
       validateFormation(f).length === 0
   );
 
+  if (save.live) {
+    const l = save.live;
+    const fx = l?.state
+      ? save.fixtures.find(
+          (f) =>
+            f.round === l.state.round &&
+            f.homeId === l.state.homeId &&
+            f.awayId === l.state.awayId &&
+            !f.played
+        )
+      : undefined;
+    const ok =
+      !!fx &&
+      l.state.round === save.round &&
+      !!l.base &&
+      !!l.state &&
+      Array.isArray(l.changes) &&
+      Array.isArray(l.state.timeline) &&
+      (l.half === 1 || l.half === 2) &&
+      typeof l.playhead === "number" &&
+      typeof l.state.minute === "number";
+    if (!ok) save.live = undefined;
+    else l.playhead = Math.max(0, Math.min(l.state.total, l.playhead));
+  }
+
   const def = resolveFormation(save.lineup?.formation, save.customFormations);
   if (!def) {
     save.lineup = autoLineup(squadOf(save.players, save.userClubId), builtinFormation("4-3-3"), {

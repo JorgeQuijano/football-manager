@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { mulberry32, hashSeed } from "./rng";
 import { newGame } from "./generate";
-import { nextSeason, playRound, seasonRounds } from "./advance";
+import { nextSeason, playRound, resolveSide, seasonRounds } from "./advance";
+import { simulateMatch } from "./match";
+import { addLiveChange, finalizeLive, playersById, resumeSecondHalf, startLive, userFixture } from "./live";
 import { computeTable } from "./league";
 import {
   attackScore,
@@ -493,6 +495,173 @@ describe("formations", () => {
     const remapped = remapLineup(squad, base, builtinFormation("4-3-3"), def);
     expect(remapped.roles[9]).toBe("target");
     expect(remapped.roles[10]).toBe("af");
+  });
+});
+
+describe("live match", () => {
+  function inputsFor(save: SaveGame, fx: { homeId: string; awayId: string }) {
+    const home = resolveSide(save, fx.homeId);
+    const away = resolveSide(save, fx.awayId);
+    return {
+      round: save.round,
+      homeClub: save.clubs.find((c) => c.id === fx.homeId)!,
+      awayClub: save.clubs.find((c) => c.id === fx.awayId)!,
+      homeXI: home.xi,
+      awayXI: away.xi,
+      homeBench: home.bench,
+      awayBench: away.bench,
+      homeMentality: home.mentality,
+      awayMentality: away.mentality,
+      homeRoles: home.roles,
+      awayRoles: away.roles,
+      homeCoords: home.coords,
+      awayCoords: away.coords,
+      homePoss: home.poss,
+      awayPoss: away.poss
+    };
+  }
+
+  it("half-time split reproduces the one-shot simulation exactly", () => {
+    const save = newGame(4242);
+    const fx = userFixture(save)!;
+    const base = inputsFor(save, fx);
+    const userSide = fx.homeId === save.userClubId ? "home" : "away";
+    const one = simulateMatch({
+      ...base,
+      rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)),
+      userSide
+    });
+    const live = startLive(save)!;
+    const second = resumeSecondHalf(live, playersById(save));
+    const split = finalizeLive(second);
+    expect(split.homeGoals).toBe(one.homeGoals);
+    expect(split.awayGoals).toBe(one.awayGoals);
+    expect(JSON.stringify(split.events)).toBe(JSON.stringify(one.events));
+    expect(JSON.stringify(split.scorers)).toBe(JSON.stringify(one.scorers));
+    expect(second.state.timeline.length).toBeGreaterThan(20);
+  });
+
+  it("timeline stays consistent (minutes ascending, slots valid, goals counted)", () => {
+    const live = startLive(newGame(999))!;
+    const st = live.state;
+    let last = 0;
+    for (const s of st.timeline) {
+      expect(s.m).toBeGreaterThanOrEqual(last);
+      last = s.m;
+      expect(s.m).toBeLessThanOrEqual(45);
+      for (const slot of s.p) {
+        expect(slot).toBeGreaterThanOrEqual(0);
+        expect(slot).toBeLessThanOrEqual(10);
+      }
+    }
+    expect(st.timeline.filter((s) => s.o === "goal").length).toBe(st.home.goals + st.away.goals);
+  });
+
+  it("enforces PL substitution rules: 5 subs, 3 in-match windows, half time free, no returns", () => {
+    const save = newGame(777);
+    const players = playersById(save);
+    const live0 = startLive(save)!;
+    const key = live0.state.userSide!;
+    let live = live0;
+    const pick = () => {
+      const side = live.state[key];
+      const i = side.poss.findIndex((p, j) => p !== "GK" && !!side.slots[j]);
+      return { outId: side.slots[i]!, inId: side.bench[0]! };
+    };
+    const firstOut = pick().outId;
+    for (let k = 0; k < 3; k++) {
+      const c = pick();
+      const r = addLiveChange(live, players, {
+        minute: 30,
+        kind: "sub",
+        side: key,
+        outId: c.outId,
+        inId: c.inId
+      });
+      expect(r.error).toBeUndefined();
+      live = r.live!;
+    }
+    expect(live.state[key].windows).toBe(3);
+    const c4 = pick();
+    const r4 = addLiveChange(live, players, {
+      minute: 30,
+      kind: "sub",
+      side: key,
+      outId: c4.outId,
+      inId: c4.inId
+    });
+    expect(r4.error).toMatch(/windows/i);
+    const r5 = addLiveChange(live, players, {
+      minute: 45,
+      kind: "sub",
+      side: key,
+      outId: c4.outId,
+      inId: c4.inId
+    });
+    expect(r5.error).toBeUndefined();
+    live = r5.live!;
+    expect(live.state[key].subs).toBe(4);
+    expect(live.state[key].windows).toBe(3);
+    const c6 = pick();
+    const r6 = addLiveChange(live, players, {
+      minute: 45,
+      kind: "sub",
+      side: key,
+      outId: c6.outId,
+      inId: c6.inId
+    });
+    expect(r6.error).toBeUndefined();
+    live = r6.live!;
+    expect(live.state[key].subs).toBe(5);
+    const c7 = pick();
+    const r7 = addLiveChange(live, players, {
+      minute: 45,
+      kind: "sub",
+      side: key,
+      outId: c7.outId,
+      inId: c7.inId
+    });
+    expect(r7.error).toMatch(/substitutions left/i);
+    const r8 = addLiveChange(live, players, {
+      minute: 45,
+      kind: "sub",
+      side: key,
+      outId: c7.outId,
+      inId: firstOut
+    });
+    expect(r8.error).toMatch(/no longer available/i);
+  });
+
+  it("second half carries substitutions and mentality changes", () => {
+    const save = newGame(31);
+    const players = playersById(save);
+    const live0 = startLive(save)!;
+    const key = live0.state.userSide!;
+    const side0 = live0.state[key];
+    const i = side0.poss.findIndex((p, j) => p !== "GK" && !!side0.slots[j]);
+    const outId = side0.slots[i]!;
+    const inId = side0.bench[0]!;
+    let live = addLiveChange(live0, players, {
+      minute: 20,
+      kind: "sub",
+      side: key,
+      outId,
+      inId
+    }).live!;
+    live = addLiveChange(live, players, {
+      minute: 20,
+      kind: "mentality",
+      side: key,
+      mentality: "att"
+    }).live!;
+    const second = resumeSecondHalf(live, players);
+    expect(second.half).toBe(2);
+    expect(second.state[key].mentality).toBe("att");
+    expect(second.state[key].slots).toContain(inId);
+    expect(second.state[key].slots).not.toContain(outId);
+    expect(second.state.timeline.some((s) => s.m > 45)).toBe(true);
+    const again = resumeSecondHalf(live, players);
+    expect(JSON.stringify(again.state.timeline)).toBe(JSON.stringify(second.state.timeline));
   });
 });
 

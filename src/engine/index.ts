@@ -7,4 +7,5 @@ export * from "./ratings";
 export * from "./league";
 export * from "./generate";
 export * from "./match";
+export * from "./live";
 export * from "./advance";

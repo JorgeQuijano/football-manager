@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newGame } from "../engine";
+import { newGame, startLive } from "../engine";
 import { normalizeSave } from "./save";
 
 describe("normalizeSave", () => {
@@ -46,5 +46,21 @@ describe("normalizeSave", () => {
     for (const p of old.players) delete (p as { assists?: unknown }).assists;
     const fixed = normalizeSave(old);
     expect(fixed.players.every((p) => p.assists === 0)).toBe(true);
+  });
+
+  it("clamps the live-match playhead and drops a stale live match", () => {
+    const save = newGame(41);
+    const live = startLive(save)!;
+    live.playhead = 999;
+    save.live = live;
+    const fixed = normalizeSave(save);
+    expect(fixed.live).toBeDefined();
+    expect(fixed.live?.playhead).toBe(live.state.total);
+
+    const save2 = newGame(42);
+    save2.live = startLive(save2)!;
+    save2.round += 1;
+    const fixed2 = normalizeSave(save2);
+    expect(fixed2.live).toBeUndefined();
   });
 });
