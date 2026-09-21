@@ -19,6 +19,9 @@ const KEY = "fm-save-v1";
  * - fall back to a built-in shape if the stored formation no longer exists
  */
 export function normalizeSave(save: SaveGame): SaveGame {
+  for (const p of save.players) {
+    if (typeof p.assists !== "number") p.assists = 0;
+  }
   if (!Array.isArray(save.customFormations)) save.customFormations = [];
   save.customFormations = save.customFormations.filter(
     (f) =>

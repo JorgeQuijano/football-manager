@@ -93,6 +93,7 @@ export function playRound(input: SaveGame): { save: SaveGame; userMatch?: MatchR
         playedIds.add(p.id);
       }
       p.goals += u.goals;
+      p.assists += u.assists;
       if (u.red) p.suspension = Math.max(p.suspension, 1);
       if (u.injuredWeeks > 0) p.injuredWeeks = Math.max(p.injuredWeeks, u.injuredWeeks);
       if (u.conditionLoss > 0) {
@@ -142,6 +143,7 @@ export function nextSeason(input: SaveGame): SaveGame {
     p.suspension = 0;
     p.apps = 0;
     p.goals = 0;
+    p.assists = 0;
   }
   const def =
     resolveFormation(save.lineup.formation, save.customFormations) ?? builtinFormation("4-3-3");

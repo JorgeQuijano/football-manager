@@ -23,6 +23,8 @@ export const T = {
   redChancePerFoul: 0.045,
   injuryPerMatch: 0.32,
   injuryWeeks: [1, 4] as [number, number],
+  blockShare: 0.2, // share of non-goal outcomes that become blocks (defence-scaled)
+  assistChance: 0.82, // share of goals that are assisted
 
   /** conditioning */
   conditionLossStarter: 16,

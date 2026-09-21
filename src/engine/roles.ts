@@ -96,6 +96,24 @@ export function defaultRoleFor(pos: Position): RoleId {
   return ROLE_GROUPS[pos][0];
 }
 
+/**
+ * Finishing weight vectors — what counts as a good shot, per role.
+ * Target men finish with physique; poachers with pure shooting.
+ */
+const FIN: Record<RoleId, Partial<Record<keyof PlayerAttrs, number>>> = {
+  keeper: { shooting: 0.5, pace: 0.5 },
+  sweeper: { shooting: 0.5, pace: 0.5 },
+  stopper: { shooting: 0.55, physical: 0.45 },
+  bpd: { shooting: 0.7, physical: 0.3 },
+  wb: { shooting: 0.75, pace: 0.25 },
+  b2b: { shooting: 0.7, pace: 0.15, physical: 0.15 },
+  playmaker: { shooting: 0.7, passing: 0.2, pace: 0.1 },
+  bwm: { shooting: 0.6, physical: 0.4 },
+  poacher: { shooting: 0.8, pace: 0.2 },
+  target: { shooting: 0.45, physical: 0.5, pace: 0.05 },
+  presser: { shooting: 0.6, pace: 0.3, physical: 0.1 }
+};
+
 const KEYS = [
   "pace",
   "shooting",
@@ -118,4 +136,8 @@ export function roleAttack(p: Player, role: RoleId): number {
 
 export function roleDefense(p: Player, role: RoleId): number {
   return dot(p.attrs, ROLE_DEFS[role].def);
+}
+
+export function roleFinish(p: Player, role: RoleId): number {
+  return dot(p.attrs, FIN[role]);
 }

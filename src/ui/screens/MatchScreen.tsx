@@ -12,6 +12,7 @@ const eventClass: Record<string, string> = {
   sub: "text-muted-foreground",
   save: "text-muted-foreground",
   miss: "text-muted-foreground",
+  block: "text-muted-foreground",
   half: "font-bold",
   full: "font-bold",
   kickoff: "text-muted-foreground"

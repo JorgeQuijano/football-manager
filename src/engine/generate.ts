@@ -93,7 +93,8 @@ function makePlayer(
     injuredWeeks: 0,
     suspension: 0,
     apps: 0,
-    goals: 0
+    goals: 0,
+    assists: 0
   };
 }
 

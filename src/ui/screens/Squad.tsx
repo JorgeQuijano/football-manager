@@ -35,7 +35,8 @@ export function Squad() {
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-semibold">{p.name}</span>
               <span className="text-[11px] text-muted-foreground tnum">
-                age {p.age} · {p.goals} goals
+                age {p.age} · {p.goals} goal{p.goals === 1 ? "" : "s"} · {p.assists} assist
+                {p.assists === 1 ? "" : "s"}
                 {p.injuredWeeks > 0 && (
                   <span className="text-[#FFB020]"> · injured ({p.injuredWeeks})</span>
                 )}

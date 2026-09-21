@@ -18,7 +18,7 @@ import {
   overallFor,
   suitability
 } from "./ratings";
-import { defaultRoleFor, ROLE_DEFS } from "./roles";
+import { defaultRoleFor, roleFinish, ROLE_DEFS } from "./roles";
 
 export interface MatchInputs {
   round: number;
@@ -56,6 +56,16 @@ const MISS_TEXT: TextFn[] = [
   (s) => `${s} snatches at it — over the bar.`,
   (s) => `Dragged wide by ${s}.`,
   (s) => `${s} shoots into the stands.`
+];
+const BLOCK_TEXT: TextFn[] = [
+  (s, d) => `Blocked! ${d} throws himself in front of ${s}'s shot.`,
+  (s, d) => `${s} is denied — ${d} gets a crucial block in.`,
+  (s, d) => `Huge block by ${d} to deny ${s}.`
+];
+const ASSIST_SUFFIX: TextFn[] = [
+  (s) => ` — ${s} with the assist.`,
+  (s) => ` — teed up by ${s}.`,
+  (s) => ` — ${s} the creator.`
 ];
 const YELLOW_TEXT: TextFn[] = [
   (s) => `Yellow card: ${s} goes in the book.`,
@@ -136,6 +146,7 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
         playerId: p.id,
         minutes: 0,
         goals: 0,
+        assists: 0,
         yellow: 0,
         red: false,
         injuredWeeks: 0,
@@ -188,8 +199,7 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
     );
     const gk = def.xi.find((p) => p.pos === "GK") ?? def.xi[0];
     const finish =
-      (shooter.attrs.shooting * 0.7 + shooter.attrs.pace * 0.3) *
-      ROLE_DEFS[roleFor(shooter)].finish;
+      roleFinish(shooter, roleFor(shooter)) * ROLE_DEFS[roleFor(shooter)].finish;
     const gkSkill = gk ? defenseScore(gk, roleFor(gk)) : 50;
     let pGoal = T.conversionBase * (1 + (finish - 60) / 120) * (1 + (60 - gkSkill) / 160);
     pGoal = clamp(pGoal, 0.04, 0.3);
@@ -198,6 +208,17 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
       atk.goals++;
       upd(shooter).goals++;
       ratings[shooter.id] = clamp(ratings[shooter.id] + 1.0, 4, 10);
+
+      const mates = atk.xi.filter((p) => p.id !== shooter.id && p.pos !== "GK");
+      const assister =
+        mates.length > 0 && rng() < T.assistChance
+          ? pickWeighted(rng, mates, (p) => p.attrs.passing)
+          : undefined;
+      if (assister) {
+        upd(assister).assists++;
+        ratings[assister.id] = clamp(ratings[assister.id] + 0.4, 4, 10);
+      }
+
       scorers.push({
         playerId: shooter.id,
         name: shooter.name,
@@ -209,7 +230,9 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
         type: "goal",
         clubId: atk.club.id,
         playerId: shooter.id,
-        text: pick(rng, GOAL_TEXT)(shooter.name, atk.club.short)
+        text:
+          pick(rng, GOAL_TEXT)(shooter.name, atk.club.short) +
+          (assister ? pick(rng, ASSIST_SUFFIX)(assister.name, "") : "")
       });
     } else if (rng() < T.saveShare) {
       events.push({
@@ -221,13 +244,29 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
       });
       if (gk) ratings[gk.id] = clamp(ratings[gk.id] + 0.15, 4, 10);
     } else {
-      events.push({
-        minute,
-        type: "miss",
-        clubId: atk.club.id,
-        playerId: shooter.id,
-        text: pick(rng, MISS_TEXT)(shooter.name, "")
-      });
+      const blockers = def.xi.filter((p) => p.pos !== "GK");
+      const defMean =
+        blockers.reduce((acc, p) => acc + defenseScore(p, roleFor(p)), 0) /
+        Math.max(1, blockers.length);
+      if (blockers.length > 0 && rng() < T.blockShare * clamp(defMean / 62, 0.6, 1.4)) {
+        const blocker = pickWeighted(rng, blockers, (p) => defenseScore(p, roleFor(p)));
+        ratings[blocker.id] = clamp(ratings[blocker.id] + 0.15, 4, 10);
+        events.push({
+          minute,
+          type: "block",
+          clubId: def.club.id,
+          playerId: blocker.id,
+          text: pick(rng, BLOCK_TEXT)(shooter.name, blocker.name)
+        });
+      } else {
+        events.push({
+          minute,
+          type: "miss",
+          clubId: atk.club.id,
+          playerId: shooter.id,
+          text: pick(rng, MISS_TEXT)(shooter.name, "")
+        });
+      }
     }
   };
 
@@ -237,7 +276,10 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
     const offender = pickWeighted(
       rng,
       offenders,
-      (p) => (p.pos === "DF" ? 2 : p.pos === "MF" ? 1.5 : 1)
+      (p) =>
+        (p.pos === "DF" ? 2 : p.pos === "MF" ? 1.5 : 1) *
+        (1 + Math.max(0, 70 - p.attrs.defending) / 80) *
+        (1 + (p.attrs.physical - 65) / 250)
     );
     if (rng() < T.redChancePerFoul) {
       removeFromPitch(s, offender, minute);
@@ -381,6 +423,7 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
         playerId: id,
         minutes: 0,
         goals: 0,
+        assists: 0,
         yellow: 0,
         red: false,
         injuredWeeks: 0,

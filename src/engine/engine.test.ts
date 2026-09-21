@@ -13,7 +13,7 @@ import {
   validateLineup
 } from "./ratings";
 import { builtinFormation, resolveFormation, validateFormation } from "./formations";
-import { defaultRoleFor, ROLE_GROUPS } from "./roles";
+import { defaultRoleFor, roleFinish, ROLE_GROUPS } from "./roles";
 import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
 import type { Player, SaveGame } from "./types";
 
@@ -191,6 +191,21 @@ describe("match bookkeeping", () => {
       expect(u.conditionLoss).toBeGreaterThanOrEqual(3);
     }
   });
+
+  it("credits assists only to non-GK teammates, never more than goals", () => {
+    const save = newGame(99);
+    const { userMatch } = playRound(save);
+    const m = userMatch!;
+    const goals = m.updates.reduce((a, u) => a + u.goals, 0);
+    const assists = m.updates.reduce((a, u) => a + u.assists, 0);
+    expect(assists).toBeLessThanOrEqual(goals);
+    for (const u of m.updates) {
+      if (u.assists > 0) {
+        const p = save.players.find((pp) => pp.id === u.playerId)!;
+        expect(p.pos).not.toBe("GK");
+      }
+    }
+  });
 });
 
 describe("roles", () => {
@@ -213,6 +228,7 @@ describe("roles", () => {
     suspension: 0,
     apps: 0,
     goals: 0,
+    assists: 0,
     ...over
   });
 
@@ -249,6 +265,19 @@ describe("roles", () => {
         expect(y).toBeLessThanOrEqual(95);
       }
     }
+  });
+
+  it("role finishing weights make physical strikers viable", () => {
+    const powerhouse = player({
+      pos: "FW",
+      attrs: { pace: 55, shooting: 62, passing: 60, defending: 45, physical: 88, reflexes: 40, handling: 40 }
+    });
+    const sniper = player({
+      pos: "FW",
+      attrs: { pace: 80, shooting: 86, passing: 55, defending: 40, physical: 55, reflexes: 40, handling: 40 }
+    });
+    expect(roleFinish(powerhouse, "target")).toBeGreaterThan(roleFinish(powerhouse, "poacher"));
+    expect(roleFinish(sniper, "poacher")).toBeGreaterThan(roleFinish(sniper, "target"));
   });
 });
 
@@ -296,6 +325,7 @@ describe("lineup ops", () => {
       suspension: 0,
       apps: 0,
       goals: 0,
+      assists: 0,
       ...over
     });
     const tiredStar = mk({
@@ -335,7 +365,8 @@ describe("conditioning", () => {
       injuredWeeks: 0,
       suspension: 0,
       apps: 0,
-      goals: 0
+      goals: 0,
+      assists: 0
     });
     const kid = mk(19, 78);
     const vet = mk(34, 52);

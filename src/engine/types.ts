@@ -36,6 +36,7 @@ export interface Player {
   suspension: number; // matches left to sit out; 0 = available
   apps: number;
   goals: number;
+  assists: number;
 }
 
 export interface Club {
@@ -61,6 +62,7 @@ export type MatchEventType =
   | "goal"
   | "save"
   | "miss"
+  | "block"
   | "yellow"
   | "red"
   | "injury"
@@ -80,6 +82,7 @@ export interface PlayerUpdate {
   playerId: string;
   minutes: number;
   goals: number;
+  assists: number;
   yellow: number;
   red: boolean;
   injuredWeeks: number; // if > 0, newly injured

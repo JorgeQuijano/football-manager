@@ -36,13 +36,13 @@ Dependency direction: `rng`/`types` are leaves; `tuning`, `roles`, `formations`,
 
 ## 3. Data model (`types.ts`)
 
-- `Player` — `pos` (GK/DF/MF/FW), 7 attributes (`pace, shooting, passing, defending, physical, reflexes, handling`), `condition` 0–100, `injuredWeeks`, `suspension`, `apps`, `goals`.
+- `Player` — `pos` (GK/DF/MF/FW), 7 attributes (`pace, shooting, passing, defending, physical, reflexes, handling`), `condition` 0–100, `injuredWeeks`, `suspension`, `apps`, `goals`, `assists`.
 - `Club` — `strength` (generation-time offset), `formation` (AI preference; always a built-in).
 - `Fixture` — `round`, `homeId`, `awayId`, `played`, goals once played.
 - `FormationSlot` — `{ pos, x, y }`; **x 0=left→100=right, y 0=opponent goal→100=own goal**.
 - `FormationDef` — `{ id, name, slots[11] }`; `id` is a built-in `FormationId` or a custom `cf-…`.
 - `Lineup` — `formation: string` (resolved via `resolveFormation`), `starters[11]`, `bench[7]`, `mentality`, `roles[11]` (one `RoleId` per **slot**, not per player).
-- `PlayerUpdate` — what a match wants applied to a player: `minutes, goals, yellow, red, injuredWeeks, conditionLoss`. Players with 0 minutes get no update.
+- `PlayerUpdate` — what a match wants applied to a player: `minutes, goals, assists, yellow, red, injuredWeeks, conditionLoss`. Players with 0 minutes get no update.
 - `MatchResult` — `fixtureKey, events[], ratings (only players with minutes>0), updates[], scorers[]`.
 - `SaveGame` — `saveVersion: 1`, seed/season/round, clubs/players/fixtures, `lineup`, `customFormations[]`, last results.
 
@@ -85,6 +85,7 @@ Dependency direction: `rng`/`types` are leaves; `tuning`, `roles`, `formations`,
   | Pressing Forward | PF | FW | pace .4, shooting .35, physical .25 | physical .4, pace .3, defending .3 | 1.05 | 0.95 |
 
   Defaults per position: keeper / stopper / b2b / presser. `shot` scales shooter-selection weight, `finish` scales conversion — both consumed by `match.ts`.
+  Each role also has a **finishing weight vector** (`FIN` in `roles.ts`) describing what a good shot is made of: Poachers finish with shooting (.8) + pace (.2); Target Men with physical (.5) + shooting (.45); Wing-Backs with pace. `roleFinish()` is the dot product the sim uses; the `finish` scalar above then biases conversion.
 - **Team strength**: `attackStrength(players, roles, mentality)` = mean over outfield of `attackScore(role) × conditionFactor` `× mentality.att`; `defenseStrength` = XI mean `× mentality.def`. `conditionFactor = 0.72 + 0.28 × condition/100` (a 40%-condition player performs ~11% worse).
 - `suitability(p, slot)` — 1.0 same position, 0.92 adjacent, 0.85 two apart, 0.5 GK↔outfield.
 - `slotScoreFor(p, slot, role?, condWeight=0.25)` — position-mixed attack/defence blend × suitability × condition blend. Powers picker ordering, "Top pick", and rest suggestions.
@@ -106,8 +107,8 @@ Inputs: clubs, both XIs + benches (available players, slot order), mentalities, 
 Per minute, per side:
 
 1. **Chance rate**: `pH = clamp(0.135 × 2 × att / (att + defOpp), 0.02, 0.45)`; home attack ×1.08. `att`/`def` are the strength functions (condition- and mentality-adjusted).
-2. **Chance resolution**: shooter picked by weight `posFactor (FW 4 / MF 2.4 / DF 0.7) × (0.5 + shooting/100) × role.shot`. `finish = (0.7·shooting + 0.3·pace) × role.finish`. `pGoal = clamp(0.115 × (1 + (finish−60)/120) × (1 + (60−gkSkill)/160), 0.04, 0.3)` where `gkSkill = defenseScore(GK, role)`. Non-goals split: 42% saves, rest misses. Scorer gets +1.0 rating; keeper +0.15 per save.
-3. **Fouls/cards**: ~3.6 yellows/match budget; 4.5% of fouls escalate to straight red, second yellows send off. Offenders weighted DF 2 / MF 1.5 / FW 1. −0.15 (−0.5 red) rating.
+2. **Chance resolution**: shooter picked by weight `posFactor (FW 4 / MF 2.4 / DF 0.7) × (0.5 + shooting/100) × role.shot`. `finish = roleFinish(attrs, role) × role.finish` — role-weighted, so physical counts for a Target Man and pace for a Wing-Back. `pGoal = clamp(0.115 × (1 + (finish−60)/120) × (1 + (60−gkSkill)/160), 0.04, 0.3)` where `gkSkill = defenseScore(GK, role)`. Goals: scorer +1.0 rating; **82% of goals get an assist** — a non-GK teammate weighted by passing (+0.4 rating), named in the commentary. Non-goals split: 42% saves (keeper +0.15 per save); then ~20% × a defence scaling of 0.6–1.4 resolve as **blocks** — credited to a defender weighted by defence score (+0.15); the rest are misses.
+3. **Fouls/cards**: ~3.6 yellows/match budget; 4.5% of fouls escalate to straight red, second yellows send off. Offenders weighted DF 2 / MF 1.5 / FW 1, scaled by sloppy defending (`1 + max(0, 70 − defending)/80`) and physique (`1 + (physical − 65)/250`). −0.15 (−0.5 red) rating.
 4. **Injuries**: 0.32/match; the victim is drawn with weight `1 + max(0, 80 − condition)/50` (tired players break more often); 1–4 weeks; auto-subbed if subs remain.
 5. **Subs** (minutes 62/72/80, 50% each): worst `attack+defence` player off, best bench option (`overall × fit for the slot`) on. **Subs inherit the role of the player they replace** — roles live on slots, not players. Max 5 subs.
 6. **Bookkeeping**: entry/exit minutes tracked; `conditionLoss = max(3, round(16 × minutes/90) + 0..3)`; end-of-match rating adjustments (win +0.2, GK/DF clean sheet +0.4, loss −0.2); ratings are rounded to 1 decimal and exist only for players with minutes > 0. Every player who appeared (starters, subs, red-carded, injured) gets a `PlayerUpdate`.
@@ -147,6 +148,8 @@ Commentary: >3 text variants per event type; events carry `minute`, `type`, opti
 | `mentality` (att/def ±15%) | sharper trade-offs | |
 | `yellowPerMatch` (3.6) / `redChancePerFoul` (0.045) | more cards/suspensions | |
 | `injuryPerMatch` (0.32) / `injuryWeeks` (1–4) | more availability chaos | |
+| `blockShare` (0.2) | more blocked shots / defender credit | scales 0.6–1.4 with the defence's mean score |
+| `assistChance` (0.82) | fewer solo goals | assister weighted by passing |
 | `conditionLossStarter` (16) | harsher fatigue | pairs with `weeklyRecovery` coefficients |
 | `tiredThreshold` (65) | earlier rotation prompts | UI-facing |
 | `subMinute` (62) / `maxSubs` (5) | more/less bench impact | |

@@ -39,4 +39,12 @@ describe("normalizeSave", () => {
     expect(fixed3.lineup.starters.filter(Boolean)).toHaveLength(11);
     expect(fixed3.lineup.roles).toHaveLength(11);
   });
+
+  it("backfills assists for players from older saves", () => {
+    const save = newGame(31);
+    const old = JSON.parse(JSON.stringify(save)) as typeof save;
+    for (const p of old.players) delete (p as { assists?: unknown }).assists;
+    const fixed = normalizeSave(old);
+    expect(fixed.players.every((p) => p.assists === 0)).toBe(true);
+  });
 });

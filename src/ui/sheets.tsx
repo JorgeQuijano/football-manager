@@ -188,7 +188,8 @@ export function PlayerDetailSheet({
             <SheetHeader>
               <SheetTitle>{p.name}</SheetTitle>
               <SheetDescription>
-                {p.pos} · age {p.age} · {p.apps} apps · {p.goals} goals
+                {p.pos} · age {p.age} · {p.apps} app{p.apps === 1 ? "" : "s"} · {p.goals} goal
+                {p.goals === 1 ? "" : "s"} · {p.assists} assist{p.assists === 1 ? "" : "s"}
               </SheetDescription>
             </SheetHeader>
             <div className="space-y-4 px-4 pb-8">
