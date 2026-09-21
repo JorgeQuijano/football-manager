@@ -12,8 +12,8 @@ import {
   squadOf,
   validateLineup
 } from "./ratings";
-import { builtinFormation, resolveFormation, validateFormation } from "./formations";
-import { defaultRoleFor, roleFinish, ROLE_GROUPS } from "./roles";
+import { builtinFormation, resolveFormation, roleTemplate, scratchSlots, validateFormation, validateTemplate } from "./formations";
+import { defaultRoleFor, laneFits, roleFinish, ROLE_DEFS, ROLE_GROUPS } from "./roles";
 import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
 import type { Player, SaveGame } from "./types";
 
@@ -279,6 +279,26 @@ describe("roles", () => {
     expect(roleFinish(powerhouse, "target")).toBeGreaterThan(roleFinish(powerhouse, "poacher"));
     expect(roleFinish(sniper, "poacher")).toBeGreaterThan(roleFinish(sniper, "target"));
   });
+
+  it("every role has a distinct profile within its group", () => {
+    const norm = (o: object) =>
+      JSON.stringify(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
+    const seen = new Map<string, string>();
+    for (const roles of Object.values(ROLE_GROUPS)) {
+      for (const r of roles) {
+        const d = ROLE_DEFS[r];
+        const key = `${norm(d.atk)}|${norm(d.def)}|${d.shot}|${d.finish}|${d.assist}`;
+        expect(seen.has(key), `duplicate profile: ${r} vs ${seen.get(key)}`).toBe(false);
+        seen.set(key, r);
+      }
+    }
+  });
+
+  it("creator roles carry assist bias, finishers carry shot bias", () => {
+    expect(ROLE_DEFS.playmaker.assist).toBeGreaterThan(ROLE_DEFS.poacher.assist);
+    expect(ROLE_DEFS.w.assist).toBeGreaterThan(ROLE_DEFS.cm.assist);
+    expect(ROLE_DEFS.poacher.shot).toBeGreaterThan(ROLE_DEFS.dlp.shot);
+  });
 });
 
 describe("lineup ops", () => {
@@ -419,6 +439,27 @@ describe("formations", () => {
     expect(remapped.formation).toBe("4-4-2");
     expect(remapped.starters[0]).toBe(l.starters[0]);
     expect(validateLineup(squad, remapped)).toEqual([]);
+  });
+
+  it("role templates are valid and lane-aware for every built-in formation", () => {
+    for (const fid of FORMATION_IDS) {
+      const def = builtinFormation(fid);
+      const tpl = roleTemplate(def);
+      expect(tpl).toHaveLength(11);
+      expect(validateTemplate(def, tpl)).toEqual([]);
+      tpl.forEach((r, i) => expect(ROLE_GROUPS[def.slots[i].pos]).toContain(r));
+    }
+  });
+
+  it("custom formations get geometry-based role defaults", () => {
+    const def = { id: "cf-geo", name: "Geo", slots: scratchSlots() };
+    const tpl = roleTemplate(def);
+    expect(tpl).toHaveLength(11);
+    expect(tpl[0]).toBe("keeper");
+    expect(tpl[1]).toBe("wb");
+    expect(tpl[2]).toBe("stopper");
+    tpl.forEach((r, i) => expect(laneFits(r, def.slots[i])).toBe(true));
+    expect(validateTemplate(def, tpl)).toEqual([]);
   });
 });
 

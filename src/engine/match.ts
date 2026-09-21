@@ -212,7 +212,7 @@ export function simulateMatch(inp: MatchInputs): MatchResult {
       const mates = atk.xi.filter((p) => p.id !== shooter.id && p.pos !== "GK");
       const assister =
         mates.length > 0 && rng() < T.assistChance
-          ? pickWeighted(rng, mates, (p) => p.attrs.passing)
+          ? pickWeighted(rng, mates, (p) => p.attrs.passing * ROLE_DEFS[roleFor(p)].assist)
           : undefined;
       if (assister) {
         upd(assister).assists++;

@@ -6,13 +6,28 @@ export type RoleId =
   | "sweeper"
   | "stopper"
   | "bpd"
+  | "ncb"
+  | "fb"
   | "wb"
+  | "ifb"
+  | "lib"
   | "b2b"
-  | "playmaker"
+  | "cm"
+  | "dlp"
+  | "anc"
   | "bwm"
+  | "mez"
+  | "playmaker"
+  | "ss"
+  | "w"
+  | "iw"
   | "poacher"
+  | "af"
+  | "cf"
+  | "dlf"
   | "target"
-  | "presser";
+  | "presser"
+  | "inside";
 
 export interface PlayerAttrs {
   pace: number;

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Mentality, Player, Position, RoleId } from "@/engine";
+import type { FormationSlot, Mentality, Player, RoleId } from "@/engine";
 import {
   attackStrength,
   autoLineup,
@@ -33,7 +33,7 @@ const MENTALITIES: Array<{ id: Mentality; label: string }> = [
   { id: "att", label: "Attacking" }
 ];
 
-type Picker = { kind: "xi" | "bench"; index: number; slotPos: Position } | null;
+type Picker = { kind: "xi" | "bench"; index: number; slot: FormationSlot } | null;
 type Sel = { kind: "xi" | "bench"; index: number } | null;
 
 export function Tactics() {
@@ -108,9 +108,9 @@ export function Tactics() {
     })
     .filter((i) => i >= 0);
 
-  const onSlotTap = (kind: "xi" | "bench", index: number, slotPos: Position) => {
+  const onSlotTap = (kind: "xi" | "bench", index: number, slot: FormationSlot) => {
     if (!swapMode) {
-      setPicker({ kind, index, slotPos });
+      setPicker({ kind, index, slot });
       return;
     }
     if (!sel) {
@@ -330,7 +330,7 @@ export function Tactics() {
                 <button
                   key={i}
                   data-testid={`slot-xi-${i}`}
-                  onClick={() => onSlotTap("xi", i, pos)}
+                  onClick={() => onSlotTap("xi", i, slot)}
                   style={{ left: `${x}%`, top: `${y}%`, width: "clamp(46px, 15vw, 64px)" }}
                   className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border px-0.5 pb-1 pt-1.5 text-center ${
                     p ? "bg-card/95" : "border-dashed bg-card/60"
@@ -389,7 +389,7 @@ export function Tactics() {
               <button
                 key={i}
                 data-testid={`slot-bench-${i}`}
-                onClick={() => onSlotTap("bench", i, p?.pos ?? "MF")}
+                onClick={() => onSlotTap("bench", i, { pos: p?.pos ?? "MF", x: 50, y: 50 })}
                 className={`flex h-13 flex-col items-center justify-center gap-0.5 rounded-xl border px-1 py-1 text-center ${
                   p ? "border-border bg-secondary/60" : "border-dashed border-border bg-transparent"
                 } ${isSel ? "ring-2 ring-primary" : ""}`}

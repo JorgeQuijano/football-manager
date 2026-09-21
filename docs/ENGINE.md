@@ -22,8 +22,8 @@ src/engine/
   types.ts       Data model: Player, Club, Fixture, Lineup, FormationDef, MatchResult, SaveGame, …
   rng.ts         mulberry32 PRNG, FNV-1a hashSeed(), randInt/pick/pickWeighted
   tuning.ts      All balance constants (T), built-in FORMATIONS + FORMATION_COORDS, weeklyRecovery()
-  roles.ts       11 roles: attribute weight vectors + shot/finish biases, per-position role groups
-  formations.ts  builtinFormation(), resolveFormation(), validateFormation(), scratchSlots()
+  roles.ts       26 roles: weight vectors + shot/finish/assist biases + lane, role groups
+  formations.ts  builtinFormation(), resolveFormation(), validateFormation(), scratchSlots(), roleTemplate()
   ratings.ts     Scores (overall/attack/defense), team strengths, suitability, auto/fix/remap/validate lineup
   league.ts      Fixtures (double round-robin), league table, form guide
   generate.ts    newGame(): clubs, squads, attributes, fixtures, initial lineup
@@ -68,24 +68,39 @@ Dependency direction: `rng`/`types` are leaves; `tuning`, `roles`, `formations`,
 
 - `overallFor(p)` — per-position weighted attributes (GK: reflexes .55 / handling .3 / physical .15; DF: defending .45 / pace .2 / physical .2 / passing .15; MF: passing .4 / pace .2 / defending .2 / shooting .2; FW: shooting .55 / pace .3 / passing .15).
 - `attackScore(p, role?)` / `defenseScore(p, role?)` — with a `RoleId`, `dot(attrs, role weights)`; without one, the legacy position-based formulas (kept for role-less callers).
-- **Roles** (11): each is two weight vectors + two scalars:
+- **Roles** (26, FM-style): each is an attack vector + a defence vector + `shot`/`finish`/`assist` biases + a `lane` (wide/central; off-lane picks are flagged in the UI, templates never use them):
 
-  | Role | Short | Group | Attack leans on | Defence leans on | shot | finish |
-  |---|---|---|---|---|---|---|
-  | Shot Stopper | GK | GK | — | reflexes .7, handling .3 | 0 | 1 |
-  | Sweeper Keeper | SK | GK | — | reflexes .55, handling .25, passing .2 | 0 | 1 |
-  | Stopper | STOP | DF | pace/passing/physical | defending .5, physical .3, pace .2 | 0.5 | 0.95 |
-  | Ball-Playing Defender | BPD | DF | passing .55, pace, physical | defending .4, passing .25 | 0.7 | 0.95 |
-  | Wing-Back | WB | DF | pace .45, passing .35 | pace .35, defending .3 | 0.9 | 0.95 |
-  | Box-to-Box | B2B | MF | passing/pace/shooting/defending | physical .35, defending .3 | 1.0 | 1.0 |
-  | Playmaker | AP | MF | passing .55, shooting .2 | passing .3, defending .25 | 0.85 | 1.0 |
-  | Ball-Winner | BWM | MF | physical, defending, passing | defending .45, physical .35 | 0.55 | 0.95 |
-  | Poacher | POA | FW | shooting .55, pace .35 | weak (def .45/phys .4) | 1.25 | 1.12 |
-  | Target Man | TM | FW | physical .45, shooting .35 | physical .55, defending .3 | 0.95 | 1.0 |
-  | Pressing Forward | PF | FW | pace .4, shooting .35, physical .25 | physical .4, pace .3, defending .3 | 1.05 | 0.95 |
+  | Role | Short | Group | Lane | Attack leans on | Defence leans on | shot | finish | assist |
+  |---|---|---|---|---|---|---|---|---|
+  | Shot Stopper | GK | GK | any | — | reflexes .7, handling .3 | 0 | 1 | 1 |
+  | Sweeper Keeper | SK | GK | any | — | reflexes .55, handling .25, passing .2 | 0 | 1 | 1 |
+  | Stopper | STOP | DF | mid | pace .4, passing .35, physical .25 | defending .5, physical .3, pace .2 | 0.5 | 0.95 | 0.7 |
+  | Ball-Playing Defender | BPD | DF | mid | passing .55, pace .25, physical .2 | defending .4, passing .25, physical .2, pace .15 | 0.7 | 0.95 | 1.1 |
+  | No-Nonsense Centre-Back | NCB | DF | mid | physical .45, pace .3, defending .25 | defending .6, physical .32, pace .08 | 0.3 | 0.9 | 0.5 |
+  | Full-Back | FB | DF | wide | pace .4, passing .35, physical .25 | pace .35, defending .35, physical .2, passing .1 | 0.75 | 0.95 | 1 |
+  | Wing-Back | WB | DF | wide | pace .45, passing .35, physical .1, shooting .1 | pace .35, defending .3, physical .2, passing .15 | 0.9 | 0.95 | 1.15 |
+  | Inverted Full-Back | IFB | DF | mid | passing .5, defending .2, physical .15, pace .15 | defending .45, physical .25, passing .15, pace .15 | 0.4 | 0.9 | 0.9 |
+  | Libero | LIB | DF | mid | passing .45, pace .2, physical .2, shooting .15 | defending .35, passing .3, physical .2, pace .15 | 0.8 | 0.9 | 1.15 |
+  | Box-to-Box | B2B | MF | mid | passing .3, pace .25, shooting .25, defending .2 | physical .35, defending .3, pace .2, passing .15 | 1 | 1 | 0.95 |
+  | Central Midfielder | CM | MF | mid | passing .3, shooting .2, pace .2, defending .15, physical .15 | defending .3, physical .25, passing .25, pace .2 | 0.9 | 1 | 1 |
+  | Deep-Lying Playmaker | DLP | MF | mid | passing .55, pace .15, shooting .15, physical .15 | defending .3, physical .25, passing .3, pace .15 | 0.7 | 0.95 | 1.4 |
+  | Anchor | ANC | MF | mid | passing .3, physical .3, defending .25, pace .15 | defending .5, physical .35, passing .15 | 0.35 | 0.9 | 0.8 |
+  | Ball-Winning Midfielder | BWM | MF | mid | physical .3, defending .25, passing .25, pace .2 | defending .45, physical .35, pace .15, passing .05 | 0.55 | 0.95 | 0.7 |
+  | Mezzala | MEZ | MF | mid | pace .3, shooting .25, passing .25, physical .2 | defending .25, physical .3, pace .25, passing .2 | 1.05 | 1 | 1.1 |
+  | Advanced Playmaker | AP | MF | mid | passing .55, shooting .2, pace .15, defending .1 | passing .3, defending .25, physical .25, pace .2 | 0.85 | 1 | 1.45 |
+  | Shadow Striker | SS | MF | mid | shooting .35, pace .3, passing .2, physical .15 | defending .3, physical .3, passing .2, pace .2 | 1.1 | 1.05 | 0.95 |
+  | Winger | W | MF | wide | pace .4, passing .4, shooting .1, physical .1 | pace .4, defending .3, physical .2, passing .1 | 1 | 0.95 | 1.35 |
+  | Inverted Winger | IW | MF | wide | pace .35, shooting .35, passing .2, defending .1 | pace .3, defending .3, physical .25, passing .15 | 1.2 | 1.08 | 1.05 |
+  | Poacher | POA | FW | mid | shooting .55, pace .35, passing .1 | defending .45, physical .4, pace .15 | 1.25 | 1.12 | 0.6 |
+  | Advanced Forward | AF | FW | mid | shooting .45, pace .4, physical .15 | defending .4, physical .4, pace .2 | 1.15 | 1.05 | 0.85 |
+  | Complete Forward | CF | FW | mid | shooting .35, pace .25, physical .2, passing .2 | defending .4, physical .4, pace .2 | 1.1 | 1.15 | 0.95 |
+  | Deep-Lying Forward | DLF | FW | mid | passing .4, shooting .3, physical .3 | defending .35, physical .45, pace .2 | 0.9 | 1 | 1.25 |
+  | Target Man | TM | FW | mid | physical .45, shooting .35, passing .2 | physical .55, defending .3, pace .15 | 0.95 | 1 | 0.8 |
+  | Pressing Forward | PF | FW | mid | pace .4, shooting .35, physical .25 | physical .4, pace .3, defending .3 | 1.05 | 0.95 | 0.8 |
+  | Inside Forward | IF | FW | wide | pace .35, shooting .4, passing .15, physical .1 | defending .35, physical .4, pace .25 | 1.2 | 1.05 | 0.95 |
 
-  Defaults per position: keeper / stopper / b2b / presser. `shot` scales shooter-selection weight, `finish` scales conversion — both consumed by `match.ts`.
-  Each role also has a **finishing weight vector** (`FIN` in `roles.ts`) describing what a good shot is made of: Poachers finish with shooting (.8) + pace (.2); Target Men with physical (.5) + shooting (.45); Wing-Backs with pace. `roleFinish()` is the dot product the sim uses; the `finish` scalar above then biases conversion.
+  - `shot` scales shooter-selection weight, `finish` scales conversion, `assist` multiplies passing in assist selection — all consumed by `match.ts`.
+  - Each role also has a **finishing weight vector** (`FIN` in `roles.ts`): Poachers finish with shooting (.8) + pace (.2); Target Men with physical (.5) + shooting (.45); Wing-Backs with pace. `roleFinish()` is the dot product the sim uses; the `finish` scalar then biases conversion.
 - **Team strength**: `attackStrength(players, roles, mentality)` = mean over outfield of `attackScore(role) × conditionFactor` `× mentality.att`; `defenseStrength` = XI mean `× mentality.def`. `conditionFactor = 0.72 + 0.28 × condition/100` (a 40%-condition player performs ~11% worse).
 - `suitability(p, slot)` — 1.0 same position, 0.92 adjacent, 0.85 two apart, 0.5 GK↔outfield.
 - `slotScoreFor(p, slot, role?, condWeight=0.25)` — position-mixed attack/defence blend × suitability × condition blend. Powers picker ordering, "Top pick", and rest suggestions.
@@ -99,6 +114,7 @@ Dependency direction: `rng`/`types` are leaves; `tuning`, `roles`, `formations`,
 - Built-ins: `4-4-2 | 4-3-3 | 4-2-3-1 | 3-5-2 | 5-3-2`. `FORMATIONS` (positions) and `FORMATION_COORDS` (x/y) are **index-aligned arrays** — a test enforces equal lengths and on-pitch bounds.
 - Custom formations: `FormationDef`s stored in `save.customFormations` (id `cf-…`). `validateFormation` requires exactly 11 slots, exactly 1 GK, coords within 3..97. `scratchSlots()` returns a neutral 4-4-2 clone as the builder starting shape.
 - `resolveFormation(id, customs)` checks customs first, then built-ins. **Rule: new code takes a resolved `FormationDef`; never index `FORMATIONS[id]` directly** — that's how custom shapes flow through simulation for free.
+- `roleTemplate(def)` gives every formation its default role line-up: hand-written per built-in (wide slots get wide-lane roles, holding bands get holders, attacking bands get creators) and geometry-derived for custom shapes (`defaultRoleForSlot`). Used by auto-pick, kick-off repair and formation remaps; a test enforces group validity and lane fit.
 
 ## 8. Match simulation (`match.ts`)
 
@@ -107,7 +123,7 @@ Inputs: clubs, both XIs + benches (available players, slot order), mentalities, 
 Per minute, per side:
 
 1. **Chance rate**: `pH = clamp(0.135 × 2 × att / (att + defOpp), 0.02, 0.45)`; home attack ×1.08. `att`/`def` are the strength functions (condition- and mentality-adjusted).
-2. **Chance resolution**: shooter picked by weight `posFactor (FW 4 / MF 2.4 / DF 0.7) × (0.5 + shooting/100) × role.shot`. `finish = roleFinish(attrs, role) × role.finish` — role-weighted, so physical counts for a Target Man and pace for a Wing-Back. `pGoal = clamp(0.115 × (1 + (finish−60)/120) × (1 + (60−gkSkill)/160), 0.04, 0.3)` where `gkSkill = defenseScore(GK, role)`. Goals: scorer +1.0 rating; **82% of goals get an assist** — a non-GK teammate weighted by passing (+0.4 rating), named in the commentary. Non-goals split: 42% saves (keeper +0.15 per save); then ~20% × a defence scaling of 0.6–1.4 resolve as **blocks** — credited to a defender weighted by defence score (+0.15); the rest are misses.
+2. **Chance resolution**: shooter picked by weight `posFactor (FW 4 / MF 2.4 / DF 0.7) × (0.5 + shooting/100) × role.shot`. `finish = roleFinish(attrs, role) × role.finish` — role-weighted, so physical counts for a Target Man and pace for a Wing-Back. `pGoal = clamp(0.115 × (1 + (finish−60)/120) × (1 + (60−gkSkill)/160), 0.04, 0.3)` where `gkSkill = defenseScore(GK, role)`. Goals: scorer +1.0 rating; **82% of goals get an assist** — a non-GK teammate weighted by passing × role assist bias (+0.4 rating), named in the commentary. Non-goals split: 42% saves (keeper +0.15 per save); then ~20% × a defence scaling of 0.6–1.4 resolve as **blocks** — credited to a defender weighted by defence score (+0.15); the rest are misses.
 3. **Fouls/cards**: ~3.6 yellows/match budget; 4.5% of fouls escalate to straight red, second yellows send off. Offenders weighted DF 2 / MF 1.5 / FW 1, scaled by sloppy defending (`1 + max(0, 70 − defending)/80`) and physique (`1 + (physical − 65)/250`). −0.15 (−0.5 red) rating.
 4. **Injuries**: 0.32/match; the victim is drawn with weight `1 + max(0, 80 − condition)/50` (tired players break more often); 1–4 weeks; auto-subbed if subs remain.
 5. **Subs** (minutes 62/72/80, 50% each): worst `attack+defence` player off, best bench option (`overall × fit for the slot`) on. **Subs inherit the role of the player they replace** — roles live on slots, not players. Max 5 subs.
@@ -158,7 +174,7 @@ Workflow: edit → `npm test` (calibration test guards avg goals 1.6–4.2 and h
 
 ## 13. Testing & tooling
 
-- `src/engine/engine.test.ts` — rng determinism; generation invariants (squad shape, attr bounds, 90 fixtures / 18 rounds / home-away balance); season table consistency; **determinism golden** (seed 7 twice); calibration across 40 seasons (30 s timeout — keep it); availability handling; season rollover; match bookkeeping (everyone who appeared is rated); roles (defaults valid per slot, weight orderings); lineup ops (auto roles, remap keeps players); conditioning (recovery scaling); formations (built-ins valid, custom validation, custom fill/remap).
+- `src/engine/engine.test.ts` — rng determinism; generation invariants (squad shape, attr bounds, 90 fixtures / 18 rounds / home-away balance); season table consistency; **determinism golden** (seed 7 twice); calibration across 40 seasons (30 s timeout — keep it); availability handling; season rollover; match bookkeeping (everyone who appeared is rated); roles (26 profiles unique, defaults valid per slot, finishing-weight orderings, assist/shot bias sanity); lineup ops (auto roles, remap keeps players); conditioning (recovery scaling); formations (built-ins valid, custom validation, custom fill/remap, templates lane-aware, geometry defaults).
 - `src/state/save.test.ts` — `normalizeSave` migration cases (roles, customs, vanished formation).
 - CLI: `npm run sim -- --seed 42 [--match] [--seasons 3]` — headless season(s) with optional commentary dump.
 
@@ -172,7 +188,7 @@ Invariants any change must keep green:
 
 ## 14. Extension recipes
 
-- **New role**: add the id to `RoleId` (`types.ts`), a `RoleDef` in `roles.ts`, list it in `ROLE_GROUPS`. Sim, picker, and chips pick it up automatically; optionally assert weight orderings in tests.
+- **New role**: add the id to `RoleId` (`types.ts`), a `RoleDef` (weights, biases, lane, description) in `roles.ts`, a `FIN` vector, and list it in `ROLE_GROUPS`. Sim, picker, and chips pick it up automatically; the profile-uniqueness test guards against copy-paste roles.
 - **New built-in formation**: append to `FORMATIONS` *and* `FORMATION_COORDS` with identical lengths/order (`FORMATION_IDS` derives itself); the alignment test will catch mistakes.
 - **New match event**: extend `MatchEventType`, emit from `match.ts` with text variants, render in `MatchScreen`. Keep events self-describing (text pre-rendered).
 - **New attribute**: touches generation skews, all `overallFor`/role vectors, and the player sheet — treat as a schema change and extend `normalizeSave`.

@@ -7,7 +7,8 @@ import type {
   RoleId
 } from "./types";
 import { BENCH_SLOTS, T } from "./tuning";
-import { defaultRoleFor, roleAttack, roleDefense, ROLE_GROUPS } from "./roles";
+import { defaultRoleFor, laneFits, roleAttack, roleDefense, ROLE_GROUPS } from "./roles";
+import { roleTemplate } from "./formations";
 
 const clamp = (v: number, lo = 1, hi = 99) => Math.round(Math.max(lo, Math.min(hi, v)));
 const cond = (p: Player) => 0.72 + 0.28 * (p.condition / 100);
@@ -118,14 +119,15 @@ export interface AutoPickOptions {
  */
 export function autoLineup(players: Player[], def: FormationDef, opts: AutoPickOptions = {}): Lineup {
   const slots = def.slots.map((s) => s.pos);
+  const roles = roleTemplate(def);
   const avail = players.filter(isAvailable);
   const used = new Set<string>();
 
-  const scoreFor = (p: Player, slot: Position): number => {
+  const scoreFor = (p: Player, slot: Position, i: number): number => {
     let s = overallFor(p) * suitability(p, slot);
     if (slot !== "GK" && (opts.mentality === "att" || opts.mentality === "def")) {
       const mix = 0.45;
-      const r = defaultRoleFor(slot);
+      const r = roles[i] ?? defaultRoleFor(slot);
       const sided = opts.mentality === "att" ? attackScore(p, r) : defenseScore(p, r);
       s = (1 - mix) * s + mix * sided;
     }
@@ -133,10 +135,10 @@ export function autoLineup(players: Player[], def: FormationDef, opts: AutoPickO
     return s;
   };
 
-  const starters = slots.map((slot) => {
+  const starters = slots.map((slot, i) => {
     const best = avail
       .filter((p) => !used.has(p.id))
-      .sort((x, y) => scoreFor(y, slot) - scoreFor(x, slot))[0];
+      .sort((x, y) => scoreFor(y, slot, i) - scoreFor(x, slot, i))[0];
     if (!best) return null;
     used.add(best.id);
     return best.id;
@@ -154,8 +156,6 @@ export function autoLineup(players: Player[], def: FormationDef, opts: AutoPickO
   if (benchGk && bench.length >= BENCH_SLOTS) bench[BENCH_SLOTS - 1] = benchGk.id;
   else if (benchGk) bench.push(benchGk.id);
   while (bench.length < BENCH_SLOTS) bench.push(null);
-
-  const roles = slots.map((slot) => defaultRoleFor(slot));
 
   return { formation: def.id, starters, bench, mentality: opts.mentality ?? "bal", roles };
 }
@@ -233,9 +233,10 @@ export function fixLineup(players: Player[], lineup: Lineup, def: FormationDef):
     return null;
   });
 
+  const tpl = roleTemplate(def);
   const roles = slots.map((slot, i) => {
     const r = lineup.roles?.[i];
-    return r && ROLE_GROUPS[slot].includes(r) ? r : defaultRoleFor(slot);
+    return r && ROLE_GROUPS[slot].includes(r) ? r : tpl[i] ?? defaultRoleFor(slot);
   });
 
   return { ...lineup, starters: fixed, bench: filledBench, roles };
@@ -256,7 +257,7 @@ export function remapLineup(
   const newSlots = to.slots.map((s) => s.pos);
   const byId = new Map(players.map((p) => [p.id, p] as const));
   const starters: (string | null)[] = newSlots.map(() => null);
-  const roles: RoleId[] = newSlots.map((slot) => defaultRoleFor(slot));
+  const roles: RoleId[] = roleTemplate(to);
   const used = new Set<number>();
 
   for (let i = 0; i < newSlots.length; i++) {
@@ -267,7 +268,9 @@ export function remapLineup(
       if (!id || !byId.has(id)) continue;
       starters[i] = id;
       const carried = lineup.roles?.[j];
-      if (carried && ROLE_GROUPS[want].includes(carried)) roles[i] = carried;
+      if (carried && ROLE_GROUPS[want].includes(carried) && laneFits(carried, to.slots[i])) {
+        roles[i] = carried;
+      }
       used.add(j);
       break;
     }

@@ -1,5 +1,6 @@
-import type { FormationDef, FormationId, FormationSlot } from "./types";
+import type { FormationDef, FormationId, FormationSlot, RoleId } from "./types";
 import { FORMATIONS, FORMATION_COORDS, FORMATION_IDS } from "./tuning";
+import { laneFits } from "./roles";
 
 /** The five built-ins, materialized as full FormationDefs (pos + coordinates). */
 const BUILTIN: Record<FormationId, FormationDef> = Object.fromEntries(
@@ -45,4 +46,56 @@ export function validateFormation(def: FormationDef): string[] {
 /** Neutral starting shape for the builder (a plain 4-4-2 the user can reshape freely). */
 export function scratchSlots(): FormationSlot[] {
   return BUILTIN["4-4-2"].slots.map((s) => ({ ...s }));
+}
+
+/**
+ * Formation-aware default roles, index-aligned with each built-in's slots.
+ * Wide slots get wide-lane roles, holding bands get holders, attacking bands
+ * get creators — so auto-picked lineups arrive already shaped to the formation.
+ */
+const TEMPLATES: Record<FormationId, RoleId[]> = {
+  "4-4-2": ["keeper", "fb", "bpd", "bpd", "fb", "w", "cm", "b2b", "w", "af", "target"],
+  "4-3-3": ["keeper", "fb", "bpd", "bpd", "fb", "b2b", "dlp", "mez", "inside", "af", "inside"],
+  "4-2-3-1": ["keeper", "fb", "bpd", "bpd", "fb", "anc", "dlp", "w", "playmaker", "iw", "af"],
+  "3-5-2": ["keeper", "bpd", "stopper", "bpd", "w", "cm", "dlp", "mez", "w", "af", "target"],
+  "5-3-2": ["keeper", "wb", "bpd", "stopper", "bpd", "wb", "cm", "dlp", "b2b", "af", "target"]
+};
+
+/** Geometry-based default for custom shapes: lane decides the family, depth the nuance. */
+export function defaultRoleForSlot(slot: FormationSlot): RoleId {
+  const wide = slotLaneOf(slot);
+  switch (slot.pos) {
+    case "GK":
+      return "keeper";
+    case "DF":
+      return wide ? "wb" : "stopper";
+    case "MF":
+      if (wide) return slot.y < 45 ? "iw" : "w";
+      if (slot.y < 40) return "playmaker";
+      if (slot.y > 58) return "dlp";
+      return "cm";
+    case "FW":
+      return wide ? "inside" : "af";
+  }
+}
+
+const slotLaneOf = (slot: FormationSlot): boolean =>
+  slot.pos !== "GK" && Math.abs(slot.x - 50) >= 32;
+
+/** Resolve the default role line-up for any formation (built-in template or geometry). */
+export function roleTemplate(def: FormationDef): RoleId[] {
+  const tpl = TEMPLATES[def.id as FormationId];
+  if (tpl) return [...tpl];
+  return def.slots.map((s) => defaultRoleForSlot(s));
+}
+
+/** Every template role must be legal for its slot's group and lane — used by tests. */
+export function validateTemplate(def: FormationDef, tpl: RoleId[]): string[] {
+  const errs: string[] = [];
+  if (tpl.length !== def.slots.length) errs.push(`Template length ${tpl.length} ≠ ${def.slots.length}`);
+  def.slots.forEach((slot, i) => {
+    const r = tpl[i];
+    if (r && !laneFits(r, slot)) errs.push(`Role ${r} is off-lane for slot ${i} (${slot.pos} @ ${slot.x},${slot.y})`);
+  });
+  return errs;
 }
