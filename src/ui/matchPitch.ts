@@ -6,6 +6,8 @@ export interface FramePlayer {
   num: number;
   side: "home" | "away";
   ring?: boolean;
+  /** live stamina (0-100); a gauge ring is drawn when legs are going */
+  legs?: number;
 }
 
 export interface Frame {
@@ -98,6 +100,17 @@ export function drawFrame(
     const col = p.side === "home" ? homeColor : awayColor;
     const px = X(p.x);
     const py = Y(p.y);
+    // legs gauge: a ring that drains with stamina (only once it starts to matter)
+    if (p.legs !== undefined && p.legs < 72) {
+      const frac = Math.max(0, Math.min(1, p.legs / 100));
+      ctx.beginPath();
+      ctx.arc(px, py, R + 3, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+      ctx.strokeStyle = p.legs >= 62 ? "#7BE495" : p.legs >= 45 ? "#FFB020" : "#FF6B6B";
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = "round";
+      ctx.stroke();
+      ctx.lineCap = "butt";
+    }
     if (p.ring) {
       ctx.beginPath();
       ctx.arc(px, py, R + 3, 0, Math.PI * 2);

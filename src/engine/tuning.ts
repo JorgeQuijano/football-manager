@@ -58,6 +58,13 @@ export const T = {
   /** in-match substitution windows (PL rules: 3 windows + half-time, 5 subs) */
   subWindowsMax: 3,
 
+  /** in-match stamina (legs) */
+  staminaDrain: 0.42,
+  /** recovered over the half-time break */
+  staminaHalf: 7,
+  /** what total exhaustion costs a player's game (±16%) */
+  staminaEffect: 0.16,
+
   /** possession timeline (2D match view) */
   chainPasses: [2, 5] as [number, number],
 

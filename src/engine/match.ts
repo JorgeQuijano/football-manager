@@ -34,6 +34,35 @@ import { DEFAULT_CONDITIONS, conditionEffects, refOf, weatherOf } from "./condit
  */
 const moraleEdge = (p: Player): number => 1 + ((p.morale ?? 60) - 60) * 0.0015;
 
+/** In-match legs: where a player starts, how fast he drains, and what it costs him. */
+export const staminaStart = (p: Player): number => Math.max(40, Math.min(100, p.condition));
+/** Stamina lost per minute of play — physical is the endurance proxy, age adds to it. */
+export const staminaDrainPerMinute = (p: Player): number => {
+  const fit = 1.14 - p.attrs.physical * 0.0028;
+  const age = p.age >= 29 ? 1 + (p.age - 28) * 0.014 : 1;
+  return T.staminaDrain * Math.max(0.7, fit) * age;
+};
+/** How much of his game a player keeps at this stamina (1 = fresh, ~0.85 = empty). */
+export const staminaFactor = (st: number): number =>
+  1 - T.staminaEffect * (1 - Math.max(0, Math.min(100, st)) / 100);
+/**
+ * A player's stamina as of a playback minute. The live state is simulated to the
+ * end of the current half, so the UI rewinds it by the minutes still to play.
+ */
+export function staminaAt(s: MatchState, id: string, minute: number): number {
+  const cur = s.stamina[id];
+  if (cur === undefined) return 100;
+  const onNow = s.home.slots.includes(id) || s.away.slots.includes(id);
+  if (!onNow) return cur; // off the pitch: his legs are frozen where he left them
+  const rate = s.staminaRate[id] ?? 0;
+  const ahead = Math.max(0, s.minute - Math.max(0, Math.min(minute, s.total)));
+  return Math.min(100, cur + ahead * rate);
+}
+
+/** Morale and legs together — what a player actually brings to this minute. */
+const edge = (s: MatchState, p: Player): number =>
+  moraleEdge(p) * staminaFactor(s.stamina[p.id] ?? 100);
+
 export interface MatchInputs {
   round: number;
   homeClub: Club;
@@ -255,6 +284,8 @@ export function startMatch(inp: MatchInputs): MatchState {
     played: [],
     scorers: [],
     pin: {},
+    stamina: {},
+    staminaRate: {},
     cond: inp.conditions ?? DEFAULT_CONDITIONS
   };
   for (const p of [...inp.homeXI, ...inp.homeBench, ...inp.awayXI, ...inp.awayBench]) {
@@ -264,11 +295,15 @@ export function startMatch(inp: MatchInputs): MatchState {
     state.entryMinute[p.id] = 0;
     state.played.push(p.id);
     state.pin[p.id] = { s: 0, pos: p.pos };
+    state.stamina[p.id] = staminaStart(p);
+    state.staminaRate[p.id] = staminaDrainPerMinute(p);
   }
   for (const p of inp.awayXI.slice(0, 11)) {
     state.entryMinute[p.id] = 0;
     state.played.push(p.id);
     state.pin[p.id] = { s: 1, pos: p.pos };
+    state.stamina[p.id] = staminaStart(p);
+    state.staminaRate[p.id] = staminaDrainPerMinute(p);
   }
   for (const p of inp.homeBench) state.pin[p.id] = { s: 0, pos: p.pos };
   for (const p of inp.awayBench) state.pin[p.id] = { s: 1, pos: p.pos };
@@ -352,6 +387,8 @@ const enterSlot = (
   side.roles[slot] = role;
   side.subs++;
   s.entryMinute[p.id] = m;
+  s.stamina[p.id] = staminaStart(p);
+  s.staminaRate[p.id] = staminaDrainPerMinute(p);
   if (!s.played.includes(p.id)) s.played.push(p.id);
   s.pin[p.id] = { s: side === s.home ? 0 : 1, pos: p.pos };
 };
@@ -403,7 +440,7 @@ const possessionPhase = (
       (x) =>
         Math.pow(clamp(opp.coords[x.slot]?.[1] ?? 50, 0, 100) / 100, 1.4) *
         (1 + x.p.attrs.defending / 150) *
-        moraleEdge(x.p)
+        edge(s, x.p)
     );
     b = inter.slot;
   }
@@ -430,12 +467,12 @@ const resolveChance = (
       (0.5 + x.p.attrs.shooting / 100) *
       ROLE_DEFS[x.role].shot *
       (hasTrait(x.p, "shoots_on_sight") ? 1.25 : 1) *
-      moraleEdge(x.p)
+      edge(s, x.p)
   );
   const chain = buildChain(atkSide, atk, rng, shooter.slot);
   const gk = dfn.find((x) => x.p.pos === "GK");
-  const finish = roleFinish(shooter.p, shooter.role) * ROLE_DEFS[shooter.role].finish * moraleEdge(shooter.p);
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) * moraleEdge(gk.p) : 50;
+  const finish = roleFinish(shooter.p, shooter.role) * ROLE_DEFS[shooter.role].finish * edge(s, shooter.p);
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * edge(s, gk.p) : 50;
   const eff = conditionEffects(s.cond);
   let pGoal = T.conversionBase * (1 + (finish - 60) / 120) * (1 + (60 - gkSkill) / 160) * eff.conversion;
   pGoal = clamp(pGoal, 0.04, 0.3);
@@ -548,7 +585,7 @@ const resolveChance = (
               x.p.attrs.passing *
               ROLE_DEFS[x.role].assist *
               (hasTrait(x.p, "killer_balls") ? 1.3 : 1) *
-              moraleEdge(x.p)
+              edge(s, x.p)
           )
         : undefined;
     if (assister) {
@@ -586,9 +623,9 @@ const resolveChance = (
   } else {
     const blockers = dfn.filter((x) => x.p.pos !== "GK");
     const defMean =
-      dfn.reduce((acc, x) => acc + defenseScore(x.p, x.role) * moraleEdge(x.p), 0) / Math.max(1, dfn.length);
+      dfn.reduce((acc, x) => acc + defenseScore(x.p, x.role) * edge(s, x.p), 0) / Math.max(1, dfn.length);
     if (blockers.length > 0 && rng() < T.blockShare * eff.turnover * clamp(defMean / 62, 0.6, 1.4)) {
-      const blocker = pickWeighted(rng, blockers, (x) => defenseScore(x.p, x.role) * moraleEdge(x.p));
+      const blocker = pickWeighted(rng, blockers, (x) => defenseScore(x.p, x.role) * edge(s, x.p));
       out = "block";
       b = blocker.slot;
       s.ratings[blocker.p.id] = clamp(s.ratings[blocker.p.id] + 0.15, 4, 10);
@@ -774,7 +811,7 @@ const resolvePenalty = (
         (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
     );
   const gk = proto(defSide, players).find((x) => x.p.pos === "GK");
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) * moraleEdge(gk.p) : 50;
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * edge(s, gk.p) : 50;
   const pGoal = clamp(
     (T.penaltyGoalBase +
       (taker.p.attrs.shooting - gkSkill) / 300 +
@@ -860,11 +897,11 @@ const resolveFreeKick = (
           ? x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20
           : x.p.attrs.shooting * 0.75 + roleFinish(x.p, x.role) * 0.25) *
         (hasTrait(x.p, "dead_ball") ? 1.4 : 1) *
-        moraleEdge(x.p)
+        edge(s, x.p)
     );
   const dfn = proto(defSide, players);
   const gk = dfn.find((x) => x.p.pos === "GK");
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) * moraleEdge(gk.p) : 50;
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * edge(s, gk.p) : 50;
   // a crossed routine is a headed delivery (corner-like); everything else is a shot
   const contenders = atk.filter((x) => x.p.id !== taker.p.id);
   const header =
@@ -1000,7 +1037,7 @@ const resolveCorner = (
       (x) =>
         (x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20) *
         (hasTrait(x.p, "dead_ball") ? 1.4 : 1) *
-        moraleEdge(x.p)
+        edge(s, x.p)
     );
   const flagX = rng() < 0.5 ? 2 : 98;
   const contenders = atk.filter((x) => x.p.id !== taker.p.id);
@@ -1019,7 +1056,7 @@ const resolveCorner = (
       : taker;
   const dfn = proto(defSide, players);
   const gk = dfn.find((x) => x.p.pos === "GK");
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) * moraleEdge(gk.p) : 50;
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * edge(s, gk.p) : 50;
   const pGoal = clamp(
     T.cornerGoalBase *
       eff.goal *
@@ -1162,7 +1199,9 @@ const trySub = (
   if (rng() < 0.5) return;
   const outfield = proto(side, players).filter((x) => x.p.pos !== "GK");
   if (!outfield.length) return;
-  const val = (x: Proto) => attackScore(x.p, x.role) + defenseScore(x.p, x.role);
+  // the AI hooks its most knackered player, not just its worst
+  const val = (x: Proto) =>
+    attackScore(x.p, x.role) + defenseScore(x.p, x.role) - (100 - (s.stamina[x.p.id] ?? 100)) * 1.1;
   const outP = outfield.reduce((worst, x) => (val(x) < val(worst) ? x : worst));
   const repl = pickFromBench(side, outP.p.pos, players);
   if (!repl) return;
@@ -1183,6 +1222,18 @@ const trySub = (
 const minuteStep = (s: MatchState, m: number, rng: Rng, players: Map<string, Player>) => {
   if (m === 1) {
     s.events.push({ minute: 0, type: "kickoff", text: `Kick-off at ${s.home.name}'s ground.` });
+  }
+
+  // legs: everyone on the pitch drains a little each minute
+  for (const side of [s.home, s.away]) {
+    for (const id of side.slots) {
+      if (!id) continue;
+      const pl = players.get(id);
+      if (!pl) continue;
+      const rate = s.staminaRate[id] ?? staminaDrainPerMinute(pl);
+      s.staminaRate[id] = rate;
+      s.stamina[id] = Math.max(0, (s.stamina[id] ?? staminaStart(pl)) - rate);
+    }
   }
 
   const hp = proto(s.home, players);
@@ -1230,6 +1281,12 @@ const minuteStep = (s: MatchState, m: number, rng: Rng, players: Map<string, Pla
   }
 
   if (m === HALF) {
+    // the break: tired legs get a little back
+    for (const side of [s.home, s.away]) {
+      for (const id of side.slots) {
+        if (id) s.stamina[id] = Math.min(100, (s.stamina[id] ?? 100) + T.staminaHalf);
+      }
+    }
     s.events.push({
       minute: 45,
       type: "half",
