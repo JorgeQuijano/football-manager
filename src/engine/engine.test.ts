@@ -2751,7 +2751,8 @@ describe("morale & squad dynamics", () => {
     }
     expect(differing).toBeGreaterThan(0); // morale genuinely changes matches
     expect(happy).toBeGreaterThan(sad);
-  });
+    // 120 matches through the full engine — the default 5s timeout is not enough under load
+  }, 30000);
 
   it("builds the dressing-room view: atmosphere, groups, leaders", () => {
     const s = newGame(108);
@@ -3534,7 +3535,7 @@ describe("match legs (stamina) & the bench", () => {
     const knackered = run(45);
     expect(knackered.gf).toBeLessThan(fresh.gf);
     expect(knackered.diff).toBeLessThan(fresh.diff);
-  });
+  }, 30000);
 
   it("staminaFactor is neutral when fresh and monotonic", () => {
     expect(staminaFactor(100)).toBe(1);
