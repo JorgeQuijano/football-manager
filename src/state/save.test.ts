@@ -79,4 +79,28 @@ describe("normalizeSave", () => {
     const fixed2 = normalizeSave(save2);
     expect(fixed2.live).toBeUndefined();
   });
+
+  it("backfills the scouting department and drops dead assignments", () => {
+    const save = newGame(52);
+    const old = JSON.parse(JSON.stringify(save)) as typeof save;
+    delete (old as { scouting?: unknown }).scouting;
+    const fixed = normalizeSave(old);
+    expect(fixed.scouting.scouts.length).toBeGreaterThan(0);
+    expect(fixed.scouting.budget).toBeGreaterThan(0);
+
+    // a request pointing at a scout or player that no longer exists is dropped
+    const s2 = newGame(53);
+    const rival = s2.players.find((p) => p.clubId !== s2.userClubId)!;
+    s2.scouting.requests.push({ id: "rx1", kind: "player", playerId: rival.id, scoutId: s2.scouting.scouts[0].id });
+    s2.scouting.requests.push({ id: "rx2", kind: "player", playerId: rival.id, scoutId: "ghost" });
+    s2.scouting.requests.push({ id: "rx3", kind: "player", playerId: "ghost", scoutId: s2.scouting.scouts[0].id });
+    s2.scouting.reports.push("ghost");
+    s2.scouting.shortlist.push("ghost", rival.id);
+    s2.scouting.knowledge["ghost"] = { level: 90, seen: 1 };
+    const fixed2 = normalizeSave(s2);
+    expect(fixed2.scouting.requests.map((r) => r.id)).toEqual(["rx1"]);
+    expect(fixed2.scouting.reports).not.toContain("ghost");
+    expect(fixed2.scouting.shortlist).toEqual([rival.id]);
+    expect(fixed2.scouting.knowledge["ghost"]).toBeUndefined();
+  });
 });

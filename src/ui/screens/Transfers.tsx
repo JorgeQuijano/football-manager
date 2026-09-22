@@ -1,7 +1,10 @@
 import { useState } from "react";
+import { Search } from "lucide-react";
 import type { Player } from "@/engine";
 import {
+  estimateFor,
   freeAgents,
+  knowledgeOf,
   marketValue,
   money,
   overallFor,
@@ -21,6 +24,8 @@ import {
 } from "@/components/ui/sheet";
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
+import { ScoutingView, Stars } from "@/ui/Scouting";
+import { PlayerDetailSheet } from "@/ui/sheets";
 
 type DealKind = "buy" | "renew" | "free";
 type Deal = {
@@ -58,6 +63,28 @@ export function Transfers() {
   const others = game.clubs.filter((c) => c.id !== game.userClubId);
   const [browseId, setBrowseId] = useState(others[0]?.id ?? "");
   const [deal, setDeal] = useState<Deal | null>(null);
+  const [tab, setTab] = useState<"market" | "scouting">("market");
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [scoutNote, setScoutNote] = useState<{ text: string; bad: boolean } | null>(null);
+  const scoutPlayer = useGame((s) => s.scoutPlayer);
+
+  const doScout = (p: Player) => {
+    const err = scoutPlayer(p.id);
+    setScoutNote(err ? { text: err, bad: true } : { text: `${p.name}: your scouts are on him — a report lands next round.`, bad: false });
+  };
+
+  /** what the club thinks a player costs — estimate when the reports are incomplete */
+  const fogFee = (p: Player): number => {
+    const est = estimateFor(game, p);
+    if (est.tier === "none") return 0; // no report at all — no number to anchor on
+    if (est.valueRange) return Math.round((est.valueRange[0] + est.valueRange[1]) / 2 / 10_000) * 10_000;
+    return marketValue(p);
+  };
+  const fogWage = (p: Player): number => {
+    const est = estimateFor(game, p);
+    if (est.wageRange) return Math.round((est.wageRange[0] + est.wageRange[1]) / 2 / 100) * 100;
+    return 20_000; // no reliable read — a polite opening guess
+  };
 
   const meetTerms = () => {
     if (!deal || deal.counterWage === undefined) return;
@@ -82,14 +109,20 @@ export function Transfers() {
   const browse = squadOf(game.players, browseId).sort((a, b) => overallFor(b) - overallFor(a));
 
   const openBuy = (p: Player) => {
-    const v = marketValue(p);
+    const est = estimateFor(game, p);
+    const v = fogFee(p);
     setDeal({
       kind: "buy",
       player: p,
       step: "fee",
       fee: v,
-      wage: Math.max(p.contract.wage, wageDemand(p)),
-      msg: `${p.name} is valued around ${money(v)}. Offer what you think he's worth.`,
+      wage: fogWage(p),
+      msg:
+        est.tier === "extensive"
+          ? `${p.name} is valued around ${money(v)}.`
+          : est.tier === "none"
+            ? `No report on ${p.name} — you're bidding blind. Scout him for a valuation, or offer what you think he's worth.`
+            : `Your file on ${p.name} is thin — you make him out to be around ${money(v)}. Offer what you think he's worth.`,
       tone: "ok"
     });
   };
@@ -111,8 +144,8 @@ export function Transfers() {
       player: p,
       step: "terms",
       fee: 0,
-      wage: wageDemand(p),
-      msg: `Free agent — his camp wants around ${money(wageDemand(p))}/wk.`,
+      wage: fogWage(p),
+      msg: `Free agent. Your read: around ${money(fogWage(p))}/wk keeps him happy.`,
       tone: "ok"
     });
 
@@ -125,7 +158,7 @@ export function Transfers() {
         ...deal,
         step: "terms",
         fee,
-        wage: Math.max(wageDemand(deal.player), deal.player.contract.wage),
+        wage: fogWage(deal.player),
         counterFee: undefined,
         msg: resp.message,
         tone: "ok"
@@ -193,6 +226,33 @@ export function Transfers() {
         </span>
       </header>
 
+      <div className="grid grid-cols-2 gap-1.5">
+        {(["market", "scouting"] as const).map((t) => (
+          <button
+            key={t}
+            data-testid={`transfers-tab-${t}`}
+            onClick={() => setTab(t)}
+            className={`h-11 rounded-lg text-sm font-bold transition-colors ${
+              tab === t
+                ? "bg-primary text-primary-foreground"
+                : "border border-border bg-card text-muted-foreground"
+            }`}
+          >
+            {t === "market" ? "Market" : "Scouting"}
+          </button>
+        ))}
+      </div>
+
+      {scoutNote && (
+        <p className={`text-[11px] font-semibold ${scoutNote.bad ? "text-[#FF6B6B]" : "text-primary"}`} data-testid="scout-note">
+          {scoutNote.text}
+        </p>
+      )}
+
+      {tab === "scouting" ? (
+        <ScoutingView onOpenPlayer={setDetailId} />
+      ) : (
+        <>
       <div className="rounded-xl border border-border bg-card p-3" data-testid="budget-card">
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -334,28 +394,58 @@ export function Transfers() {
           </p>
         )}
         <div className="space-y-1.5">
-          {browse.map((p) => (
-            <button
-              key={p.id}
-              data-testid={`target-${p.id}`}
-              onClick={() => openBuy(p)}
-              disabled={!win.open}
-              className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2.5 text-left disabled:opacity-60"
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${posChip[p.pos]}`}>
-                  {p.pos}
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-bold">{shortName(p.name)}</span>
-                  <span className="block text-[11px] text-muted-foreground">
-                    age {p.age} · OVR {overallFor(p)} · {money(p.contract.wage)}/wk
+          {browse.map((p) => {
+            const est = estimateFor(game, p);
+            const lvl = knowledgeOf(game, p.id);
+            return (
+              <div key={p.id} className="flex items-stretch gap-1.5">
+                <button
+                  data-testid={`target-${p.id}`}
+                  onClick={() => openBuy(p)}
+                  disabled={!win.open}
+                  className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2.5 text-left disabled:opacity-60"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${posChip[p.pos]}`}>
+                      {p.pos}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-bold">{shortName(p.name)}</span>
+                        <Stars value={est.stars} range={est.starsRange} />
+                      </span>
+                      <span className="block text-[11px] text-muted-foreground tnum">
+                        age {p.age} ·{" "}
+                        {est.exactOvr !== null
+                          ? `OVR ${est.exactOvr} · ${money(p.contract.wage)}/wk`
+                          : est.ovrRange
+                            ? `OVR ~${est.ovrRange[0]}–${est.ovrRange[1]}${est.wageRange ? ` · ~${money(est.wageRange[0])}/wk` : ""}`
+                            : "no report"}
+                      </span>
+                    </span>
                   </span>
-                </span>
-              </span>
-              <span className="shrink-0 text-sm font-extrabold tnum">{money(marketValue(p))}</span>
-            </button>
-          ))}
+                  <span className="shrink-0 text-right">
+                    <span className="block text-sm font-extrabold tnum">
+                      {est.valueRange
+                        ? est.valueRange[0] === est.valueRange[1]
+                          ? money(est.valueRange[0])
+                          : `${money(est.valueRange[0])}–${money(est.valueRange[1])}`
+                        : "—"}
+                    </span>
+                    <span className="block text-[9px] font-bold text-muted-foreground tnum">{lvl}% known</span>
+                  </span>
+                </button>
+                <button
+                  data-testid={`scout-btn-${p.id}`}
+                  onClick={() => doScout(p)}
+                  className="grid w-11 shrink-0 place-items-center rounded-lg border border-border bg-card text-muted-foreground"
+                  aria-label={`Scout ${p.name}`}
+                >
+                  <Search size={16} />
+                </button>
+              </div>
+            );
+          })}
         </div>
       </section>
 
@@ -364,28 +454,39 @@ export function Transfers() {
           <h2 className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
             Free agents
           </h2>
-          {frees.map((p) => (
-            <button
-              key={p.id}
-              data-testid={`free-agent-${p.id}`}
-              onClick={() => openFree(p)}
-              disabled={!win.open}
-              className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2.5 text-left disabled:opacity-60"
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${posChip[p.pos]}`}>
-                  {p.pos}
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-bold">{shortName(p.name)}</span>
-                  <span className="block text-[11px] text-muted-foreground">
-                    age {p.age} · OVR {overallFor(p)} · wants {money(wageDemand(p))}/wk
+          {frees.map((p) => {
+            const est = estimateFor(game, p);
+            return (
+              <button
+                key={p.id}
+                data-testid={`free-agent-${p.id}`}
+                onClick={() => openFree(p)}
+                disabled={!win.open}
+                className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2.5 text-left disabled:opacity-60"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${posChip[p.pos]}`}>
+                    {p.pos}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate text-sm font-bold">{shortName(p.name)}</span>
+                      <Stars value={est.stars} range={est.starsRange} />
+                    </span>
+                    <span className="block text-[11px] text-muted-foreground tnum">
+                      age {p.age} ·{" "}
+                      {est.exactOvr !== null
+                        ? `OVR ${est.exactOvr}`
+                        : est.ovrRange
+                          ? `OVR ~${est.ovrRange[0]}–${est.ovrRange[1]}`
+                          : "no report"}
+                    </span>
                   </span>
                 </span>
-              </span>
-              <span className="shrink-0 text-sm font-extrabold text-primary">Sign</span>
-            </button>
-          ))}
+                <span className="shrink-0 text-sm font-extrabold text-primary">Sign</span>
+              </button>
+            );
+          })}
         </section>
       )}
 
@@ -402,6 +503,8 @@ export function Transfers() {
             </ul>
           </details>
         </section>
+      )}
+        </>
       )}
 
       <Sheet open={!!deal} onOpenChange={(o) => !o && setDeal(null)}>
@@ -427,15 +530,37 @@ export function Transfers() {
                       <div className="flex items-center justify-between text-xs font-semibold">
                         <span className="text-muted-foreground">Transfer fee</span>
                         <span className="tnum">
-                          Value {money(marketValue(deal.player))} · Budget {money(fin.transfer)}
+                          {(() => {
+                            const est = estimateFor(game, deal.player);
+                            const vr = est.valueRange;
+                            return vr
+                              ? `Valued ${vr[0] === vr[1] ? money(vr[0]) : `${money(vr[0])}–${money(vr[1])}`} · Budget ${money(fin.transfer)}`
+                              : `Budget ${money(fin.transfer)}`;
+                          })()}
                         </span>
                       </div>
+                      {(() => {
+                        const est = estimateFor(game, deal.player);
+                        const lvl = knowledgeOf(game, deal.player.id);
+                        return lvl < 50 ? (
+                          <p className="text-[10px] font-semibold text-[#FFB020]" data-testid="fog-warning">
+                            Only {lvl}% known — your valuation could be well off. Scout him for a
+                            sharper read.
+                          </p>
+                        ) : est.tier !== "extensive" ? (
+                          <p className="text-[10px] text-muted-foreground" data-testid="fog-note">
+                            Detailed report from {est.scoutName ?? "your scout"} — the range is
+                            tightening.
+                          </p>
+                        ) : null;
+                      })()}
                       <input
                         data-testid="deal-fee-input"
                         type="number"
                         inputMode="numeric"
                         step={100000}
-                        value={deal.fee}
+                        value={deal.fee === 0 ? "" : deal.fee}
+                        placeholder="Your offer"
                         onChange={(e) => setDeal({ ...deal, fee: Number(e.target.value) || 0 })}
                         className="h-11 w-full rounded-lg border border-border bg-card px-3 text-sm font-bold tnum"
                       />
@@ -471,10 +596,10 @@ export function Transfers() {
                     <Button
                       className="h-11 w-full"
                       data-testid="deal-bid"
-                      disabled={!win.open}
+                      disabled={!win.open || deal.fee <= 0}
                       onClick={() => doBid(deal.fee)}
                     >
-                      {win.open ? `Bid ${money(deal.fee)}` : "Window closed"}
+                      {!win.open ? "Window closed" : deal.fee <= 0 ? "Enter a fee" : `Bid ${money(deal.fee)}`}
                     </Button>
                   </>
                 )}
@@ -561,6 +686,17 @@ export function Transfers() {
           )}
         </SheetContent>
       </Sheet>
+
+      {detailId && (
+        <PlayerDetailSheet
+          playerId={detailId}
+          onClose={() => setDetailId(null)}
+          onScout={(id) => {
+            const p = game.players.find((x) => x.id === id);
+            if (p) doScout(p);
+          }}
+        />
+      )}
     </div>
   );
 }

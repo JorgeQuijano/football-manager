@@ -8,6 +8,7 @@ import { buildFixtures } from "./league";
 import { contractFor, freshFinances } from "./transfers";
 import { peakFor } from "./training";
 import { defaultSetPieces } from "./setpieces";
+import { initScouting } from "./scouting";
 
 export const CLUB_DEFS: ReadonlyArray<{ name: string; short: string; color: string }> = [
   { name: "Northport FC", short: "NOR", color: "#2ED573" },
@@ -153,6 +154,8 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     builtinFormation("4-3-3")
   );
 
+  const finances = freshFinances({ clubs, players });
+
   return {
     saveVersion: 1,
     seed,
@@ -165,11 +168,12 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     lineup,
     customFormations: [],
     lastResults: [],
-    finances: freshFinances({ clubs, players }),
+    finances,
     offers: [],
     transferLog: [],
     training: { unit: "balanced", intensity: "normal" },
     setpieces: defaultSetPieces(),
+    scouting: initScouting(seed, finances[chosen].transfer),
     devNews: []
   };
 }

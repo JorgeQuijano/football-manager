@@ -4,7 +4,9 @@ import {
   autoLineup,
   builtinFormation,
   defaultRoleFor,
+  estimateFor,
   isAvailable,
+  knowledgeOf,
   laneFits,
   marketValue,
   money,
@@ -38,6 +40,7 @@ import {
 import { exportSaveFile, parseSaveFile } from "@/state/save";
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
+import { Stars } from "@/ui/Scouting";
 
 export function SettingsSheet({
   open,
@@ -190,19 +193,26 @@ export function SettingsSheet({
 
 export function PlayerDetailSheet({
   playerId,
-  onClose
+  onClose,
+  onScout
 }: {
   playerId: string | null;
   onClose: () => void;
+  onScout?: (id: string) => void;
 }) {
   const game = useGame((s) => s.game)!;
   const setFocus = useGame((s) => s.setFocus);
+  const toggleShortlist = useGame((s) => s.toggleShortlist);
   const p = playerId ? game.players.find((x) => x.id === playerId) : undefined;
+  const est = p ? estimateFor(game, p) : null;
+  const isOwn = !!p && p.clubId === game.userClubId;
+  const lvl = p ? knowledgeOf(game, p.id) : 0;
+  const fogged = !!est && !isOwn && est.tier !== "extensive";
 
   return (
     <Sheet open={!!p} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto">
-        {p && (
+        {p && est && (
           <>
             <SheetHeader>
               <SheetTitle>{p.name}</SheetTitle>
@@ -216,11 +226,50 @@ export function PlayerDetailSheet({
                 <span className={`rounded-md px-2 py-1 text-xs font-bold ${posChip[p.pos]}`}>
                   {p.pos}
                 </span>
-                <span className="text-2xl font-extrabold tnum">
-                  {overallFor(p)}
-                  <span className="ml-1 text-xs font-medium text-muted-foreground">OVR</span>
+                <span className="flex items-center gap-2">
+                  {!isOwn && <Stars value={est.stars} range={est.starsRange} />}
+                  <span className="text-2xl font-extrabold tnum" data-testid="sheet-ovr">
+                    {est.exactOvr !== null
+                      ? est.exactOvr
+                      : est.ovrRange
+                        ? `~${est.ovrRange[0]}–${est.ovrRange[1]}`
+                        : "?"}
+                    <span className="ml-1 text-xs font-medium text-muted-foreground">OVR</span>
+                  </span>
                 </span>
               </div>
+
+              {!isOwn && (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-card p-2.5" data-testid="sheet-scouting">
+                  <span className="min-w-0 text-[11px] font-semibold text-muted-foreground">
+                    {est.tier === "none"
+                      ? "No report — your club knows nothing about him."
+                      : `${est.tier === "brief" ? "Brief" : est.tier === "detailed" ? "Detailed" : "Extensive"} report${
+                          est.scoutName ? ` · ${est.scoutName}` : ""
+                        } · ${lvl}%`}
+                  </span>
+                  <span className="flex shrink-0 gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-11"
+                      data-testid="sheet-scout-btn"
+                      onClick={() => onScout?.(p.id)}
+                    >
+                      Scout
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={game.scouting.shortlist.includes(p.id) ? "secondary" : "outline"}
+                      className="h-11"
+                      data-testid="sheet-star-btn"
+                      onClick={() => toggleShortlist(p.id)}
+                    >
+                      ★
+                    </Button>
+                  </span>
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-2 text-[11px] font-semibold">
                 {p.injuredWeeks > 0 && (
@@ -248,20 +297,38 @@ export function PlayerDetailSheet({
                   <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Value
                   </div>
-                  <div className="text-sm font-extrabold tnum">{money(marketValue(p))}</div>
+                  <div className="text-sm font-extrabold tnum" data-testid="sheet-value">
+                    {est.valueRange
+                      ? est.valueRange[0] === est.valueRange[1]
+                        ? money(est.valueRange[0])
+                        : `${money(est.valueRange[0])}–${money(est.valueRange[1])}`
+                      : "?"}
+                  </div>
                 </div>
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Wages
                   </div>
-                  <div className="text-sm font-extrabold tnum">{money(p.contract.wage)}</div>
+                  <div className="text-sm font-extrabold tnum" data-testid="sheet-wage">
+                    {est.wageRange
+                      ? est.wageRange[0] === est.wageRange[1]
+                        ? money(est.wageRange[0])
+                        : `~${money(est.wageRange[0])}`
+                      : "?"}
+                  </div>
                 </div>
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Contract
                   </div>
                   <div className="text-sm font-extrabold">
-                    {p.clubId === "" ? "Free" : p.contract.until <= game.season ? "Expires" : `S${p.contract.until}`}
+                    {isOwn || !fogged
+                      ? p.clubId === "" ? "Free" : p.contract.until <= game.season ? "Expires" : `S${p.contract.until}`
+                      : lvl >= 50
+                        ? p.contract.until <= game.season
+                          ? "Expiring?"
+                          : "Under contract"
+                        : "Unknown"}
                   </div>
                 </div>
               </div>
@@ -359,7 +426,13 @@ export function PlayerDetailSheet({
                 <div className="flex items-center justify-between text-xs font-semibold">
                   <span className="text-muted-foreground">Development</span>
                   <span className="tnum">
-                    POT {p.peak} · +{Math.max(0, p.peak - overallFor(p))} room
+                    {isOwn || !fogged
+                      ? `POT ${p.peak} · +${Math.max(0, p.peak - overallFor(p))} room`
+                      : est.potRange
+                        ? `POT ~${est.potRange[0]}–${est.potRange[1]}${est.potStars !== null ? ` (${est.potStars.toFixed(1)}★)` : ""}`
+                        : est.potStars !== null
+                          ? `POT ~${est.potStars.toFixed(1)}★`
+                          : "POT unknown"}
                   </span>
                 </div>
                 {ATTR_KEYS.some((k) => ((p.devSeason ?? {})[k] ?? 0) !== 0) && (
@@ -408,7 +481,7 @@ export function PlayerDetailSheet({
                 )}
               </div>
 
-              {(p.traits ?? []).length > 0 && (
+              {(isOwn || !fogged) && (p.traits ?? []).length > 0 && (
                 <div className="space-y-1.5" data-testid="player-traits">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Traits
@@ -424,33 +497,54 @@ export function PlayerDetailSheet({
                   ))}
                 </div>
               )}
+              {!isOwn && fogged && (
+                <p className="text-[11px] text-muted-foreground" data-testid="traits-unknown">
+                  Traits and personality stay hidden until you have an extensive report.
+                </p>
+              )}
 
-              <div className="space-y-2">
+              {fogged && !est.attrs ? (
+                <div className="rounded-lg border border-dashed border-border bg-card p-3 text-[11px] text-muted-foreground" data-testid="attrs-unknown">
+                  No attribute read on him yet. {est.tier === "brief" ? "Send a scout for the full picture." : "Scout him from the Market tab."}
+                </div>
+              ) : (
+              <div className="space-y-2" data-testid="attrs-block">
                 {(p.pos === "GK"
                   ? ([
-                      ["Reflexes", p.attrs.reflexes],
-                      ["Handling", p.attrs.handling],
-                      ["Physical", p.attrs.physical]
-                    ] as Array<[string, number]>)
+                      ["Reflexes", "reflexes"],
+                      ["Handling", "handling"],
+                      ["Physical", "physical"]
+                    ] as Array<[string, AttrKey]>)
                   : ([
-                      ["Pace", p.attrs.pace],
-                      ["Shooting", p.attrs.shooting],
-                      ["Passing", p.attrs.passing],
-                      ["Defending", p.attrs.defending],
-                      ["Physical", p.attrs.physical]
-                    ] as Array<[string, number]>)
-                ).map(([label, value]) => (
-                  <div key={label} className="flex items-center gap-3">
-                    <span className="w-20 text-xs text-muted-foreground">{label}</span>
-                    <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
-                      <span
-                        className="block h-full rounded-full bg-primary"
-                        style={{ width: `${value}%` }}
-                      />
-                    </span>
-                    <span className="w-7 text-right text-xs font-bold tnum">{value}</span>
-                  </div>
-                ))}
+                      ["Pace", "pace"],
+                      ["Shooting", "shooting"],
+                      ["Passing", "passing"],
+                      ["Defending", "defending"],
+                      ["Physical", "physical"]
+                    ] as Array<[string, AttrKey]>)
+                ).map(([label, key]) => {
+                  const range = est.attrs?.[key];
+                  const value = range ? range[1] : p.attrs[key];
+                  const lo = range ? range[0] : value;
+                  return (
+                    <div key={label} className="flex items-center gap-3">
+                      <span className="w-20 text-xs text-muted-foreground">{label}</span>
+                      <span className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+                        <span
+                          className="absolute inset-y-0 left-0 rounded-full bg-primary/35"
+                          style={{ width: `${value}%` }}
+                        />
+                        <span
+                          className="absolute inset-y-0 left-0 rounded-full bg-primary"
+                          style={{ width: `${lo}%` }}
+                        />
+                      </span>
+                      <span className="w-14 text-right text-xs font-bold tnum">
+                        {range ? (lo === value ? value : `${lo}–${value}`) : value}
+                      </span>
+                    </div>
+                  );
+                })}
                 <div className="flex items-center gap-3 pt-1">
                   <span className="w-20 text-xs text-muted-foreground">Condition</span>
                   <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
@@ -462,6 +556,7 @@ export function PlayerDetailSheet({
                   <span className="w-7 text-right text-xs font-bold tnum">{p.condition}</span>
                 </div>
               </div>
+              )}
             </div>
           </>
         )}

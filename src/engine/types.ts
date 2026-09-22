@@ -63,6 +63,54 @@ export interface TrainingPlan {
   intensity: Intensity;
 }
 
+// --- scouting ----------------------------------------------------------------------
+
+/** A member of the scouting staff (or a candidate in the pool). */
+export interface Scout {
+  id: string;
+  name: string;
+  /** accuracy 0-100 — how tight and unbiased his reports are */
+  judging: number;
+  /** 0.8-1.2 — how fast he works through a report */
+  speed: number;
+  /** one-off hiring fee (£) */
+  fee: number;
+}
+
+/** An active scouting job: a single player, or a recruitment focus (a filter). */
+export type ScoutRequest =
+  | { id: string; kind: "player"; playerId: string; scoutId: string }
+  | {
+      id: string;
+      kind: "focus";
+      scoutId: string;
+      pos: Position | "any";
+      maxAge: number;
+      /** minimum potential in stars relative to your squad (0.5-5) */
+      minPotStars: number;
+    };
+
+/** How much your club knows about a player (0-100) and when it was last refreshed. */
+export interface ScoutKnowledge {
+  level: number;
+  seen: number; // season of the last report
+  /** the scout who filed the last report (drives estimate accuracy) */
+  by?: string;
+}
+
+export interface ScoutingState {
+  scouts: Scout[]; // hired staff (max 3)
+  pool: Scout[]; // candidates available to hire
+  requests: ScoutRequest[];
+  /** playerId → knowledge */
+  knowledge: Record<string, ScoutKnowledge>;
+  /** newly surfaced players (report inbox), newest first */
+  reports: string[];
+  shortlist: string[];
+  /** money left for this season's scouting (refreshed each pre-season) */
+  budget: number;
+}
+
 /** One line of a player's recent-match log (user club only). */
 export interface PlayerMatch {
   se: number; // season
@@ -369,6 +417,8 @@ export interface SaveGame {
   setpieces: SetPiecePlan;
   /** the user club's training plan (engine/training.ts) */
   training: TrainingPlan;
+  /** scouting department: staff, requests, knowledge, reports, shortlist (engine/scouting.ts) */
+  scouting: ScoutingState;
   /** training/development news lines (trait learning, academy intake…), newest first */
   devNews: string[];
 }
