@@ -10,6 +10,7 @@ import { peakFor } from "./training";
 import { defaultSetPieces } from "./setpieces";
 import { initScouting } from "./scouting";
 import { emptyAwards, emptyHistory } from "./history";
+import { emptyMedia, makePress } from "./media";
 
 export const CLUB_DEFS: ReadonlyArray<{ name: string; short: string; color: string }> = [
   { name: "Northport FC", short: "NOR", color: "#2ED573" },
@@ -158,7 +159,7 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
 
   const finances = freshFinances({ clubs, players });
 
-  return {
+  const save: SaveGame = {
     saveVersion: 1,
     seed,
     season: 1,
@@ -178,6 +179,9 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     scouting: initScouting(seed, finances[chosen]?.transfer ?? 1_000_000),
     history: emptyHistory(),
     awards: emptyAwards(),
+    media: emptyMedia(),
     devNews: []
   };
+  makePress(save); // the press want a word before round 1
+  return save;
 }

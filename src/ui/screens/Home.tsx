@@ -14,6 +14,7 @@ import {
 import { useGame } from "@/state/store";
 import { formColor, initials, ordinal } from "@/ui/format";
 import { SettingsSheet } from "@/ui/sheets";
+import { MediaCard } from "@/ui/Press";
 
 export function Home() {
   const game = useGame((s) => s.game)!;
@@ -129,6 +130,8 @@ export function Home() {
           </CardContent>
         </Card>
       )}
+
+      <MediaCard />
 
       <Card className="mt-3">
         <CardContent className="p-4">

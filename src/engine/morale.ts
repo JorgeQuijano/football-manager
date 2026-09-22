@@ -4,6 +4,7 @@ import { formOf } from "./stats";
 import { wageDemand } from "./transfers";
 import { pushNews } from "./training";
 import { overallFor } from "./ratings";
+import { fanMoraleFactor } from "./media";
 
 /** Neutral morale: everything that reads morale is calibrated so 60 = no effect. */
 export const MORALE_START = 60;
@@ -93,6 +94,10 @@ export function moraleFactors(save: SaveGame, p: Player): MoraleFactor[] {
     else if (f <= 5.9) out.push({ label: "Struggling for form", val: -1.5 });
   }
   if (p.transferRequest) out.push({ label: "Wants to leave", val: -1 });
+  if (p.clubId === save.userClubId) {
+    const fan = fanMoraleFactor(save.media?.fans);
+    if (fan) out.push(fan);
+  }
   return out;
 }
 

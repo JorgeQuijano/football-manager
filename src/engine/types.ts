@@ -534,6 +534,66 @@ export interface AwardState {
   bestWin: WinRecord | null;
 }
 
+// --- media & press (engine/media.ts) -------------------------------------------------
+
+export type HeadlineKind = "report" | "rumour" | "fan" | "press" | "promise";
+
+/** One line in the news feed. */
+export interface Headline {
+  season: number;
+  round: number;
+  kind: HeadlineKind;
+  tone: "good" | "bad" | "neutral";
+  text: string;
+}
+
+/** One selectable answer at a press conference. */
+export interface PressAnswer {
+  label: string;
+  reply: string;
+  fans: number;
+  respect: number;
+  morale: number;
+  /** a player who feels this answer most (×3 morale) */
+  target?: "star" | "worst" | "unhappy";
+  /** the answer promises a win this round — the press will check */
+  promiseWin?: boolean;
+}
+
+export interface PressQuestion {
+  id: string;
+  hint: string;
+  text: string;
+  answers: PressAnswer[];
+}
+
+export interface PressLogEntry {
+  q: string;
+  a: string;
+  effects: string;
+}
+
+/** A press conference waiting to be faced. */
+export interface PendingPress {
+  season: number;
+  round: number;
+  questions: PressQuestion[];
+  idx: number;
+  log: PressLogEntry[];
+}
+
+export interface MediaState {
+  /** fan confidence 0-100 (50 = neutral) */
+  fans: number;
+  /** how the press treat you 0-100 */
+  respect: number;
+  headlines: Headline[];
+  press: PendingPress | null;
+  promises: { round: number; text: string }[];
+  pressCount: number;
+  skipped: number;
+}
+
 export interface SaveGame {
   saveVersion: 1;
   seed: number;
@@ -566,6 +626,8 @@ export interface SaveGame {
   history: HistoryState;
   /** this season's live awards: player of the round feed + biggest win */
   awards: AwardState;
+  /** media & press: fan confidence, headlines, the pending press conference (engine/media.ts) */
+  media?: MediaState;
   /** the user club's recent league results, newest first (atmosphere / last-5 strip) */
   recentResults?: { season: number; round: number; oppId: string; h: boolean; gf: number; ga: number }[];
   /** training/development news lines (trait learning, academy intake…), newest first */
