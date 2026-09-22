@@ -34,6 +34,7 @@ src/engine/
   advance.ts     prepareRound(), completeRound(), playRound(), nextSeason() — orchestration
   transfers.ts   Contracts, wages, market values, transfer windows, bids/terms negotiation, AI churn, contract rollover
   training.ts    Per-round development (age/minutes/focus/intensity), potential peaks, trait learning, academy intake
+  planner.ts     Squad planner: career stages, contract states, per-line depth levels, next-season projection
   index.ts       Barrel export
 ```
 
@@ -293,3 +294,14 @@ Every player grows or declines a little **every round** (`developRound`, called 
 - `youthIntake`: each club gets 1-2 academy kids (16-18y, ids `py-<clubId>-<season>-<n>`, cheap 3-season deals, high peak). The user club gets exactly one (news line); AI clubs stay at <=26 by releasing their lowest-peak fringe players to free agency. Idempotent per season.
 
 **Tests** (`describe("training")`, 10): age curves (kids grow, vets decline), minutes/condition/intensity scaling, unit steering, individual focus, ceiling behaviour, determinism, a round across the world, trait learning, academy intake + AI trimming + determinism, AI plan variety.
+
+## 18. Squad planner (`planner.ts`)
+
+FM23-style depth planning, derived entirely from existing save data (no schema additions).
+
+- **Career stages** (`careerStage`, the Experience Matrix): veteran (34+), experienced (30-33), breakthrough (<=20), emerging (<=23 or room-to-grow >= 6), else peak. `CAREER_STAGES` carries labels/blurbs/tints; `STAGE_ORDER` fixes display order.
+- **Contract states** (`contractState`): `retiring` (37+, gone at rollover - the retirement rule), `expiring` (until <= current season - leaves at season end unless renewed), `lastyear` (until == season + 1), else `secure`.
+- **Depth levels** (`depthLevel`, `DEPTH_MIN` = GK 2 / DF 5 / MF 5 / FW 3): fewer than the minimum is a `gap`, under 1.4x is `thin`, up to 2x is `ok`, beyond that `deep`.
+- **`squadPlan(save, "now" | "next")`** returns per-line groups (GK/DF/MF/FW in that order) with the formation's slots + roles for that line, the line's players ranked by their best `slotScoreFor` across those slots (ties: overall, then id), plus stage/status/leaving flags. `view: "next"` projects the post-rollover squad: ages +1, expiring/retiring players flagged `leaving` and excluded from `kept`/depth, and `wageBillKept` reports the wages that walk free. The summary carries the stage counts, `total`/`kept`, `avgAge` and both wage figures.
+- UI: `src/ui/Planner.tsx` (`PlannerView`) mounted as the second tab of the Squad screen (`squad-tab-squad` / `squad-tab-planner`); view toggle `planner-toggle-now|next`, stats `plan-stat-players` / `plan-stat-wage`, `plan-expiring-note`, stage rows `stage-<stage>`, per-line badges `depth-<POS>`, player rows `plan-row-<id>` (two-line layout: name+age+OVR/POT, then stage/status chips - verified no truncation at 320px, 44px+ rows), and a scouting CTA `scout-<POS>` on gap/thin lines that jumps to the Transfer centre.
+- Tests (`describe("planner")`, 7): stage boundaries, contract states, depth mapping, formation-driven groups + ranking order, gap detection after gutting a line, next-season projection (leavers, +1 age, wages), summary integrity + determinism.
