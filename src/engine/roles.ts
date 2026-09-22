@@ -46,7 +46,7 @@ export const ROLE_DEFS: Record<RoleId, RoleDef> = {
   },
   bpd: {
     label: "Ball-Playing Defender", short: "BPD", group: "DF", lane: "central",
-    desc: "Defends and starts attacks from deep.",
+    desc: "Defends, then looks for the quick through-ball.",
     atk: { passing: 0.55, pace: 0.25, physical: 0.2 },
     def: { defending: 0.4, passing: 0.25, physical: 0.2, pace: 0.15 },
     shot: 0.7, finish: 0.95, assist: 1.1
@@ -60,21 +60,21 @@ export const ROLE_DEFS: Record<RoleId, RoleDef> = {
   },
   fb: {
     label: "Full-Back", short: "FB", group: "DF", lane: "wide",
-    desc: "Supports the flank, tucks back in.",
+    desc: "Keeps the defensive line stable — advances only when it's safe.",
     atk: { pace: 0.4, passing: 0.35, physical: 0.25 },
     def: { pace: 0.35, defending: 0.35, physical: 0.2, passing: 0.1 },
     shot: 0.75, finish: 0.95, assist: 1
   },
   wb: {
     label: "Wing-Back", short: "WB", group: "DF", lane: "wide",
-    desc: "Owns the whole flank, up and down.",
+    desc: "Bombs up the flank to put crosses in.",
     atk: { pace: 0.45, passing: 0.35, physical: 0.1, shooting: 0.1 },
     def: { pace: 0.35, defending: 0.3, physical: 0.2, passing: 0.15 },
     shot: 0.9, finish: 0.95, assist: 1.15
   },
   ifb: {
     label: "Inverted Full-Back", short: "IFB", group: "DF", lane: "central",
-    desc: "Steps into midfield, forms a back three.",
+    desc: "Tucks in to make a back three so the other full-back can attack.",
     atk: { passing: 0.5, defending: 0.2, physical: 0.15, pace: 0.15 },
     def: { defending: 0.45, physical: 0.25, passing: 0.15, pace: 0.15 },
     shot: 0.4, finish: 0.9, assist: 0.9
@@ -206,6 +206,49 @@ export const ROLE_DEFS: Record<RoleId, RoleDef> = {
     atk: { pace: 0.35, shooting: 0.4, passing: 0.15, physical: 0.1 },
     def: { defending: 0.35, physical: 0.4, pace: 0.25 },
     shot: 1.2, finish: 1.05, assist: 0.95
+  },
+
+  hb: {
+    label: "Half Back", short: "HB", group: "MF", lane: "central",
+    desc: "Sits in front of the defence — drops between the centre-backs when his team attacks.",
+    atk: { passing: 0.35, physical: 0.3, defending: 0.2, pace: 0.15 },
+    def: { defending: 0.5, physical: 0.3, passing: 0.2 },
+    shot: 0.3, finish: 0.9, assist: 0.8
+  },
+  reg: {
+    label: "Regista", short: "REG", group: "MF", lane: "central",
+    desc: "Runs the game from deep — free to try the pass nobody else sees.",
+    atk: { passing: 0.6, shooting: 0.2, pace: 0.1, physical: 0.1 },
+    def: { defending: 0.25, passing: 0.35, physical: 0.2, pace: 0.2 },
+    shot: 0.75, finish: 0.95, assist: 1.5
+  },
+  car: {
+    label: "Carrilero", short: "CAR", group: "MF", lane: "central",
+    desc: "Shuttles across midfield, covering the flank behind an attacking full-back.",
+    atk: { passing: 0.3, pace: 0.25, physical: 0.2, defending: 0.15 },
+    def: { defending: 0.38, physical: 0.28, pace: 0.22, passing: 0.12 },
+    shot: 0.7, finish: 0.95, assist: 0.9
+  },
+  treq: {
+    label: "Trequartista", short: "TREQ", group: "MF", lane: "central",
+    desc: "Free spirit between the lines — roams anywhere and doesn't track back.",
+    atk: { passing: 0.45, shooting: 0.3, pace: 0.15, physical: 0.1 },
+    def: { defending: 0.2, passing: 0.3, physical: 0.25, pace: 0.25 },
+    shot: 1.0, finish: 1.08, assist: 1.4
+  },
+  dw: {
+    label: "Defensive Winger", short: "DW", group: "MF", lane: "wide",
+    desc: "Presses the full-back relentlessly and tracks him all day.",
+    atk: { pace: 0.4, passing: 0.35, physical: 0.15, defending: 0.1 },
+    def: { pace: 0.3, defending: 0.35, physical: 0.25, passing: 0.1 },
+    shot: 0.8, finish: 0.9, assist: 1.0
+  },
+  f9: {
+    label: "False Nine", short: "F9", group: "FW", lane: "central",
+    desc: "Drops into midfield to drag defenders out, then turns and attacks the space.",
+    atk: { passing: 0.45, shooting: 0.3, pace: 0.15, physical: 0.1 },
+    def: { defending: 0.3, physical: 0.35, pace: 0.2, passing: 0.15 },
+    shot: 1.0, finish: 1.05, assist: 1.2
   }
 };
 
@@ -213,8 +256,8 @@ export const ROLE_DEFS: Record<RoleId, RoleDef> = {
 export const ROLE_GROUPS: Record<Position, RoleId[]> = {
   GK: ["keeper", "sweeper"],
   DF: ["stopper", "bpd", "ncb", "fb", "wb", "ifb", "lib"],
-  MF: ["b2b", "cm", "dlp", "anc", "bwm", "mez", "playmaker", "ss", "w", "iw"],
-  FW: ["poacher", "af", "cf", "dlf", "target", "presser", "inside"]
+  MF: ["b2b", "cm", "dlp", "anc", "bwm", "mez", "playmaker", "ss", "w", "iw", "hb", "reg", "car", "dw", "treq"],
+  FW: ["poacher", "af", "cf", "dlf", "target", "presser", "inside", "f9"]
 };
 
 export function defaultRoleFor(pos: Position): RoleId {
@@ -264,7 +307,13 @@ const FIN: Record<RoleId, Partial<Record<keyof PlayerAttrs, number>>> = {
   dlf: { shooting: 0.6, passing: 0.2, physical: 0.2 },
   target: { shooting: 0.45, physical: 0.5, pace: 0.05 },
   presser: { shooting: 0.6, pace: 0.3, physical: 0.1 },
-  inside: { shooting: 0.75, pace: 0.25 }
+  inside: { shooting: 0.75, pace: 0.25 },
+  hb: { shooting: 0.55, physical: 0.45 },
+  reg: { shooting: 0.7, passing: 0.25, pace: 0.05 },
+  car: { shooting: 0.6, pace: 0.2, physical: 0.2 },
+  treq: { shooting: 0.7, passing: 0.2, pace: 0.1 },
+  dw: { shooting: 0.65, pace: 0.35 },
+  f9: { shooting: 0.6, passing: 0.25, physical: 0.15 }
 };
 
 const KEYS = [

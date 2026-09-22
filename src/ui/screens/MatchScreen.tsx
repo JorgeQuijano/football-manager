@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { GamePhase, IntentPick, MatchState, Mentality, MotionProfile, RoleId, Rng } from "@/engine";
+import type {
+  GamePhase,
+  IntentPick,
+  MatchState,
+  Mentality,
+  MotionProfile,
+  RoleId,
+  Rng,
+  TraitId
+} from "@/engine";
 import {
   decideIntent,
   hashSeed,
@@ -117,6 +126,7 @@ function LiveMatchScreen() {
   const profiles = useMemo(() => {
     const byId = new Map(game.players.map((p) => [p.id, p] as const));
     const map = new Map<string, MotionProfile>();
+    const tmap = new Map<string, string[]>();
     for (const s of ["home", "away"] as const) {
       const sd = st[s];
       for (let i = 0; i < 11; i++) {
@@ -127,10 +137,11 @@ function LiveMatchScreen() {
             s + ":" + i,
             motionFor(p, sd.roles[i], { x: sd.coords[i][0], y: sd.coords[i][1], pos: sd.poss[i] })
           );
+          tmap.set(s + ":" + i, (p.traits ?? []) as string[]);
         }
       }
     }
-    return map;
+    return { map, tmap };
   }, [game.players, st]);
   const profRef = useRef(profiles);
   profRef.current = profiles;
@@ -255,7 +266,7 @@ function LiveMatchScreen() {
       const arr: { slot: number; v: number }[] = [];
       for (let i = 0; i < 11; i++) {
         if (sd2.poss[i] === "GK") continue;
-        const prof = profRef.current.get(s2 + ":" + i) ?? DEFAULT_PROFILE;
+        const prof = profRef.current.map.get(s2 + ":" + i) ?? DEFAULT_PROFILE;
         arr.push({ slot: i, v: field === "push" ? prof.push : prof.drop });
       }
       arr.sort((a, b) => b.v - a.v);
@@ -283,6 +294,11 @@ function LiveMatchScreen() {
       }
       if (sd.poss[slot] === "GK") return put(50, 4);
       const r2 = S.def.indexOf(slot);
+      if (S.kind === "corner" && r2 >= 0 && r2 < spots.att.length) {
+        // man-marking at corners: pick up the attacker in this rank, goal-side
+        const mark = spots.att[r2];
+        return put(mark[0] + (r2 % 2 === 0 ? 1.5 : -1.5), Math.max(3, mark[1] - 2.5));
+      }
       if (r2 >= 0 && r2 < spots.def.length) return put(spots.def[r2][0], spots.def[r2][1]);
       const rr2 = spots.restDef;
       return put(r2 % 2 === 0 ? rr2[0] - 9 : rr2[0] + 9, rr2[1]);
@@ -313,7 +329,7 @@ function LiveMatchScreen() {
         rng = mulberry32(hashSeed(MATCH_KEY, side, slot));
         C.intentRngs.set(key, rng);
       }
-      const prof = profRef.current.get(key) ?? DEFAULT_PROFILE;
+      const prof = profRef.current.map.get(key) ?? DEFAULT_PROFILE;
       const ball = ownBall(side);
       const cd = sd.coords[slot];
       const pick = decideIntent(
@@ -323,7 +339,8 @@ function LiveMatchScreen() {
           mentality: sd.mentality,
           slot: { x: cd[0], y: cd[1] },
           ball,
-          prog: 1 - ball.y / 100
+          prog: 1 - ball.y / 100,
+          traits: (profRef.current.tmap.get(key) ?? []) as TraitId[]
         },
         rng
       );
@@ -349,7 +366,7 @@ function LiveMatchScreen() {
       const staged = stageTarget(side, slot);
       if (staged) return staged;
       const sd = sideOf(side);
-      const prof = profRef.current.get(side + ":" + slot) ?? DEFAULT_PROFILE;
+      const prof = profRef.current.map.get(side + ":" + slot) ?? DEFAULT_PROFILE;
       const base = slotScreen(sd, slot, sideMirror(side));
       const up = attacksUp(side);
       const dir = up ? -1 : 1;
@@ -505,7 +522,7 @@ function LiveMatchScreen() {
         }
         for (let i = 0; i < 11; i++) {
           const key = side + ":" + i;
-          const prof = profRef.current.get(key) ?? DEFAULT_PROFILE;
+          const prof = profRef.current.map.get(key) ?? DEFAULT_PROFILE;
           const tgt = targetFor(side, i);
           const cur = C.anim.get(key) ?? { x: tgt.x, y: tgt.y };
           const k = Math.min(1, dt * prof.accel);

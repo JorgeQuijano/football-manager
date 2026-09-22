@@ -1,6 +1,7 @@
 import type { Mentality } from "./types";
 import { pickWeighted, type Rng } from "./rng";
 import type { MotionProfile } from "./motion";
+import type { TraitId } from "./types";
 
 /**
  * Player decision layer (2D match view). Every few seconds each player *chooses*
@@ -87,6 +88,8 @@ export interface IntentCtx {
   ball: { x: number; y: number };
   /** 0 = deep in own half, 1 = in the opponent box */
   prog: number;
+  /** the player's traits — they bend the decision weights */
+  traits?: TraitId[];
 }
 
 export interface IntentPick {
@@ -213,6 +216,16 @@ const PHASE_WEIGHTS: Record<GamePhase, Partial<Record<IntentId, Wf>>> = {
 
 const GK_ALLOWED: IntentId[] = ["hold", "hold_line", "come_short"];
 
+/** Trait modifiers per intent: [trait, multiplier]. */
+const TRAIT_W: Partial<Record<IntentId, [TraitId, number][]>> = {
+  press_ball: [["presses_hard", 1.35]],
+  cover: [["marks_tightly", 1.3]],
+  run_behind: [["arrives_in_box", 1.4], ["stays_back", 0.35]],
+  overlap: [["stays_back", 0.35]],
+  counter: [["runs_with_ball", 1.1], ["stays_back", 0.5]],
+  hold: [["stays_back", 1.25]]
+};
+
 /**
  * Pick this player's next intent. Pure: same rng state → same pick.
  */
@@ -231,6 +244,9 @@ export function decideIntent(prof: MotionProfile, ctx: IntentCtx, rng: Rng): Int
     if (!wf) continue;
     let w = wf(d, ctx.mentality);
     if (w <= 0) continue;
+    for (const [tr, f] of TRAIT_W[id] ?? []) {
+      if (ctx.traits?.includes(tr)) w *= f;
+    }
     if (prof.gk && !GK_ALLOWED.includes(id)) w *= 0.04;
     cands.push({ id, w });
   }

@@ -4,6 +4,7 @@ export * from "./tuning";
 export * from "./roles";
 export * from "./motion";
 export * from "./intents";
+export * from "./traits";
 export * from "./formations";
 export * from "./ratings";
 export * from "./league";

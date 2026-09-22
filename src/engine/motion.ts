@@ -50,6 +50,11 @@ export const ROLE_MOTION: Record<RoleId, RoleMotion> = {
   ss: { press: 0.45, support: 0.7, push: 15, drop: 3, width: 0.0, roam: 8, recovery: 0.6, break: 0.75 },
   w: { press: 0.55, support: 0.75, push: 12, drop: 5, width: 0.75, roam: 9, recovery: 0.8, break: 0.7 },
   iw: { press: 0.5, support: 0.75, push: 13, drop: 4, width: -0.4, roam: 8, recovery: 0.7, break: 0.75 },
+  hb: { press: 0.5, support: 0.55, push: 1, drop: 10, width: 0.0, roam: 3, recovery: 0.85, break: 0.15 },
+  reg: { press: 0.35, support: 1.0, push: 5, drop: 8, width: 0.0, roam: 10, recovery: 0.7, break: 0.3 },
+  car: { press: 0.6, support: 0.7, push: 7, drop: 7, width: 0.35, roam: 4, recovery: 0.9, break: 0.35 },
+  dw: { press: 0.9, support: 0.5, push: 8, drop: 7, width: 0.7, roam: 6, recovery: 0.95, break: 0.5 },
+  treq: { press: 0.1, support: 0.95, push: 10, drop: 2, width: 0.1, roam: 14, recovery: 0.25, break: 0.45 },
 
   // forwards
   poacher: { press: 0.25, support: 0.5, push: 16, drop: 1, width: 0.0, roam: 4, recovery: 0.35, break: 0.8 },
@@ -58,7 +63,8 @@ export const ROLE_MOTION: Record<RoleId, RoleMotion> = {
   dlf: { press: 0.4, support: 0.9, push: 11, drop: 4, width: 0.0, roam: 9, recovery: 0.6, break: 0.55 },
   target: { press: 0.35, support: 0.6, push: 13, drop: 2, width: 0.0, roam: 5, recovery: 0.4, break: 0.6 },
   presser: { press: 1.0, support: 0.5, push: 13, drop: 3, width: 0.15, roam: 10, recovery: 0.7, break: 0.75 },
-  inside: { press: 0.5, support: 0.7, push: 14, drop: 4, width: -0.55, roam: 8, recovery: 0.65, break: 0.8 }
+  inside: { press: 0.5, support: 0.7, push: 14, drop: 4, width: -0.55, roam: 8, recovery: 0.65, break: 0.8 },
+  f9: { press: 0.45, support: 1.0, push: 8, drop: 6, width: 0.0, roam: 11, recovery: 0.55, break: 0.5 }
 };
 
 export interface MotionProfile {
@@ -96,17 +102,22 @@ export function motionFor(
   const accel = 3.5 + pace / 30 + p.attrs.physical / 45;
   const stam = 0.75 + p.attrs.physical / 200;
   const wide = Math.abs(slot.x - 50) >= 32;
+  // trait nudges: drivers roam more, sitters push less, leaders recover harder
+  const traits = p.traits ?? [];
+  const roamX = traits.includes("runs_with_ball") ? 1.12 : 1;
+  const pushX = traits.includes("stays_back") ? 0.85 : 1;
+  const recX = traits.includes("leader") ? 1.1 : 1;
   return {
     speed,
     accel,
     gk,
-    roam: base.roam * stam * (gk ? 0.5 : 1),
+    roam: base.roam * stam * (gk ? 0.5 : 1) * roamX,
     press: base.press,
     support: base.support,
-    push: base.push * stam,
+    push: base.push * stam * pushX,
     drop: base.drop,
     width: wide ? base.width : base.width * 0.4,
-    recovery: base.recovery,
+    recovery: Math.min(1, base.recovery * recX),
     break: base.break,
     seed: seedFrom(p.id)
   };

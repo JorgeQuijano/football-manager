@@ -11,7 +11,8 @@ import {
   ROLE_GROUPS,
   slotScoreFor,
   squadOf,
-  suitability
+  suitability,
+  TRAITS
 } from "@/engine";
 import { Button } from "@/components/ui/button";
 import {
@@ -233,6 +234,23 @@ export function PlayerDetailSheet({
                 )}
               </div>
 
+              {(p.traits ?? []).length > 0 && (
+                <div className="space-y-1.5" data-testid="player-traits">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Traits
+                  </div>
+                  {(p.traits ?? []).map((t) => (
+                    <div
+                      key={t}
+                      className="rounded-lg border border-primary/40 bg-primary/5 px-2.5 py-2"
+                    >
+                      <div className="text-[12px] font-bold text-primary">{TRAITS[t].label}</div>
+                      <div className="text-[11px] text-muted-foreground">{TRAITS[t].blurb}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="space-y-2">
                 {(p.pos === "GK"
                   ? ([
@@ -435,6 +453,18 @@ export function PlayerPickerSheet({
                       </span>
                     )}
                   </span>
+                  {(p.traits ?? []).length > 0 && (
+                    <span className="mt-0.5 flex flex-wrap gap-1">
+                      {(p.traits ?? []).map((t) => (
+                        <span
+                          key={t}
+                          className="rounded bg-primary/10 px-1 py-0.5 text-[9px] font-bold text-primary"
+                        >
+                          {TRAITS[t].short}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                   <span className="text-[11px] text-muted-foreground">
                     {fitted ? "In line-up · " : ""}
                     {p.injuredWeeks > 0

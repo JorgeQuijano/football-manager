@@ -13,6 +13,7 @@ import type {
 } from "./types";
 import { hashSeed, mulberry32, pick, pickWeighted, randInt, type Rng } from "./rng";
 import { T } from "./tuning";
+import { hasTrait } from "./traits";
 import {
   attackScore,
   attackStrength,
@@ -381,7 +382,8 @@ const resolveChance = (
     (x) =>
       (x.p.pos === "FW" ? 4 : x.p.pos === "MF" ? 2.4 : 0.7) *
       (0.5 + x.p.attrs.shooting / 100) *
-      ROLE_DEFS[x.role].shot
+      ROLE_DEFS[x.role].shot *
+      (hasTrait(x.p, "shoots_on_sight") ? 1.25 : 1)
   );
   const chain = buildChain(atkSide, atk, rng, shooter.slot);
   const gk = dfn.find((x) => x.p.pos === "GK");
@@ -405,7 +407,14 @@ const resolveChance = (
     const mates = atk.filter((x) => x.p.id !== shooter.p.id && x.p.pos !== "GK");
     const assister =
       mates.length > 0 && rng() < T.assistChance
-        ? pickWeighted(rng, mates, (x) => x.p.attrs.passing * ROLE_DEFS[x.role].assist)
+        ? pickWeighted(
+            rng,
+            mates,
+            (x) =>
+              x.p.attrs.passing *
+              ROLE_DEFS[x.role].assist *
+              (hasTrait(x.p, "killer_balls") ? 1.3 : 1)
+          )
         : undefined;
     if (assister) {
       updOf(s, assister.p.id).assists++;
@@ -522,11 +531,12 @@ const processFoul = (
     (x) =>
       (x.p.pos === "DF" ? 2 : x.p.pos === "MF" ? 1.5 : 1) *
       (1 + Math.max(0, 70 - x.p.attrs.defending) / 80) *
-      (1 + (x.p.attrs.physical - 65) / 250)
+      (1 + (x.p.attrs.physical - 65) / 250) *
+      (hasTrait(x.p, "dives_in") ? 1.4 : 1)
   );
   const evBefore = s.events.length;
   if (rng() < T.cardShareOfFouls) {
-    if (rng() < T.redChancePerFoul) {
+    if (rng() < T.redChancePerFoul * (hasTrait(offender.p, "dives_in") ? 1.5 : 1)) {
       leaveSlot(s, committed, offender.slot, m);
       updOf(s, offender.p.id).red = true;
       s.ratings[offender.p.id] = clamp(s.ratings[offender.p.id] - 0.5, 4, 10);
@@ -597,11 +607,19 @@ const resolvePenalty = (
   const taker = pickWeighted(
     rng,
     atk,
-    (x) => x.p.attrs.shooting * 0.7 + roleFinish(x.p, x.role) * 0.3
+    (x) =>
+      (x.p.attrs.shooting * 0.7 + roleFinish(x.p, x.role) * 0.3) *
+      (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
   );
   const gk = proto(defSide, players).find((x) => x.p.pos === "GK");
   const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
-  const pGoal = clamp(T.penaltyGoalBase + (taker.p.attrs.shooting - gkSkill) / 300, 0.62, 0.92);
+  const pGoal = clamp(
+    T.penaltyGoalBase +
+      (taker.p.attrs.shooting - gkSkill) / 300 +
+      (hasTrait(taker.p, "dead_ball") ? 0.02 : 0),
+    0.62,
+    0.92
+  );
   const evBefore = s.events.length;
   let out: StrokeOut;
   if (rng() < pGoal) {
@@ -669,13 +687,18 @@ const resolveFreeKick = (
   const taker = pickWeighted(
     rng,
     atk,
-    (x) => x.p.attrs.shooting * 0.75 + roleFinish(x.p, x.role) * 0.25
+    (x) =>
+      (x.p.attrs.shooting * 0.75 + roleFinish(x.p, x.role) * 0.25) *
+      (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
   );
   const dfn = proto(defSide, players);
   const gk = dfn.find((x) => x.p.pos === "GK");
   const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
   const pGoal = clamp(
-    T.fkGoalBase * (1 + (taker.p.attrs.shooting - 60) / 80) * (1 + (60 - gkSkill) / 200),
+    T.fkGoalBase *
+      (1 + (taker.p.attrs.shooting - 60) / 80) *
+      (1 + (60 - gkSkill) / 200) *
+      (hasTrait(taker.p, "dead_ball") ? 1.08 : 1),
     0.02,
     0.16
   );
@@ -777,7 +800,9 @@ const resolveCorner = (
   const taker = pickWeighted(
     rng,
     atk,
-    (x) => x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20
+    (x) =>
+      (x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20) *
+      (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
   );
   const flagX = rng() < 0.5 ? 2 : 98;
   const contenders = atk.filter((x) => x.p.id !== taker.p.id);
@@ -796,7 +821,8 @@ const resolveCorner = (
   const pGoal = clamp(
     T.cornerGoalBase *
       (1 + (taker.p.attrs.passing - 60) / 100 + (header.p.attrs.physical - 60) / 120) *
-      (1 + (60 - gkSkill) / 220),
+      (1 + (60 - gkSkill) / 220) *
+      (hasTrait(taker.p, "dead_ball") ? 1.06 : 1),
     0.008,
     0.09
   );

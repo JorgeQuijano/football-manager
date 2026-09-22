@@ -27,7 +27,14 @@ export type RoleId =
   | "dlf"
   | "target"
   | "presser"
-  | "inside";
+  | "inside"
+  // added in 0.10.0 (from the FM24 behaviour guide)
+  | "hb"
+  | "reg"
+  | "car"
+  | "f9"
+  | "treq"
+  | "dw";
 
 export interface PlayerAttrs {
   pace: number;
@@ -39,6 +46,19 @@ export interface PlayerAttrs {
   handling: number;
 }
 
+/** FM-style behavioural traits — see engine/traits.ts */
+export type TraitId =
+  | "shoots_on_sight"
+  | "killer_balls"
+  | "presses_hard"
+  | "marks_tightly"
+  | "dives_in"
+  | "stays_back"
+  | "arrives_in_box"
+  | "runs_with_ball"
+  | "dead_ball"
+  | "leader";
+
 export interface Player {
   id: string;
   clubId: string;
@@ -46,6 +66,8 @@ export interface Player {
   age: number;
   pos: Position;
   attrs: PlayerAttrs;
+  /** FM-style behavioural traits (0-2 per player); see engine/traits.ts */
+  traits: TraitId[];
   condition: number; // 0-100
   injuredWeeks: number; // 0 = fit
   suspension: number; // matches left to sit out; 0 = available

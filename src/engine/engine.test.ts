@@ -18,6 +18,7 @@ import { builtinFormation, clampToZone, resolveFormation, roleTemplate, scratchS
 import { defaultRoleFor, laneFits, roleFinish, ROLE_DEFS, ROLE_GROUPS } from "./roles";
 import { motionFor, ROLE_MOTION } from "./motion";
 import { decideIntent, INTENT_IDS, type IntentCtx, type GamePhase } from "./intents";
+import { hasTrait, TRAITS, traitsFor } from "./traits";
 import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
 import type { Mentality, Player, Position, SaveGame, Stroke } from "./types";
 
@@ -233,7 +234,8 @@ describe("roles", () => {
     apps: 0,
     goals: 0,
     assists: 0,
-    ...over
+    ...over,
+    traits: over.traits ?? []
   });
 
   it("every formation slot has a valid default role", () => {
@@ -350,7 +352,8 @@ describe("lineup ops", () => {
       apps: 0,
       goals: 0,
       assists: 0,
-      ...over
+      ...over,
+      traits: over.traits ?? []
     });
     const tiredStar = mk({
       pos: "FW",
@@ -385,6 +388,7 @@ describe("conditioning", () => {
         reflexes: 60,
         handling: 60
       },
+      traits: [],
       condition: 100,
       injuredWeeks: 0,
       suspension: 0,
@@ -683,6 +687,7 @@ describe("motion", () => {
       reflexes: 50,
       handling: 50
     },
+    traits: [],
     condition: 100,
     injuredWeeks: 0,
     suspension: 0,
@@ -748,6 +753,7 @@ describe("decisions", () => {
       reflexes: 50,
       handling: 50
     },
+    traits: [],
     condition: 100,
     injuredWeeks: 0,
     suspension: 0,
@@ -883,6 +889,107 @@ describe("decisions", () => {
       expect(r.mix).toBeGreaterThanOrEqual(0.35);
       expect(r.mix).toBeLessThanOrEqual(0.85);
     }
+  });
+});
+
+describe("traits", () => {
+  const mkP = (pos: Position, over: Partial<Player["attrs"]> = {}): Player => ({
+    id: `t-${pos}-${JSON.stringify(over)}`,
+    clubId: "c1",
+    name: "T",
+    age: 27,
+    pos,
+    attrs: {
+      pace: 65,
+      shooting: 65,
+      passing: 65,
+      defending: 65,
+      physical: 65,
+      reflexes: 50,
+      handling: 50,
+      ...over
+    },
+    traits: [],
+    condition: 100,
+    injuredWeeks: 0,
+    suspension: 0,
+    apps: 0,
+    goals: 0,
+    assists: 0
+  });
+
+  it("generates 0-2 valid, group-appropriate traits deterministically", () => {
+    const save = newGame(11);
+    let withTraits = 0;
+    for (const p of save.players) {
+      expect(p.traits.length).toBeLessThanOrEqual(2);
+      const again = traitsFor(p, mulberry32(hashSeed(p.id, "traits")));
+      expect(again).toEqual(p.traits);
+      if (p.traits.length > 1) expect(new Set(p.traits).size).toBe(p.traits.length);
+      for (const t of p.traits) {
+        expect(TRAITS[t].groups).toContain(p.pos);
+      }
+      if (p.traits.length) withTraits++;
+    }
+    expect(withTraits).toBeGreaterThan(save.players.length * 0.5);
+  });
+
+  it("attribute profiles bend the trait pool", () => {
+    const striker = traitsFor(mkP("FW", { shooting: 90, pace: 85 }), mulberry32(1));
+    const anyone = Array.from({ length: 40 }, (_, i) =>
+      traitsFor(mkP("FW", { shooting: 90, pace: 85 }), mulberry32(i))
+    );
+    const shooty = anyone.filter((t) => t.includes("shoots_on_sight")).length;
+    const plain = Array.from({ length: 40 }, (_, i) =>
+      traitsFor(mkP("FW", { shooting: 45, pace: 45 }), mulberry32(i))
+    ).filter((t) => t.includes("shoots_on_sight")).length;
+    expect(striker).toBeDefined();
+    expect(shooty).toBeGreaterThan(plain);
+  });
+
+  it("traits bend the decision weights", () => {
+    const base = mkP("MF");
+    const prof = motionFor(base, "cm", { x: 50, y: 45, pos: "MF" });
+    const c = (traits: Player["traits"]): IntentCtx => ({
+      phase: "out",
+      mentality: "bal",
+      slot: { x: 50, y: 45 },
+      ball: { x: 55, y: 45 },
+      prog: 0.55,
+      traits
+    });
+    const count = (traits: Player["traits"]) => {
+      let k = 0;
+      for (let i = 0; i < 300; i++) {
+        if (decideIntent(prof, c(traits), mulberry32(hashSeed("tr", i))).id === "press_ball") k++;
+      }
+      return k;
+    };
+    expect(count(["presses_hard"])).toBeGreaterThan(count([]));
+
+    const fwd = motionFor(base, "af", { x: 50, y: 25, pos: "FW" });
+    const ci: IntentCtx = {
+      phase: "in",
+      mentality: "bal",
+      slot: { x: 50, y: 25 },
+      ball: { x: 55, y: 55 },
+      prog: 0.45
+    };
+    const runs = (traits: Player["traits"]) => {
+      let k = 0;
+      for (let i = 0; i < 300; i++) {
+        if (decideIntent(fwd, { ...ci, traits }, mulberry32(hashSeed("tr2", i))).id === "run_behind") k++;
+      }
+      return k;
+    };
+    expect(runs(["arrives_in_box"])).toBeGreaterThan(runs([]));
+    expect(runs(["stays_back"])).toBeLessThan(runs([]));
+  });
+
+  it("hasTrait reads safely on legacy players", () => {
+    const legacy = { ...mkP("MF") } as Player;
+    delete (legacy as Partial<Player>).traits;
+    expect(hasTrait(legacy, "presses_hard")).toBe(false);
   });
 });
 

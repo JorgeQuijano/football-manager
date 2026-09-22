@@ -1,5 +1,6 @@
 import type { Club, FormationId, Lineup, Player, Position, SaveGame } from "./types";
 import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
+import { traitsFor } from "./traits";
 import { FORMATIONS, T } from "./tuning";
 import { autoLineup } from "./ratings";
 import { builtinFormation } from "./formations";
@@ -82,13 +83,18 @@ function makePlayer(
   let name = `${pick(rng, FIRST)} ${pick(rng, LAST)}`;
   if (name.split(" ")[0] === name.split(" ")[1]) name = `${pick(rng, FIRST)} ${pick(rng, LAST)}`;
 
+  const id = `p${clubId}-${idx}`;
+  const age = randInt(rng, T.ageRange[0], T.ageRange[1]);
+
   return {
-    id: `p${clubId}-${idx}`,
+    id,
     clubId,
     name,
-    age: randInt(rng, T.ageRange[0], T.ageRange[1]),
+    age,
     pos,
     attrs,
+    // deterministic per player id so save backfills match fresh generations
+    traits: traitsFor({ id, pos, attrs, age }, mulberry32(hashSeed(id, "traits"))),
     condition: 100,
     injuredWeeks: 0,
     suspension: 0,

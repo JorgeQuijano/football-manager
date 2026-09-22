@@ -4,9 +4,13 @@ import {
   autoLineup,
   builtinFormation,
   defaultRoleFor,
+  hashSeed,
+  mulberry32,
   resolveFormation,
   ROLE_GROUPS,
   squadOf,
+  TRAITS,
+  traitsFor,
   validateFormation
 } from "@/engine";
 
@@ -21,6 +25,12 @@ const KEY = "fm-save-v1";
 export function normalizeSave(save: SaveGame): SaveGame {
   for (const p of save.players) {
     if (typeof p.assists !== "number") p.assists = 0;
+    // traits: keep valid stored ones, otherwise regenerate deterministically
+    const stored = Array.isArray(p.traits) ? p.traits : null;
+    const valid = stored ? stored.filter((t) => typeof t === "string" && t in TRAITS) : null;
+    if (!stored || stored.length > 2 || valid!.length !== stored.length) {
+      p.traits = traitsFor(p, mulberry32(hashSeed(p.id, "traits")));
+    }
   }
   if (!Array.isArray(save.customFormations)) save.customFormations = [];
   save.customFormations = save.customFormations.filter(
