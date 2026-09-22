@@ -39,8 +39,7 @@ import {
   slotScoreFor,
   squadOf,
   startLive,
-  T
-} from "@/engine";
+  T, playRound } from "@/engine";
 import type { BidResponse } from "@/engine";
 import type { AttrKey, CornerRoutine, FreeKickRoutine, TrainingPlan } from "@/engine";
 import { cleanSetPieces } from "@/engine";
@@ -194,6 +193,8 @@ interface AppState {
   /** send the assistant to the press conference */
   skipPress: () => void;
   resetGame: () => void;
+  /** sim the remaining pre-season friendlies instantly */
+  skipPreseason: () => void;
   /** open an inbox item: marks it read and returns the screen to show */
   openInboxItem: (id: string) => string | undefined;
   markInboxAllRead: () => void;
@@ -247,6 +248,17 @@ export const useGame = create<AppState>()((set, get) => ({
     const game = newGame(seed, clubId);
     set({ game, screen: "home", reveal: null, builderFor: null });
     schedulePersist(game);
+  },
+
+  /** Play out the rest of pre-season in one go. */
+  skipPreseason: () => {
+    const { game } = get();
+    if (!game) return;
+    let save = game;
+    let guard = 0;
+    while (save.round < 0 && guard++ < 8) save = playRound(save).save;
+    set({ game: save, reveal: null, screen: "home" });
+    schedulePersist(save);
   },
 
   advance: () => {

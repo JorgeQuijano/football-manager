@@ -101,7 +101,10 @@ export function CalendarView() {
                     </span>
                   )}
                   {!m && day.training && <span className="mt-0.5 size-1 rounded-full bg-muted-foreground" />}
-                  {m && isInternationalRound(m.round) && (
+                  {m && m.round < 0 && (
+                    <span className="text-[7px] font-bold leading-none text-[#7EC8FF]">FR</span>
+                  )}
+                  {m && m.round > 0 && isInternationalRound(m.round) && (
                     <span className="text-[7px] font-bold leading-none text-[#7EC8FF]" data-testid={`cal-int-${m.round}`}>
                       INT
                     </span>
@@ -121,6 +124,7 @@ export function CalendarView() {
         <span>· dot = training</span>
         <span>· amber = window or date to note</span>
         <span>· INT = international week</span>
+        <span>· FR = pre-season friendly</span>
       </div>
 
       {matchDays.length > 0 && (
@@ -131,7 +135,8 @@ export function CalendarView() {
               <li key={d.date.d} className="flex items-baseline justify-between gap-2 text-xs">
                 <span className="text-muted-foreground">{fmtShort(d.date)}</span>
                 <span className="min-w-0 flex-1 truncate">
-                  R{d.match!.round} · {d.match!.home ? "vs" : "at"} {clubOf(d.match!.oppId).name}
+                  {d.match!.round < 0 ? "Friendly" : `R${d.match!.round}`} ·{" "}
+                  {d.match!.home ? "vs" : "at"} {clubOf(d.match!.oppId).name}
                 </span>
                 <span className="font-semibold" style={d.match!.result ? { color: resultTint[d.match!.result] } : undefined}>
                   {d.match!.played ? `${d.match!.gf}–${d.match!.ga}` : "—"}

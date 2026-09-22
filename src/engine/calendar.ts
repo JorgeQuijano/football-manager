@@ -1,4 +1,4 @@
-import type { SaveGame } from "./types";
+import type { Fixture, SaveGame } from "./types";
 import { INTENSITIES, UNITS } from "./training";
 import { TF, transferWindow } from "./transfers";
 
@@ -102,6 +102,8 @@ export interface CalMatch {
 }
 
 export interface CalDay {
+  /** a pre-season friendly day (v0.27) */
+  friendly?: boolean;
   date: CivilDate;
   dow: number;
   /** the user's match, on match day only */
@@ -141,10 +143,42 @@ const matchFor = (save: SaveGame, round: number): CalMatch | null => {
 };
 
 /** Everything happening on one date. Returns null outside the season span. */
+/** Pre-season friendlies sit on the three Saturdays before the opener (v0.27). */
+export const PRE_DAYS = 21;
+export const PRE_FRIENDLY_WEEKS = 3;
+
+export const friendlyDate = (season: number, i: number): CivilDate =>
+  addDays(seasonStart(season), -(PRE_FRIENDLY_WEEKS - i) * 7);
+
+export function preFriendlyFor(save: SaveGame, date: CivilDate) {
+  for (const f of save.fixtures) {
+    if (!f.friendly) continue;
+    if (sameDay(friendlyDate(save.season, f.round + PRE_FRIENDLY_WEEKS), date)) return f;
+  }
+  return undefined;
+}
+
+/** Shared shape for a calendar entry's match slot. */
+function matchFromFixture(save: SaveGame, f: Fixture, round = f.round): NonNullable<CalDay["match"]> {
+  const user = save.userClubId;
+  const home = f.homeId === user;
+  return {
+    round,
+    oppId: home ? f.awayId : f.homeId,
+    home,
+    played: f.played,
+    gf: home ? f.homeGoals : f.awayGoals,
+    ga: home ? f.awayGoals : f.homeGoals,
+    ...(f.played
+      ? { result: ((home ? f.homeGoals : f.awayGoals) ?? 0) > ((home ? f.awayGoals : f.homeGoals) ?? 0) ? "W" : ((home ? f.homeGoals : f.awayGoals) ?? 0) === ((home ? f.awayGoals : f.homeGoals) ?? 0) ? "D" : "L" }
+      : {})
+  } as NonNullable<CalDay["match"]>;
+}
+
 export function dayFor(save: SaveGame, date: CivilDate): CalDay | null {
   const rounds = seasonRoundsOf(save);
   const start = seasonStart(save.season);
-  const firstMonday = addDays(start, -5); // the training week of round 1 opens here
+  const firstMonday = addDays(start, -5 - PRE_DAYS); // pre-season opens three weeks early
   const lastSunday = addDays(start, (rounds - 1) * 7 + 1);
   if (diffDays(date, firstMonday) < 0 || diffDays(date, lastSunday) > 0) return null;
 
@@ -157,6 +191,16 @@ export function dayFor(save: SaveGame, date: CivilDate): CalDay | null {
     events: [],
     currentWeek: sameDay(weekSaturday, currentSaturday)
   };
+
+  // a pre-season Saturday: a friendly, not a league round
+  const pre = preFriendlyFor(save, date);
+  if (pre) {
+    day.match = matchFromFixture(save, pre);
+    day.friendly = true;
+    // only ring the friendly week while it is the one being played
+    day.currentWeek = pre.round === save.round;
+    return day;
+  }
 
   // which round does this week belong to? (the Saturday of the Mon..Sun week)
   const offset = diffDays(weekSaturday, start);
@@ -230,7 +274,7 @@ export function calendarMonth(save: SaveGame, y: number, m: number): CalMonth {
 
 /** The months the season touches, in order (for prev/next paging). */
 export function seasonMonths(save: SaveGame): { y: number; m: number }[] {
-  const start = addDays(seasonStart(save.season), -5);
+  const start = addDays(seasonStart(save.season), -5 - PRE_DAYS);
   const end = addDays(seasonStart(save.season), (seasonRoundsOf(save) - 1) * 7 + 1);
   const out: { y: number; m: number }[] = [];
   let cur: CivilDate = { y: start.y, m: start.m, d: 1 };
