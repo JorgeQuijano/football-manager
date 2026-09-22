@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Player, Position } from "@/engine";
-import { estimateFor, knowledgeOf, marketValue, money, overallFor, squadOf } from "@/engine";
+import { BAND_COLOUR, readAttr, readRange, estimateFor, knowledgeOf, marketValue, money, overallFor, squadOf } from "@/engine";
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
 
@@ -247,11 +247,19 @@ function CompareRows({ pair }: { pair: Player[] }) {
         {ATTR_LABELS.map(({ key, label }) => {
           const known = pair.map((p) => estimateFor(game, p).attrs?.[key]);
           if (known.every((v) => v === undefined)) return null;
+          const cell = (range: [number, number] | undefined, p: (typeof pair)[number]) => {
+            const read = range
+              ? readRange(game, key, range[0], range[1])
+              : readAttr(game, key, p.attrs[key]);
+            return { text: read.text, colour: BAND_COLOUR[read.band] };
+          };
+          const a = cell(known[0], pair[0]);
+          const b = known.length > 1 ? cell(known[1], pair[1]) : null;
           return (
-            <div key={key} className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-[11px] font-semibold">
-              <span className="tnum text-right">{known[0] ?? "—"}</span>
+            <div key={key} className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-[11px] font-semibold" data-testid={`cmp-${key}`}>
+              <span className={`tnum text-right ${a.colour}`}>{a.text}</span>
               <span className="w-20 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{label}</span>
-              <span className="tnum">{known[1] ?? (known.length > 1 ? "—" : "")}</span>
+              <span className={`tnum ${b?.colour ?? ""}`}>{b ? b.text : "—"}</span>
             </div>
           );
         })}
