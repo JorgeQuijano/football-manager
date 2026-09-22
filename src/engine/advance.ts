@@ -10,6 +10,7 @@ import { TF, freshFinances, makeFreeAgent, rollContracts, windowTick } from "./t
 import { INTENSITIES, developRound, learnTraits, resetSeasonDev, youthIntake } from "./training";
 import { growFamiliarity, planForClub } from "./setpieces";
 import { recordMatch } from "./stats";
+import { scoutingBudgetFor, scoutingTick } from "./scouting";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -188,6 +189,7 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
     for (const u of r.updates) minutesById[u.playerId] = (minutesById[u.playerId] ?? 0) + u.minutes;
   const withDev = developRound(save, minutesById);
   growFamiliarity(withDev); // set-piece routines get groovier every round
+  scoutingTick(withDev); // scouts work their assignments (knowledge, discovery, decay)
 
   // Transfer activity for this round while a window is open (AI churn + bids for you).
   const withTransfers = windowTick(withDev);
@@ -257,6 +259,8 @@ export function nextSeason(input: SaveGame): SaveGame {
   // academy intake: a kid for your first team, one or two for every AI club
   youthIntake(save);
   save.finances = freshFinances(save);
+  // fresh scouting budget for the season
+  save.scouting.budget = scoutingBudgetFor(save.finances[save.userClubId]?.transfer ?? 1_000_000);
   const def =
     resolveFormation(save.lineup.formation, save.customFormations) ?? builtinFormation("4-3-3");
   save.lineup = autoLineup(squadOf(save.players, save.userClubId), def, {

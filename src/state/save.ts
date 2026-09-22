@@ -9,9 +9,11 @@ import {
   ensureDev,
   freshFinances,
   hashSeed,
+  initScouting,
   mulberry32,
   resolveFormation,
   ROLE_GROUPS,
+  scoutingBudgetFor,
   squadOf,
   TRAITS,
   traitsFor,
@@ -56,6 +58,26 @@ export function normalizeSave(save: SaveGame): SaveGame {
   if (!Array.isArray(save.devNews)) save.devNews = [];
   save.setpieces = cleanSetPieces(save.setpieces, new Set(save.players.map((p) => p.id)));
   if (!save.finances || typeof save.finances !== "object") save.finances = freshFinances(save);
+  // scouting (v0.16): backfill the department, drop jobs pointing at players/scouts that are gone
+  if (!save.scouting || typeof save.scouting !== "object") {
+    save.scouting = initScouting(save.seed, save.finances[save.userClubId]?.transfer ?? 1_000_000);
+  } else {
+    const sc = save.scouting;
+    if (!Array.isArray(sc.scouts)) sc.scouts = [];
+    if (!Array.isArray(sc.pool)) sc.pool = [];
+    if (!Array.isArray(sc.requests)) sc.requests = [];
+    if (!Array.isArray(sc.reports)) sc.reports = [];
+    if (!Array.isArray(sc.shortlist)) sc.shortlist = [];
+    if (!sc.knowledge || typeof sc.knowledge !== "object") sc.knowledge = {};
+    if (typeof sc.budget !== "number" || !Number.isFinite(sc.budget)) sc.budget = scoutingBudgetFor(save.finances[save.userClubId]?.transfer ?? 1_000_000);
+    const ids = new Set(save.players.map((p) => p.id));
+    sc.requests = sc.requests.filter(
+      (r) => r && typeof r.id === "string" && sc.scouts.some((s) => s.id === r.scoutId) && (r.kind !== "player" || ids.has(r.playerId))
+    );
+    sc.reports = sc.reports.filter((id) => ids.has(id));
+    sc.shortlist = sc.shortlist.filter((id) => ids.has(id));
+    for (const id of Object.keys(sc.knowledge)) if (!ids.has(id)) delete sc.knowledge[id];
+  }
   if (!Array.isArray(save.offers)) save.offers = [];
   save.offers = save.offers.filter(
     (o) =>

@@ -48,6 +48,22 @@ import {
   sortSquad
 } from "./stats";
 import {
+  DISCOVERY_LEVEL,
+  KNOWLEDGE_FULL,
+  REQUEST_COST,
+  addFocus,
+  dismissScout,
+  estimateFor,
+  hireScout,
+  knowledgeOf,
+  scoutingTick,
+  scoutPlayer,
+  squadAvgOvr,
+  starsFor,
+  toggleShortlist,
+  topUpScouting
+} from "./scouting";
+import {
   CORNER_ROUTINES,
   FK_ROUTINES,
   aiSetPieces,
@@ -1942,6 +1958,202 @@ describe("player stats & form", () => {
       let s = newGame(19);
       for (let r = 0; r < 3; r++) s = playRound(s).save;
       return JSON.stringify(s.players.map((p) => [p.apps, p.mins, p.form, p.ratingCount, p.history.length]));
+    };
+    expect(run()).toBe(run());
+  });
+});
+
+describe("scouting", () => {
+  const fresh = () => newGame(61);
+
+  it("starts with staff, a hiring pool and a budget", () => {
+    const s = fresh();
+    expect(s.scouting.scouts).toHaveLength(2);
+    expect(s.scouting.pool).toHaveLength(4);
+    expect(s.scouting.budget).toBeGreaterThanOrEqual(300_000);
+    expect(s.scouting.scouts.every((x) => x.name.length > 3 && x.judging >= 45 && x.fee > 0)).toBe(true);
+    expect(Object.keys(s.scouting.knowledge)).toHaveLength(0);
+  });
+
+  it("knows your own players exactly and rivals not at all", () => {
+    const s = fresh();
+    const mine = squadOf(s.players, s.userClubId)[0];
+    const rival = s.players.find((p) => p.clubId !== s.userClubId)!;
+    expect(knowledgeOf(s, mine.id)).toBe(100);
+    const own = estimateFor(s, mine);
+    expect(own.tier).toBe("extensive");
+    expect(own.exactOvr).toBe(overallFor(mine));
+    expect(own.traits).toEqual(mine.traits);
+
+    expect(knowledgeOf(s, rival.id)).toBe(0);
+    const fog = estimateFor(s, rival);
+    expect(fog.tier).toBe("none");
+    expect(fog.stars).toBeNull();
+    expect(fog.exactOvr).toBeNull();
+    expect(fog.attrs).toBeNull();
+    expect(fog.valueRange).toBeNull();
+  });
+
+  it("scouting one player raises knowledge each round and completes at extensive", () => {
+    const s = fresh();
+    const rival = s.players.find((p) => p.clubId !== s.userClubId)!;
+    expect(scoutPlayer(s, rival.id)).toBeNull();
+    expect(s.scouting.requests).toHaveLength(1);
+    const before = knowledgeOf(s, rival.id);
+    scoutingTick(s);
+    const afterOne = knowledgeOf(s, rival.id);
+    expect(afterOne).toBeGreaterThan(before);
+    expect(estimateFor(s, rival).tier).toBe("brief"); // a 25+ report is a brief one
+    let guard = 0;
+    while (s.scouting.requests.length && guard++ < 20) scoutingTick(s);
+    expect(knowledgeOf(s, rival.id)).toBeGreaterThanOrEqual(KNOWLEDGE_FULL);
+    expect(s.scouting.requests).toHaveLength(0); // the scout is free again
+    expect(s.scouting.reports).toContain(rival.id);
+    const est = estimateFor(s, rival);
+    expect(est.tier).toBe("extensive");
+    expect(est.exactOvr).toBe(overallFor(rival));
+    expect(est.exactPot).toBe(rival.peak);
+    expect(est.attrs!.pace).toEqual([rival.attrs.pace, rival.attrs.pace]);
+  });
+
+  it("cannot scout your own players twice or without a free scout", () => {
+    const s = fresh();
+    const mine = squadOf(s.players, s.userClubId)[0];
+    expect(scoutPlayer(s, mine.id)).toMatch(/own players/i);
+    const rivals = s.players.filter((p) => p.clubId !== s.userClubId).slice(0, 3);
+    expect(scoutPlayer(s, rivals[0].id)).toBeNull();
+    expect(scoutPlayer(s, rivals[1].id)).toBeNull();
+    expect(scoutPlayer(s, rivals[2].id)).toMatch(/busy/i); // two scouts, both working
+    expect(scoutPlayer(s, rivals[0].id)).toMatch(/already scouting/i);
+  });
+
+  it("estimates are wider for a poor scout and tighter with knowledge", () => {
+    const s = fresh();
+    const rival = s.players.find((p) => p.clubId !== s.userClubId)!;
+    const poor = { id: "sp", name: "Poor", judging: 35, speed: 1, fee: 0 };
+    const elite = { id: "se", name: "Elite", judging: 95, speed: 1, fee: 0 };
+    s.scouting.scouts = [poor, elite];
+    s.scouting.knowledge[rival.id] = { level: 60, seen: 1, by: "sp" };
+    const wide = estimateFor(s, rival);
+    s.scouting.knowledge[rival.id] = { level: 60, seen: 1, by: "se" };
+    const tight = estimateFor(s, rival);
+    const width = (r: [number, number]) => r[1] - r[0];
+    expect(width(wide.ovrRange!)).toBeGreaterThan(width(tight.ovrRange!));
+    expect(width(wide.attrs!.shooting!)).toBeGreaterThan(width(tight.attrs!.shooting!));
+    // more knowledge → tighter ranges (same scout)
+    s.scouting.knowledge[rival.id] = { level: 55, seen: 1, by: "se" };
+    const mid = estimateFor(s, rival);
+    s.scouting.knowledge[rival.id] = { level: 74, seen: 1, by: "se" };
+    const high = estimateFor(s, rival);
+    expect(width(high.ovrRange!)).toBeLessThanOrEqual(width(mid.ovrRange!));
+    expect(mid.tier).toBe("detailed");
+  });
+
+  it("recruitment focuses surface matching players and polish their best leads", () => {
+    const s = fresh();
+    expect(addFocus(s, { pos: "FW", maxAge: 23, minPotStars: 2.5 })).toBeNull();
+    scoutingTick(s);
+    const known = Object.entries(s.scouting.knowledge).map(([id, k]) => ({
+      p: s.players.find((x) => x.id === id)!,
+      k
+    }));
+    expect(known.length).toBeGreaterThan(0);
+    expect(known.every(({ p }) => p.pos === "FW" && p.age <= 23 && p.clubId !== s.userClubId)).toBe(true);
+    expect(s.scouting.reports.length).toBeGreaterThan(0);
+    const firstLevel = known[0].k.level;
+    scoutingTick(s);
+    scoutingTick(s);
+    const after = Object.entries(s.scouting.knowledge).map(([id, k]) => ({ id, k }));
+    expect(after.length).toBeGreaterThanOrEqual(known.length);
+    expect(after.some(({ id, k }) => id === known[0].p.id && k.level > firstLevel)).toBe(true);
+  });
+
+  it("pays for jobs from the scouting budget and pauses when it runs dry", () => {
+    const s = fresh();
+    const rival = s.players.find((p) => p.clubId !== s.userClubId)!;
+    s.scouting.budget = REQUEST_COST.player + 5_000; // one round of work left
+    scoutPlayer(s, rival.id);
+    scoutingTick(s);
+    const afterPaid = knowledgeOf(s, rival.id);
+    expect(s.scouting.budget).toBe(5_000);
+    scoutingTick(s); // broke: the job pauses
+    expect(knowledgeOf(s, rival.id)).toBe(afterPaid);
+    expect(s.scouting.budget).toBe(5_000);
+    scoutingTick(s);
+    expect(s.scouting.budget).toBeGreaterThanOrEqual(0);
+  });
+
+  it("decays knowledge that nobody is watching, down to a brief report", () => {
+    const s = fresh();
+    const rival = s.players.find((p) => p.clubId !== s.userClubId)!;
+    s.scouting.knowledge[rival.id] = { level: 90, seen: 1 };
+    scoutingTick(s);
+    expect(knowledgeOf(s, rival.id)).toBe(88);
+    for (let i = 0; i < 60; i++) scoutingTick(s);
+    expect(knowledgeOf(s, rival.id)).toBe(DISCOVERY_LEVEL); // floors at a brief report
+  });
+
+  it("shortlisted players keep getting fresh eyes", () => {
+    const s = fresh();
+    const rival = s.players.find((p) => p.clubId !== s.userClubId)!;
+    s.scouting.knowledge[rival.id] = { level: 30, seen: 1 };
+    toggleShortlist(s, rival.id);
+    scoutingTick(s);
+    expect(knowledgeOf(s, rival.id)).toBe(31);
+    expect(s.scouting.shortlist).toContain(rival.id);
+    toggleShortlist(s, rival.id);
+    expect(s.scouting.shortlist).not.toContain(rival.id);
+    expect(knowledgeOf(s, rival.id)).toBeGreaterThanOrEqual(25); // decay resumes, floored
+  });
+
+  it("hires and dismisses scouts (fees from the budget, cap of three)", () => {
+    const s = fresh();
+    const cand = s.scouting.pool[0];
+    expect(hireScout(s, cand.id)).toBeNull();
+    expect(s.scouting.scouts).toHaveLength(3);
+    expect(s.scouting.pool).not.toContain(cand);
+    expect(hireScout(s, s.scouting.pool[0].id)).toMatch(/only employ 3/i);
+    const rival = s.players.find((p) => p.clubId !== s.userClubId)!;
+    scoutPlayer(s, rival.id);
+    const busyScout = s.scouting.requests[0].scoutId;
+    dismissScout(s, busyScout);
+    expect(s.scouting.scouts.find((x) => x.id === busyScout)).toBeUndefined();
+    expect(s.scouting.requests).toHaveLength(0); // his jobs went with him
+  });
+
+  it("tops the scouting budget up from the transfer budget", () => {
+    const s = fresh();
+    const before = s.scouting.budget;
+    const transferBefore = s.finances[s.userClubId].transfer;
+    expect(topUpScouting(s, 500_000)).toBeNull();
+    expect(s.scouting.budget).toBe(before + 500_000);
+    expect(s.finances[s.userClubId].transfer).toBe(transferBefore - 500_000);
+    expect(topUpScouting(s, transferBefore)).toMatch(/only/i);
+  });
+
+  it("star ratings are relative to your own squad", () => {
+    const s = fresh();
+    const baseline = squadAvgOvr(s);
+    expect(starsFor(baseline, baseline)).toBe(2.5);
+    expect(starsFor(baseline + 8, baseline)).toBe(5);
+    expect(starsFor(baseline - 20, baseline)).toBe(0.5);
+    expect(starsFor(baseline + 1.6, baseline)).toBe(3);
+  });
+
+  it("keeps working alongside transfers (fog does not break bids)", () => {
+    const s = { ...fresh(), round: 1 };
+    const rival = s.players.find((p) => p.clubId !== s.userClubId && marketValue(p) > 1_000_000)!;
+    expect(knowledgeOf(s, rival.id)).toBe(0);
+    const resp = bidForPlayer(s, rival.id, marketValue(rival) * 2);
+    expect(resp.resp.kind).toBe("accepted");
+  });
+
+  it("is deterministic", () => {
+    const run = () => {
+      const s = newGame(63);
+      addFocus(s, { pos: "any", maxAge: 24, minPotStars: 3 });
+      for (let i = 0; i < 6; i++) scoutingTick(s);
+      return JSON.stringify([s.scouting.knowledge, s.scouting.reports, s.scouting.budget]);
     };
     expect(run()).toBe(run());
   });

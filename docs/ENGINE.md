@@ -348,3 +348,25 @@ Every match result now leaves a record. `applyResult` (advance.ts) folds each `P
 **UI**: player sheet "This season" grid (apps, minutes, goals, assists, cards, rating) + form chips + recent-match log (`player-stats`); squad roster rows carry a `★rating` chip tinted by band and a sort select (`squad-sort`); the tactics picker shows the same chip (`pick-<id>`) so selection decisions can weigh form.
 
 **Tests** (`describe("player stats & form")`, 7 + a normalizeSave backfill case): folding a match, six-rating form window + bands, log scope/cap, AI stats without logs, rollover reset (log survives), all sort modes, determinism, save backfill.
+
+## 21. Scouting & fog of war (`scouting.ts`)
+
+Before v0.16 every rival player was an open book (exact OVR/POT/wage/value everywhere). Now the club only knows what its scouts have filed.
+
+**State** (`SaveGame.scouting`): `scouts` (hired, max 3), `pool` (candidates to hire), `requests` (active jobs), `knowledge` (playerId → `{ level, seen, by }`), `reports` (inbox, newest first, cap 12), `shortlist`, `budget` (per season).
+
+**Knowledge levels** — `knowledgeOf(save, id)`: 0-24 none (name/club/age/pos only), 25-49 **brief** (star ratings ±1.0, value ±45%), 50-74 **detailed** (attribute + OVR/POT ranges, wages ±25%), 75+ **extensive** (exact everything incl. traits). Your own players are always 100. Constants: `DISCOVERY_LEVEL = 25`, `KNOWLEDGE_FULL = 75`.
+
+**Estimates** — `estimateFor(save, player)` returns the fogged view: `stars`/`starsRange` (relative to your best XI: `starsFor(value, squadAvgOvr(save))`, 2.5★ = your average, halves), `ovrRange`/`potRange`, `attrs` (per-attribute `[lo, hi]`), `valueRange`, `wageRange`, `exactOvr`/`exactPot` (extensive only), `traits` (extensive only), `tier`, `scoutName`. Range width scales with knowledge and with the reporting scout's `judging` (`errF = 1.35 - 0.7 × judging/100`); a poor scout also adds a deterministic per-player bias (`hashSeed(playerId, scoutId)`), so bad intel is *wrong*, not just vague. Stars are computed from the biased estimate, so a rubbish scout can oversell a player.
+
+**Jobs** — `scoutPlayer(save, id)` queues one player (needs a free scout; cost `REQUEST_COST.player` = £20k/round); `addFocus(save, {pos, maxAge, minPotStars})` runs a filter-based search (£10k/round): each round it surfaces one new matching player at `DISCOVERY_LEVEL` (into `reports`) and polishes its 3 best leads (+5 × speed). `focusCandidates` allows a poor scout a wider net (threshold slack scales with `1 - judging/100`). A player job completes at ≥75: the report lands in the inbox and the scout is freed.
+
+**Passive effects** in `scoutingTick(save)` (called from `completeRound` before `windowTick`): knowledge above 25 decays **-2/round** unless the player is under an active job, shortlisted, or your own; shortlisted players gain **+1/round** up to 100. Jobs pause (no progress) when the budget can't pay; the budget never goes negative.
+
+**Money & staff** — `scoutingBudgetFor(transfer)` = 15% of the transfer budget (min £300k), refreshed in `nextSeason`; `topUpScouting(save, amount)` moves transfer money in; `hireScout` pays a fee from the scouting budget; `dismissScout` cancels his jobs. Scout generation (`makeScout`) is seeded: judging 45-90, speed 0.8-1.2, names from fixed pools — 2 hired + 4 in the pool at game start.
+
+**UI** — the Transfers screen gained a **Market | Scouting** tab split (`transfers-tab-*`). Market rows show stars/knowledge%/ranges instead of exact numbers, plus a per-row scout button (`scout-btn-<id>`); the deal sheet shows the valuation *range* and warns under 50% known (`fog-warning`); fee and wage prefills come from `fogFee`/`fogWage` (never the true value — blind at tier none). `src/ui/Scouting.tsx` renders the department: budget + top-up, assignments (player jobs with progress bars, focuses with cancel), the report inbox (Scout / ★), the shortlist, the scout market (hire/dismiss), and a how-it-works legend. The player sheet is fogged for rivals (stars, `?` OVR, range attrs with an uncertainty band, hidden traits) with a Scout button (`sheet-scout-btn`); `Squad`/`Planner`/picker stay exact because they only show your own.
+
+**Determinism**: all discovery/polish/progress rolls are seeded from `(seed, tags, season, round)`; two identical saves produce identical knowledge (test-enforced). AI clubs still use true values.
+
+**Tests** (`describe("scouting")`, 12 + a normalizeSave backfill/drop case): staff/pool/budget at start, own-vs-rival knowledge, single-player job progress to extensive, no-own/two-scouts-busy/already-scouting guards, poor-vs-elite width and knowledge tightening, focus matching + polish, budget pause, decay floor, shortlist trickle, hire/dismiss (cap + job cancellation), top-up, star scale, bids still work at 0 knowledge, determinism, save backfill.

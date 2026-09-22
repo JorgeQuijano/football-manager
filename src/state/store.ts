@@ -42,6 +42,16 @@ import {
 import type { BidResponse } from "@/engine";
 import type { AttrKey, CornerRoutine, FreeKickRoutine, TrainingPlan } from "@/engine";
 import { cleanSetPieces } from "@/engine";
+import {
+  addFocus as addFocusEngine,
+  cancelRequest as cancelRequestEngine,
+  dismissScout as dismissScoutEngine,
+  hireScout as hireScoutEngine,
+  scoutPlayer as scoutPlayerEngine,
+  toggleShortlist as toggleShortlistEngine,
+  topUpScouting as topUpScoutingEngine
+} from "@/engine";
+import type { Position } from "@/engine";
 import { loadSave, persistSave } from "./save";
 
 export type Screen =
@@ -99,6 +109,13 @@ interface AppState {
   setFocus: (playerId: string, focus: AttrKey | null) => void;
   setRoutine: (kind: "corner" | "freekick", routine: string) => void;
   setTaker: (kind: "corner" | "freekick" | "penalty", playerId: string | null) => void;
+  scoutPlayer: (playerId: string) => string | null;
+  addFocus: (filter: { pos: Position | "any"; maxAge: number; minPotStars: number }) => string | null;
+  cancelRequest: (id: string) => void;
+  hireScout: (id: string) => string | null;
+  dismissScout: (id: string) => void;
+  toggleShortlist: (playerId: string) => void;
+  topUpScouting: (amount: number) => string | null;
   resetGame: () => void;
   importSave: (save: SaveGame) => void;
 }
@@ -562,6 +579,77 @@ export const useGame = create<AppState>()((set, get) => ({
     };
     set({ game: save });
     schedulePersist(save);
+  },
+
+  scoutPlayer: (playerId) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const save = structuredClone(game);
+    const err = scoutPlayerEngine(save, playerId);
+    if (err) return err;
+    set({ game: save });
+    schedulePersist(save);
+    return null;
+  },
+
+  addFocus: (filter) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const save = structuredClone(game);
+    const err = addFocusEngine(save, filter);
+    if (err) return err;
+    set({ game: save });
+    schedulePersist(save);
+    return null;
+  },
+
+  cancelRequest: (id) => {
+    const { game } = get();
+    if (!game) return;
+    const save = structuredClone(game);
+    cancelRequestEngine(save, id);
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  hireScout: (id) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const save = structuredClone(game);
+    const err = hireScoutEngine(save, id);
+    if (err) return err;
+    set({ game: save });
+    schedulePersist(save);
+    return null;
+  },
+
+  dismissScout: (id) => {
+    const { game } = get();
+    if (!game) return;
+    const save = structuredClone(game);
+    dismissScoutEngine(save, id);
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  toggleShortlist: (playerId) => {
+    const { game } = get();
+    if (!game) return;
+    const save = structuredClone(game);
+    toggleShortlistEngine(save, playerId);
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  topUpScouting: (amount) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const save = structuredClone(game);
+    const err = topUpScoutingEngine(save, amount);
+    if (err) return err;
+    set({ game: save });
+    schedulePersist(save);
+    return null;
   },
 
   resetGame: () => {
