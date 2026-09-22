@@ -717,3 +717,22 @@ A new career no longer starts with ten bare club names. You **generate the leagu
 **The first day (`screens/Welcome.tsx`).** Taking the job replaces the guesses with facts: a two-page briefing — the board's written expectation, squad size, your best player and the first league fixture, then **the accounts** (transfer budget, wage ceiling, club account), a line on what the shirt is worth (`sponsorHint`, ranked not numeric), and `wagePressure` — whether you are near the ceiling before you start. "Let's go" sets `save.onboarded` and drops you on the Home screen, which now carries the board's expectation under the club header, so the brief stays in view all season. The screen never blocks: "Skip the briefing" is one tap away.
 
 **Save shape.** `SaveGame.preview` (a generated world, held in the store while you shop), `SaveGame.onboarded` (backfilled `true` for old saves so returning players are not lectured). `prepareWorld(seed?)` lets the selection screen — and QA — build the league deterministically before the choice is made.
+
+## 38. Attributes: the 1–20 display scale (`attrs20.ts`)
+
+Internally an attribute is fine-grained (1–99; a senior pro is generated in 42–82, youth in 30–44, `peak` up to 96, development moves in fractions of a point). That resolution is *needed* — weekly gains of +0.3 have to accumulate somewhere — but it is unreadable: "is 68 good?" Nothing in the sim can tell 74 from 76 either.
+
+So the UI shows a **1–20 scale** (`to20` / `from20`), anchored so the meaning is fixed:
+
+- `1` = the generator's floor (20) — a filler keeper's unused attributes
+- `20` = the world ceiling (96) — the best that can exist **at that attribute anywhere**
+
+Mapping: `d = round(1 + 19 × (v − 20) / 76)`, clamped. A 42 reads as a 7, a 60 as an 11, a 72 as a 14, an 82 as a 17 — and a 20 is rare enough to mean something (under 3% of all attributes in a fresh world).
+
+**Two tricks, both borrowed from the genre:**
+1. the **number is absolute** (anchored to the world's ceiling) — a 20 means the same thing on any screen;
+2. the **colour is relative** (`attrBand` ranks the value against every player in the division at the same attribute: elite / good / average / poor / weak, top 10% → bottom 10%) — so you can see who is strong *for this league* at a glance.
+
+`readAttr(save, key, v)` returns `{ d, text, band, colour }` and `readRange(save, key, lo, hi)` does the same for a **scouted range** — the fog now speaks in 1–20 too ("13–15"), collapsing to a single digit once the report is exact. Bars are scaled across the 1–20 band (`barPct`) instead of 0–99, so two players finally *look* different on screen.
+
+**Nothing is stored.** The save keeps its fine-grained values, the engine keeps its resolution, and because the whole layer is display-only it cannot touch a result, a rating or a deterministic replay.

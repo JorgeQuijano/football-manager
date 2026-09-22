@@ -39,6 +39,17 @@ import {
   wagePressure
 } from "./onboarding";
 import { squadValue as squadValueOf } from "./transfers";
+import {
+  ATTR20_CEILING,
+  ATTR20_FLOOR,
+  attrBand,
+  barPct,
+  from20,
+  readAttr,
+  readRange,
+  to20
+} from "./attrs20";
+import { ATTR_KEYS as ATTR_KEY_LIST } from "./training";
 import { makeYouth } from "./training";
 import { formFactor, formFreshnessTick } from "./stats";
 import {
@@ -5733,6 +5744,95 @@ describe("manager onboarding: the club brief and the first day", () => {
     const bands = new Set(["elite", "strong", "good", "modest", "limited"]);
     for (const v of [0, 1, 5, 10, 50, 100]) {
       expect(bands.has(bandFor(v, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))).toBe(true);
+    }
+  });
+});
+
+describe("attributes on the 1–20 scale (v0.33.0)", () => {
+  const fresh = () => newGame(1001);
+
+  it("anchors the scale: the floor is a 1, the world ceiling is a 20", () => {
+    expect(to20(ATTR20_FLOOR)).toBe(1);
+    expect(to20(ATTR20_CEILING)).toBe(20);
+    expect(to20(0)).toBe(1); // below the floor still reads as the bottom
+    expect(to20(99)).toBe(20); // clamped at the top
+    // monotone across the whole useful band
+    let prev = 0;
+    for (let v = 20; v <= 96; v++) {
+      const d = to20(v);
+      expect(d).toBeGreaterThanOrEqual(prev);
+      prev = d;
+    }
+  });
+
+  it("reads a real squad the way a scout would", () => {
+    const save = fresh();
+    const squad = squadOf(save.players, save.userClubId);
+    const ds = squad.map((p) => to20(p.attrs.shooting));
+    // the best in the division are 17–20, the rest are a spread below
+    expect(Math.max(...ds)).toBeGreaterThan(12);
+    expect(Math.max(...ds)).toBeLessThanOrEqual(20);
+    // a 20 is rare: it should be a handful of attributes in the whole world
+    const all = save.players.flatMap((p) => ATTR_KEY_LIST.map((k) => to20(p.attrs[k])));
+    const twenties = all.filter((d) => d === 20).length;
+    expect(twenties / all.length).toBeLessThan(0.03);
+    expect(twenties).toBeGreaterThan(0); // but it does exist — that is the point
+    // the worst senior attribute is not a 1 — the floor is for filler youths
+    expect(Math.min(...all)).toBeGreaterThan(1);
+  });
+
+  it("colours are relative to the division: the league's best reads elite", () => {
+    const save = fresh();
+    const best = save.players
+      .map((p) => ({ p, v: p.attrs.shooting }))
+      .sort((a, b) => b.v - a.v)[0];
+    const worst = save.players
+      .map((p) => ({ p, v: p.attrs.shooting }))
+      .sort((a, b) => a.v - b.v)[0];
+    expect(attrBand(save, "shooting", best.v)).toBe("elite");
+    expect(attrBand(save, "shooting", worst.v)).toBe("weak");
+    // a middling value lands in the middle
+    const mid = save.players.map((p) => p.attrs.pace).sort((a, b) => a - b)[Math.floor(save.players.length / 2)];
+    expect(["average", "good", "poor"]).toContain(attrBand(save, "pace", mid));
+    // keepers are judged against keepers: the best and worst of them read apart
+    const keepers = save.players.filter((p) => p.pos === "GK");
+    const bestKeeper = [...keepers].sort((a, b) => b.attrs.reflexes - a.attrs.reflexes)[0];
+    const worstKeeper = [...keepers].sort((a, b) => a.attrs.reflexes - b.attrs.reflexes)[0];
+    expect(attrBand(save, "reflexes", bestKeeper.attrs.reflexes)).toBe("elite");
+    expect(["poor", "weak"]).toContain(attrBand(save, "reflexes", worstKeeper.attrs.reflexes));
+  });
+
+  it("an unscouted range reads as a range in 1–20, and collapses when exact", () => {
+    const save = fresh();
+    const range = readRange(save, "shooting", 68, 76);
+    expect(range.dLo).toBe(to20(68));
+    expect(range.d).toBe(to20(76));
+    expect(range.text).toMatch(/^\d+–\d+$/);
+    const exact = readAttr(save, "shooting", 72);
+    expect(exact.text).toBe(String(to20(72)));
+    expect(exact.dLo).toBe(exact.d);
+    // the band comes from the middle of the range, not the flattering end
+    expect(readRange(save, "shooting", 60, 90).band).toBe(attrBand(save, "shooting", 75));
+  });
+
+  it("the bar fills the whole width across the scale, and the save is untouched", () => {
+    expect(barPct(1)).toBeLessThan(10);
+    expect(barPct(20)).toBe(100);
+    expect(barPct(11)).toBeGreaterThan(45);
+    expect(barPct(11)).toBeLessThan(60);
+    // the display layer stores nothing: the raw numbers are still the raw numbers
+    const save = fresh();
+    const p = squadOf(save.players, save.userClubId)[3];
+    const raw = p.attrs.shooting;
+    readAttr(save, "shooting", raw);
+    expect(p.attrs.shooting).toBe(raw);
+    expect(typeof raw).toBe("number");
+    expect(raw).toBeGreaterThan(20); // fine-grained, as the engine needs
+  });
+
+  it("the mapping is the inverse of itself where it matters", () => {
+    for (const d of [1, 5, 10, 15, 20]) {
+      expect(to20(from20(d))).toBe(d);
     }
   });
 });

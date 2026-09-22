@@ -21,7 +21,7 @@ import {
   TRAITS,
   yellowBanLine
 } from "@/engine";
-import { ATTR_KEYS, ATTR_LABEL, ATTR_SHORT } from "@/engine";
+import { ATTR_KEYS, ATTR_LABEL, ATTR_SHORT, BAND_BAR, BAND_COLOUR, barPct, readAttr, readRange } from "@/engine";
 import type { AttrKey } from "@/engine";
 import { FORM_BANDS, formBandFor, formOf, moodOf, moraleFactors, rating1, ratingAvg } from "@/engine";
 import { Button } from "@/components/ui/button";
@@ -725,6 +725,10 @@ export function PlayerDetailSheet({
                 </div>
               ) : (
               <div className="space-y-2" data-testid="attrs-block">
+                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                  <span>Attributes</span>
+                  <span data-testid="attr-scale-note">out of 20 · colour vs the league</span>
+                </div>
                 {(p.pos === "GK"
                   ? ([
                       ["Reflexes", "reflexes"],
@@ -740,23 +744,24 @@ export function PlayerDetailSheet({
                     ] as Array<[string, AttrKey]>)
                 ).map(([label, key]) => {
                   const range = est.attrs?.[key];
-                  const value = range ? range[1] : p.attrs[key];
-                  const lo = range ? range[0] : value;
+                  const read = range
+                    ? readRange(game, key, range[0], range[1])
+                    : readAttr(game, key, p.attrs[key]);
                   return (
-                    <div key={label} className="flex items-center gap-3">
+                    <div key={label} className="flex items-center gap-3" title={read.label} data-testid={`attr-${key}`}>
                       <span className="w-20 text-xs text-muted-foreground">{label}</span>
-                      <span className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+                      <span className="relative h-2 flex-1 overflow-hidden rounded-full bg-secondary">
                         <span
-                          className="absolute inset-y-0 left-0 rounded-full bg-primary/35"
-                          style={{ width: `${value}%` }}
+                          className={`absolute inset-y-0 left-0 rounded-full ${BAND_BAR[read.band]} opacity-40`}
+                          style={{ width: `${barPct(read.d)}%` }}
                         />
                         <span
-                          className="absolute inset-y-0 left-0 rounded-full bg-primary"
-                          style={{ width: `${lo}%` }}
+                          className={`absolute inset-y-0 left-0 rounded-full ${BAND_BAR[read.band]}`}
+                          style={{ width: `${barPct(read.dLo)}%` }}
                         />
                       </span>
-                      <span className="w-14 text-right text-xs font-bold tnum">
-                        {range ? (lo === value ? value : `${lo}–${value}`) : value}
+                      <span className={`w-14 text-right text-xs font-extrabold tnum ${BAND_COLOUR[read.band]}`}>
+                        {read.text}
                       </span>
                     </div>
                   );
@@ -769,7 +774,7 @@ export function PlayerDetailSheet({
                       style={{ width: `${p.condition}%` }}
                     />
                   </span>
-                  <span className="w-7 text-right text-xs font-bold tnum">{p.condition}</span>
+                  <span className="w-14 text-right text-xs font-bold tnum">{p.condition}</span>
                 </div>
               </div>
               )}

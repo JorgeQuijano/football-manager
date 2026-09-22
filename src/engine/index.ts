@@ -26,6 +26,7 @@ export * from "./motivation";
 export * from "./discipline";
 export * from "./commercial";
 export * from "./onboarding";
+export * from "./attrs20";
 export * from "./formations";
 export * from "./ratings";
 export * from "./league";
