@@ -11,6 +11,7 @@ import { defaultSetPieces } from "./setpieces";
 import { initScouting } from "./scouting";
 import { emptyAwards, emptyHistory } from "./history";
 import { emptyMedia, makePress } from "./media";
+import { policyFor } from "./market";
 
 export const CLUB_DEFS: ReadonlyArray<{ name: string; short: string; color: string }> = [
   { name: "Northport FC", short: "NOR", color: "#2ED573" },
@@ -180,6 +181,9 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     history: emptyHistory(),
     awards: emptyAwards(),
     media: emptyMedia(),
+    debts: [],
+    preContracts: [],
+    policy: policyFor({ seed, clubs, players }, 1),
     devNews: []
   };
   makePress(save); // the press want a word before round 1

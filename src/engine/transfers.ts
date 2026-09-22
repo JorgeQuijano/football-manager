@@ -1,7 +1,9 @@
-import type { Contract, Finances, Player, SaveGame, TransferOffer } from "./types";
+import type { Contract, DealTerms, Finances, Player, SaveGame, TransferOffer } from "./types";
 import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
 import { fixLineup, overallFor, squadOf } from "./ratings";
 import { peakFor, pushNews } from "./training";
+import { addDebt, noteSigning, paySellOn, poachTick, policyCheck } from "./market";
+import { loanOutTick, sendOnLoan } from "./loans";
 import { builtinFormation, resolveFormation } from "./formations";
 
 /**
@@ -36,7 +38,17 @@ export const TF = {
   freeAgentsPerSeason: 5,
   summer: [1, 3] as [number, number],
   winter: [9, 10] as [number, number],
-  logCap: 40
+  logCap: 40,
+  /** spread a fee over N seasons and the seller wants more of it */
+  instalmentDiscount: 0.08,
+  /** what an appearance add-on is worth to the seller (per £ of it) */
+  addonValue: 0.55,
+  /** what a sell-on clause is worth to the seller (per % of value) */
+  sellOnValue: 0.5,
+  /** the agent takes a slice of the signing bonus and the first quarter */
+  agentFeeShare: 0.05,
+  maxInstalments: 3,
+  maxSellOn: 30
 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -75,13 +87,24 @@ export function wageDemand(p: Player): number {
 
 /** A fresh contract for a player at generation time (deterministic per id). */
 export function contractFor(p: Player, season: number): Contract {
-  const spread = hashSeed(p.id, "contract") % 3; // 2..4 seasons
-  return { wage: wageDemand(p), until: season + 2 + spread };
+  const h = hashSeed(p.id, "contract");
+  // roughly one player in twelve is in the last year of his deal — the Bosman market
+  if (h % 12 === 0) return { wage: wageDemand(p), until: season };
+  return { wage: wageDemand(p), until: season + 2 + (h % 3) };
 }
 
 export function wageBill(save: SaveGame, clubId: string): number {
   let sum = 0;
-  for (const p of save.players) if (p.clubId === clubId) sum += p.contract?.wage ?? 0;
+  for (const p of save.players) {
+    const wage = p.contract?.wage ?? 0;
+    if (p.clubId === clubId) {
+      // a loanee in: we only pay our agreed share
+      sum += p.loan && p.loan.fromClubId !== clubId ? wage * p.loan.wageShare : wage;
+    } else if (p.loan && p.loan.fromClubId === clubId) {
+      // a player we've loaned out: we cover whatever the borrowers don't
+      sum += wage * (1 - p.loan.wageShare);
+    }
+  }
   return sum;
 }
 
@@ -137,9 +160,11 @@ export interface BidResponse {
   fee?: number;
   wage?: number;
   message: string;
+  /** a counter-offer's wage-share demand (loans) */
+  share?: number;
 }
 
-const resp = (kind: BidResponse["kind"], message: string, extra?: { fee?: number; wage?: number }): BidResponse => ({
+const resp = (kind: BidResponse["kind"], message: string, extra?: { fee?: number; wage?: number; share?: number }): BidResponse => ({
   kind,
   message,
   ...(extra ?? {})
@@ -168,85 +193,188 @@ function sellerAppetite(save: SaveGame, p: Player): number {
   return 1;
 }
 
-/** Step 1: bid a fee for another club's player. */
-export function bidForPlayer(input: SaveGame, playerId: string, fee: number): { save: SaveGame; resp: BidResponse } {
+/** What the player's agent makes of a set of terms (before the mood dice). */
+export function termsDemand(p: Player, t: ContractTerms, base: number): number {
+  const years = Math.max(1, Math.min(5, t.years ?? 3));
+  const ageLoad = p.age >= 30 ? 0.02 : -0.012; // older legs want paying for the security
+  const length = 1 + ageLoad * (years - 2);
+  const bonusRelief = t.signingBonus ? Math.min(0.06, t.signingBonus / (base * 52 * 6)) : 0;
+  const goalRelief = t.perGoal ? Math.min(0.06, (t.perGoal / 4000) * 0.012) : 0;
+  const appRelief = t.perApp ? Math.min(0.05, (t.perApp / 1500) * 0.008) : 0;
+  const clauseRelief = t.releaseClause && t.releaseClause <= marketValue(p) * 1.6 ? 0.05 : 0;
+  const relief = Math.min(0.18, bonusRelief + goalRelief + appRelief + clauseRelief);
+  const optionLoad = t.extensionYears ? 0.02 : 0; // a club option costs him a little
+  return base * length * (1 - relief) * (1 + optionLoad);
+}
+
+/** What a structured deal is worth to the selling club. */
+export function dealValue(p: Player, terms: DealTerms): number {
+  const inst = Math.max(1, Math.min(TF.maxInstalments, terms.instalments ?? 1));
+  const cash = terms.fee * (1 - TF.instalmentDiscount * (inst - 1));
+  const addon = terms.addon ? terms.addon.amount * TF.addonValue * (p.age <= 24 ? 1.35 : 1) : 0;
+  const sellOn = terms.sellOn ? (terms.sellOn / 100) * marketValue(p) * TF.sellOnValue : 0;
+  return cash + addon + sellOn;
+}
+
+export interface ContractTerms {
+  wage: number;
+  years?: number;
+  signingBonus?: number;
+  perApp?: number;
+  perGoal?: number;
+  releaseClause?: number;
+  extensionYears?: number;
+}
+
+const normTerms = (t: number | DealTerms | undefined): DealTerms =>
+  typeof t === "number" ? { fee: t } : t ?? { fee: 0 };
+
+/** What a deal costs today, and what it costs in total. */
+export function dealCost(terms: DealTerms): { now: number; total: number } {
+  const inst = Math.max(1, Math.min(TF.maxInstalments, terms.instalments ?? 1));
+  const now = Math.round(terms.fee / inst);
+  return { now, total: terms.fee + (terms.addon?.amount ?? 0) };
+}
+
+/** Step 1: bid for another club's player — cash, instalments, add-ons, sell-on. */
+export function bidForPlayer(
+  input: SaveGame,
+  playerId: string,
+  offer: number | DealTerms
+): { save: SaveGame; resp: BidResponse } {
+  const terms = normTerms(offer);
   const p = input.players.find((x) => x.id === playerId);
   const fail = (m: string) => ({ save: input, resp: resp("rejected", m) });
   if (!p || p.clubId === "" || p.clubId === input.userClubId) return fail("He isn't available.");
+  if (p.loan) return fail("He is out on loan — you'd have to wait for him to come back.");
   const win = transferWindow(input);
   if (!win.open) return fail(`The transfer window is closed — ${win.label}.`);
   const fin = input.finances[input.userClubId];
   const maxFee = Math.max(0, fin?.transfer ?? 0);
-  if (fee > maxFee) return fail(`That exceeds your transfer budget (${money(maxFee)} available).`);
-  if (fee <= 0) return fail("Enter a realistic fee.");
+  const { now, total } = dealCost(terms);
+  if (now > maxFee) {
+    return fail(`That needs ${money(now)} up front — more than your transfer budget (${money(maxFee)}).`);
+  }
+  if (terms.fee <= 0) return fail("Enter a realistic fee.");
+  const check = policyCheck(input.policy, p, { fee: total });
+  if (!check.ok) return fail(check.reason!);
 
   const value = marketValue(p);
-  const rng = rngFor(input, "bid", playerId, fee);
+  const rng = rngFor(input, "bid", playerId, terms.fee, terms.instalments ?? 1, terms.addon?.amount ?? 0, terms.sellOn ?? 0);
   const ask = value * sellerAppetite(input, p) * (0.92 + rng() * 0.16);
+  const offered = dealValue(p, terms);
 
-  if (fee >= ask * 1.02) {
+  if (offered >= ask * 1.02) {
     const save = structuredClone(input);
-    save.pending = { playerId, fee, fromClubId: p.clubId };
+    save.pending = { playerId, fee: terms.fee, fromClubId: p.clubId, terms };
     const seller = save.clubs.find((c) => c.id === p.clubId)!;
+    const structure = (terms.instalments ?? 1) > 1 ? ` over ${terms.instalments} seasons` : "";
     return {
       save,
-      resp: resp("accepted", `${seller.short} accept ${money(fee)}. Agree personal terms to finish the deal.`)
+      resp: resp("accepted", `${seller.short} accept ${money(terms.fee)}${structure}. Agree personal terms to finish the deal.`)
     };
   }
-  if (fee >= ask * 0.82) {
-    const counter = roundTo(ask, 10_000);
+  if (offered >= ask * 0.82) {
+    const counter = roundTo(ask * 1.05, 10_000);
     return {
       save: input,
-      resp: resp("counter", `They want ${money(counter)} — meet it or walk away.`, { fee: counter })
+      resp: resp("counter", `They want more — around ${money(counter)} in cash, or sweeten it with add-ons.`, { fee: counter })
     };
   }
   return fail("They laughed it off — that offer is miles off.");
 }
 
 /** Step 3 (after the fee): agree personal terms. Completes the transfer. */
-export function offerTerms(input: SaveGame, playerId: string, wage: number): { save: SaveGame; resp: BidResponse } {
+export function agentFeeFor(wage: number, signingBonus = 0): number {
+  return Math.round((signingBonus + wage * 13) * TF.agentFeeShare);
+}
+
+export function offerTerms(
+  input: SaveGame,
+  playerId: string,
+  offer: number | ContractTerms
+): { save: SaveGame; resp: BidResponse } {
+  const t: ContractTerms = typeof offer === "number" ? { wage: offer } : offer;
   const pd = input.pending;
   if (!pd || pd.playerId !== playerId) {
     return { save: input, resp: resp("rejected", "No fee has been agreed for this player yet.") };
   }
   const p = input.players.find((x) => x.id === playerId);
   if (!p || p.clubId === "" ) return { save: input, resp: resp("rejected", "He isn't available.") };
-  const demand = wageDemand(p);
-  const rng = rngFor(input, "terms", playerId, wage);
+  const demand = termsDemand(p, t, wageDemand(p));
+  const rng = rngFor(input, "terms", playerId, t.wage, t.years ?? 3, t.signingBonus ?? 0);
   const want = demand * (0.98 + rng() * 0.08);
   const headroom = wageHeadroom(input, input.userClubId);
-  if (wage > headroom) {
+  if (t.wage > headroom) {
     return {
       save: input,
       resp: resp("rejected", `Wage budget won't stretch — ${money(Math.max(0, headroom))}/wk of headroom left.`)
     };
   }
-  if (wage >= want * 1.02) {
+  if (t.wage >= want * 1.02) {
     const save = structuredClone(input);
     const pp = save.players.find((x) => x.id === playerId)!;
     const sellerId = pp.clubId;
     const seller = save.clubs.find((c) => c.id === sellerId)!;
+    const terms = pd.terms ?? { fee: pd.fee };
+    const inst = Math.max(1, Math.min(TF.maxInstalments, terms.instalments ?? 1));
+    const signingBonus = Math.max(0, Math.round(t.signingBonus ?? 0));
+    const agentFee = agentFeeFor(t.wage, signingBonus);
+    const firstInstalment = Math.round(terms.fee / inst);
+    const cashNow = firstInstalment + signingBonus + agentFee;
+    if (cashNow > save.finances[save.userClubId].transfer) {
+      return { save: input, resp: resp("rejected", `That needs ${money(cashNow)} today (fee share, bonus and agent fee).`) };
+    }
     pp.clubId = save.userClubId;
-    pp.contract = { wage: roundTo(wage, 100), until: save.season + 3 };
-    save.finances[save.userClubId].transfer -= pd.fee;
-    if (save.finances[sellerId]) save.finances[sellerId].transfer += pd.fee;
-    logLine(save, `R${save.round}: You sign ${pp.name} from ${seller.short} for ${money(pd.fee)} (${money(pp.contract.wage)}/wk).`);
+    pp.loan = undefined;
+    pp.transferListed = undefined;
+    pp.contract = {
+      wage: roundTo(t.wage, 100),
+      until: save.season + Math.max(1, Math.min(5, t.years ?? 3)),
+      ...(signingBonus ? { signingBonus } : {}),
+      ...(t.perApp ? { perApp: t.perApp } : {}),
+      ...(t.perGoal ? { perGoal: t.perGoal } : {}),
+      ...(t.releaseClause ? { releaseClause: t.releaseClause } : {}),
+      ...(t.extensionYears ? { extensionYears: t.extensionYears } : {})
+    };
+    if (terms.sellOn) pp.sellOnTo = { clubId: sellerId, pct: Math.min(TF.maxSellOn, terms.sellOn) };
+    save.finances[save.userClubId].transfer -= cashNow;
+    if (save.finances[sellerId]) save.finances[sellerId].transfer += terms.fee;
+    for (let i = 1; i < inst; i++) {
+      addDebt(save, sellerId, firstInstalment, save.season + i, `Instalment ${i + 1}/${inst} for ${pp.name}`, pp.id);
+    }
+    if (terms.addon) {
+      addDebt(save, sellerId, terms.addon.amount, save.season + 1, `Add-on: ${terms.addon.apps} appearances for ${pp.name}`, pp.id)
+        .addonApps = terms.addon.apps;
+    }
+    const structure = inst > 1 ? `, ${money(firstInstalment)} now and the rest over ${inst - 1} season${inst > 2 ? "s" : ""}` : "";
+    noteSigning(save, pp, terms.fee);
+    logLine(
+      save,
+      `R${save.round}: You sign ${pp.name} from ${seller.short} for ${money(terms.fee)}${structure} (${money(pp.contract.wage)}/wk to season ${pp.contract.until}${signingBonus ? `, ${money(signingBonus)} signing bonus` : ""}).`
+    );
     save.pending = undefined;
     save.offers = save.offers.filter((o) => o.playerId !== playerId); // rivals drop out
     userFix(save);
     return { save, resp: resp("accepted", `${pp.name} signs! ${money(pp.contract.wage)}/wk until the end of season ${pp.contract.until}.`) };
   }
-  if (wage >= want * 0.88) {
-    return { save: input, resp: resp("counter", `He wants ${money(roundTo(want, 100))}/wk.`, { wage: roundTo(want, 100) }) };
+  if (t.wage >= want * 0.88) {
+    return { save: input, resp: resp("counter", `He wants ${money(roundTo(want, 100))}/wk on those terms.`, { wage: roundTo(want, 100) }) };
   }
   return { save: input, resp: resp("rejected", "He was insulted by that — offer something serious.") };
 }
 
 /** Renew one of your own players (allowed any time, not just windows). */
-export function renewContract(input: SaveGame, playerId: string, wage: number): { save: SaveGame; resp: BidResponse } {
+export function renewContract(
+  input: SaveGame,
+  playerId: string,
+  offer: number | ContractTerms
+): { save: SaveGame; resp: BidResponse } {
+  const t: ContractTerms = typeof offer === "number" ? { wage: offer } : offer;
+  const wage = t.wage;
   const p = input.players.find((x) => x.id === playerId);
   if (!p || p.clubId !== input.userClubId) return { save: input, resp: resp("rejected", "He's not your player.") };
-  const demand = wageDemand(p) * 0.95; // renewal discount
+  const demand = termsDemand(p, t, wageDemand(p)) * 0.95; // renewal discount
   const morale = p.morale ?? 60;
   // an unhappy player won't sit down at all unless you make it worth his while
   if (morale < 30 && wage < wageDemand(p) * 1.3) {
@@ -272,8 +400,23 @@ export function renewContract(input: SaveGame, playerId: string, wage: number): 
   if (wage >= want * 1.02) {
     const save = structuredClone(input);
     const pp = save.players.find((x) => x.id === playerId)!;
-    pp.contract = { wage: roundTo(wage, 100), until: save.season + 3 };
-    logLine(save, `R${save.round}: ${pp.name} signs a new deal (${money(pp.contract.wage)}/wk to season ${pp.contract.until}).`);
+    const years = Math.max(1, Math.min(5, t.years ?? 3));
+    pp.contract = {
+      wage: roundTo(wage, 100),
+      until: save.season + years,
+      ...(t.signingBonus ? { signingBonus: t.signingBonus } : {}),
+      ...(t.perApp ? { perApp: t.perApp } : {}),
+      ...(t.perGoal ? { perGoal: t.perGoal } : {}),
+      ...(t.releaseClause ? { releaseClause: t.releaseClause } : {}),
+      ...(t.extensionYears ? { extensionYears: t.extensionYears } : {})
+    };
+    if (t.signingBonus) {
+      save.finances[save.userClubId].transfer = Math.max(0, save.finances[save.userClubId].transfer - t.signingBonus);
+    }
+    logLine(
+      save,
+      `R${save.round}: ${pp.name} signs a new deal (${money(pp.contract.wage)}/wk to season ${pp.contract.until}${t.releaseClause ? `, ${money(t.releaseClause)} release clause` : ""}).`
+    );
     return { save, resp: resp("accepted", `${pp.name} commits until the end of season ${pp.contract.until}.`) };
   }
   if (wage >= want * 0.86) {
@@ -283,12 +426,20 @@ export function renewContract(input: SaveGame, playerId: string, wage: number): 
 }
 
 /** Sign a free agent (window must be open; fee is zero). */
-export function signFreeAgent(input: SaveGame, playerId: string, wage: number): { save: SaveGame; resp: BidResponse } {
+export function signFreeAgent(
+  input: SaveGame,
+  playerId: string,
+  offer: number | ContractTerms
+): { save: SaveGame; resp: BidResponse } {
+  const t: ContractTerms = typeof offer === "number" ? { wage: offer } : offer;
+  const wage = t.wage;
   const p = input.players.find((x) => x.id === playerId);
   if (!p || p.clubId !== "") return { save: input, resp: resp("rejected", "He's not a free agent.") };
   const win = transferWindow(input);
   if (!win.open) return { save: input, resp: resp("rejected", `The transfer window is closed — ${win.label}.`) };
-  const demand = wageDemand(p) * 1.05; // free agents hold out a little
+  const check = policyCheck(input.policy, p, { wage });
+  if (!check.ok) return { save: input, resp: resp("rejected", check.reason!) };
+  const demand = termsDemand(p, t, wageDemand(p)) * 1.05; // free agents hold out a little
   const rng = rngFor(input, "free", playerId, wage);
   const want = demand * (0.98 + rng() * 0.1);
   const headroom = wageHeadroom(input, input.userClubId);
@@ -302,8 +453,21 @@ export function signFreeAgent(input: SaveGame, playerId: string, wage: number): 
     const save = structuredClone(input);
     const pp = save.players.find((x) => x.id === playerId)!;
     pp.clubId = save.userClubId;
-    pp.contract = { wage: roundTo(wage, 100), until: save.season + 2 };
-    logLine(save, `R${save.round}: You sign free agent ${pp.name} (${money(pp.contract.wage)}/wk).`);
+    const years = Math.max(1, Math.min(5, t.years ?? 2));
+    pp.contract = {
+      wage: roundTo(wage, 100),
+      until: save.season + years,
+      ...(t.signingBonus ? { signingBonus: t.signingBonus } : {}),
+      ...(t.perApp ? { perApp: t.perApp } : {}),
+      ...(t.perGoal ? { perGoal: t.perGoal } : {}),
+      ...(t.releaseClause ? { releaseClause: t.releaseClause } : {}),
+      ...(t.extensionYears ? { extensionYears: t.extensionYears } : {})
+    };
+    if (t.signingBonus) {
+      save.finances[save.userClubId].transfer = Math.max(0, save.finances[save.userClubId].transfer - t.signingBonus);
+    }
+    noteSigning(save, pp, 0);
+    logLine(save, `R${save.round}: You sign free agent ${pp.name} (${money(pp.contract.wage)}/wk to season ${pp.contract.until}).`);
     userFix(save);
     return { save, resp: resp("accepted", `${pp.name} joins on a free transfer!`) };
   }
@@ -319,20 +483,43 @@ export function acceptOffer(input: SaveGame, offerId: string): { save: SaveGame;
   if (!o) return { save: input, resp: resp("rejected", "That offer is gone.") };
   const p = input.players.find((x) => x.id === o.playerId);
   if (!p || p.clubId !== input.userClubId) return { save: input, resp: resp("rejected", "He's no longer your player.") };
+  if (p.loan) return { save: input, resp: resp("rejected", "He is on loan — you can't sell him until it ends.") };
+
+  // a loan offer: he goes out for the season
+  if (o.kind === "loan" && o.loan) {
+    const save = sendOnLoan(input, o.playerId, o.fromClubId, o.loan);
+    save.offers = save.offers.filter((x) => x.id !== o.id);
+    userFix(save);
+    const club = save.clubs.find((c) => c.id === o.fromClubId)!;
+    return { save, resp: resp("accepted", `${p.name} joins ${club.short} on loan for the season.`) };
+  }
+
   const save = structuredClone(input);
   const pp = save.players.find((x) => x.id === o.playerId)!;
   const buyer = save.clubs.find((c) => c.id === o.fromClubId)!;
   const rng = rngFor(input, "sold", o.playerId);
   pp.clubId = o.fromClubId;
+  pp.loan = undefined;
+  pp.transferListed = undefined;
   pp.contract = { wage: wageDemand(pp), until: save.season + 2 + Math.floor(rng() * 3) };
   save.finances[save.userClubId].transfer += o.fee;
   if (save.finances[o.fromClubId]) save.finances[o.fromClubId].transfer = Math.max(0, save.finances[o.fromClubId].transfer - o.fee);
-  logLine(save, `R${save.round}: ${buyer.short} sign ${pp.name} from you for ${money(o.fee)}.`);
+  logLine(
+    save,
+    `R${save.round}: ${buyer.short} sign ${pp.name} from you for ${money(o.fee)}${o.clause ? " (release clause)" : ""}.`
+  );
+  // a clause we promised a previous club pays out of this sale
+  if (pp.sellOnTo) {
+    paySellOn(save, pp, o.fee);
+    pp.sellOnTo = undefined;
+  }
   save.offers = save.offers.filter((x) => x.playerId !== o.playerId);
   if (save.pending?.playerId === o.playerId) save.pending = undefined;
   userFix(save);
   return { save, resp: resp("accepted", `${pp.name} joins ${buyer.short} for ${money(o.fee)}.`) };
 }
+
+
 
 export function rejectOffer(input: SaveGame, offerId: string): SaveGame {
   const save = structuredClone(input);
@@ -388,12 +575,38 @@ export function windowTick(input: SaveGame): SaveGame {
     aiMove(save, target, buyer.id, fee, wageDemand(target), save.season + 2 + Math.floor(rng() * 3));
   }
 
+  // --- release clauses: a rival can buy a player out at the agreed fee ---
+  const claused = squadOf(save.players, save.userClubId).filter(
+    (p) => !p.loan && p.contract.releaseClause && p.contract.releaseClause > 0
+  );
+  for (const p of claused) {
+    if (save.offers.some((o) => o.playerId === p.id)) continue;
+    if (rng() > 0.3) continue;
+    const clause = p.contract.releaseClause!;
+    const suitors = save.clubs.filter(
+      (c) => c.id !== save.userClubId && (save.finances[c.id]?.transfer ?? 0) >= clause
+    );
+    if (!suitors.length) continue;
+    const club = pick(rng, suitors);
+    save.offers.push({
+      id: `of-${save.season}-${save.round}-c${save.offers.length}`,
+      playerId: p.id,
+      fromClubId: club.id,
+      fee: clause,
+      clause: true,
+      day: `R${save.round} · release clause`
+    });
+    pushNews(save, `${club.short} have triggered ${p.name}'s ${money(clause)} release clause.`);
+  }
+
   // --- incoming offers for the user's players (a transfer request draws bids) ---
-  const userP = squadOf(save.players, save.userClubId).filter((p) => marketValue(p) >= 400_000);
+  const userP = squadOf(save.players, save.userClubId).filter((p) => !p.loan && marketValue(p) >= 400_000);
   const wantsOut = userP.filter((p) => p.transferRequest);
-  const offerChance = wantsOut.length ? 0.75 : 0.45;
+  const listed = userP.filter((p) => p.transferListed);
+  const offerChance = wantsOut.length || listed.length ? 0.75 : 0.45;
   if (userP.length && save.offers.length < 3 && rng() < offerChance) {
-    const sorted = (wantsOut.length ? wantsOut : userP).slice().sort((a, b) => overallFor(b) - overallFor(a));
+    const pool = wantsOut.length ? wantsOut : listed.length ? listed : userP;
+    const sorted = pool.slice().sort((a, b) => overallFor(b) - overallFor(a));
     const target = sorted[Math.floor(rng() * Math.min(4, sorted.length))];
     if (!save.offers.some((o) => o.playerId === target.id)) {
       const bidders = save.clubs
@@ -414,6 +627,9 @@ export function windowTick(input: SaveGame): SaveGame {
       }
     }
   }
+  // kids and squad men attract loan interest; winter is when contracts get poached
+  loanOutTick(save);
+  poachTick(save);
   return save;
 }
 

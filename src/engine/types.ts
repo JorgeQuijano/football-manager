@@ -147,6 +147,12 @@ export interface Player {
   traits: TraitId[];
   /** contract state; see engine/transfers.ts */
   contract: Contract;
+  /** set while he is on loan (either direction) — engine/loans.ts */
+  loan?: Loan;
+  /** the manager has made him available (raises interest, upsets him) */
+  transferListed?: boolean;
+  /** a cut of any future sale is owed to this club */
+  sellOnTo?: { clubId: string; pct: number };
   /** potential ceiling for overall ability (v0.12) — room to grow = peak − overall */
   peak: number;
   /** fractional development accumulator per attribute (v0.12) */
@@ -195,6 +201,74 @@ export interface Player {
 export interface Contract {
   wage: number; // £/week
   until: number; // expires at the end of this season
+  /** one-off signing bonus (£), paid on completion */
+  signingBonus?: number;
+  /** £ paid per appearance / per goal */
+  perApp?: number;
+  perGoal?: number;
+  /** a fee at which any club may buy him out */
+  releaseClause?: number;
+  /** extra seasons the club may trigger (one-shot) */
+  extensionYears?: number;
+}
+
+/** A loan: either one of yours out, or someone else's in (engine/loans.ts). */
+export interface Loan {
+  fromClubId: string; // the owner
+  toClubId: string; // the borrower
+  wageShare: number; // 0-1 — how much of the wage the borrower pays
+  fee: number; // loan fee paid by the borrower
+  optionFee?: number; // the borrower may make it permanent for this
+  obligation?: boolean; // …or must, at the end of the season
+  until: number; // the season the loan ends
+}
+
+/** How a transfer fee is paid (engine/transfers.ts). */
+export interface DealTerms {
+  fee: number;
+  /** seasons the fee is spread over (1 = all cash now) */
+  instalments?: number;
+  /** £X once he has played N games */
+  addon?: { apps: number; amount: number };
+  /** % of a future fee owed to the seller */
+  sellOn?: number;
+  /** loan deal instead of a permanent one */
+  loan?: { wageShare: number; fee: number; optionFee?: number; obligation?: boolean };
+}
+
+/** Money owed to another club, paid at the rollovers. */
+export interface Debt {
+  id: string;
+  clubId: string; // who we owe
+  amount: number;
+  dueSeason: number;
+  reason: string;
+  playerId?: string;
+  /** transfer add-on: paid once the player has this many appearances */
+  addonApps?: number;
+}
+
+/** The board's line in the market for this season. */
+export interface BoardPolicy {
+  label: string;
+  /** hard: don't sanction signings older than this */
+  maxAge?: number;
+  /** hard: no single deal above this fee */
+  maxFee?: number;
+  /** soft: the board would rather you shopped under this age */
+  preferAge?: number;
+  /** soft: keep a new contract at or under this wage */
+  maxWage?: number;
+}
+
+/** A free transfer agreed for the end of the season (engine/market.ts). */
+export interface PreContract {
+  id: string;
+  playerId: string;
+  clubId: string; // who he is joining
+  wage: number;
+  years: number;
+  season: number;
 }
 
 /** Club money for the current season; see engine/transfers.ts. */
@@ -210,6 +284,11 @@ export interface TransferOffer {
   fromClubId: string; // bidding club
   fee: number;
   day: string; // context label, e.g. "R9 · winter window"
+  /** a loan offer rather than a permanent one */
+  kind?: "permanent" | "loan";
+  loan?: { wageShare: number; fee: number; optionFee?: number };
+  /** the bidding club has triggered a release clause — refusing is not an option */
+  clause?: boolean;
 }
 
 export interface Club {
@@ -679,9 +758,17 @@ export interface SaveGame {
   /** incoming offers for the user's players, pending a decision */
   offers: TransferOffer[];
   /** a fee already agreed with a club, awaiting personal terms (single-deal workflow) */
-  pending?: { playerId: string; fee: number; fromClubId: string };
+  pending?: { playerId: string; fee: number; fromClubId: string; terms?: DealTerms };
   /** human-readable transfer feed, newest first (capped) */
   transferLog: string[];
+  /** money owed to other clubs, settled at the season rollovers */
+  debts?: Debt[];
+  /** the board's line in the market this season */
+  policy?: BoardPolicy;
+  /** free transfers agreed for the end of the season */
+  preContracts?: PreContract[];
+  /** every signing completed this season — the board judges the window on this */
+  windowLog?: { season: number; playerId: string; age: number; wage: number; fee: number }[];
   /** the user club's set-piece plan (routines, takers, familiarity) — engine/setpieces.ts */
   setpieces: SetPiecePlan;
   /** the user club's training plan (engine/training.ts) */
