@@ -30,6 +30,19 @@ import { INBOX_CAP, inboxFor, inboxUnread, markAllInboxRead, openInboxItem, push
 import { PRE_ROUNDS, makeFriendlies, preseasonState } from "./preseason";
 import { fmtShort as fmtShortCal, friendlyDate } from "./calendar";
 import { formFactor, formFreshnessTick } from "./stats";
+import {
+  MEETING_THEMES,
+  bigMatchEdge,
+  bigMatchFor,
+  individualTalk,
+  meetingAvailable,
+  meetingFit,
+  pledgeMinutes,
+  settlePledges,
+  talkAdvice,
+  talkSuggestions,
+  teamMeeting
+} from "./motivation";
 import { pushNews } from "./training";
 import {
   INTL_ROUNDS,
@@ -178,7 +191,6 @@ import {
   recentForm,
   socialGroups,
   squadStatus,
-  talkToPlayer
 } from "./morale";
 import {
   FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery
@@ -2747,45 +2759,47 @@ describe("morale & squad dynamics", () => {
     const hot = squad.find((p) => !hasTrait(p, "leader"))!;
     hot.form = [7.5, 7.2, 7.9];
     hot.morale = 50;
-    const praised = talkToPlayer(s, hot.id, "praise");
-    expect("delta" in praised && praised.delta).toBe(7);
-    expect(hot.morale).toBe(57);
+    const dialogue = (save: SaveGame, playerId: string, kind: "praise" | "warn" | "reassure" | "challenge") =>
+      individualTalk(save, playerId, kind);
+    const praised = dialogue(s, hot.id, "praise");
+    expect(praised.resp.delta).toBe(7);
+    expect(praised.save.players.find((x) => x.id === hot.id)!.morale).toBe(57);
     // cooldown
-    const again = talkToPlayer(s, hot.id, "praise");
-    expect("error" in again).toBe(true);
+    const again = dialogue(praised.save, hot.id, "praise");
+    expect(again.resp.ok).toBe(false);
     // a leader takes praise even better
     const boss = squad.find((p) => hasTrait(p, "leader"));
     if (boss) {
       boss.form = [7.5, 7.2];
       boss.morale = 50;
-      const big = talkToPlayer(s, boss.id, "praise");
-      expect("delta" in big && big.delta).toBe(9);
+      const big = dialogue(s, boss.id, "praise");
+      expect(big.resp.delta).toBe(9);
     }
     // criticising your best performer backfires
     const s2 = newGame(106);
     const hot2 = squadOf(s2.players, s2.userClubId).find((p) => !hasTrait(p, "leader"))!;
     hot2.form = [7.5, 7.2];
     hot2.morale = 50;
-    const warned = talkToPlayer(s2, hot2.id, "warn");
-    expect("delta" in warned && warned.delta).toBeLessThan(0);
+    const warned = dialogue(s2, hot2.id, "warn");
+    expect(warned.resp.delta).toBeLessThan(0);
     // ...but the same words land with a struggler
     const s3 = newGame(106);
     const cold = squadOf(s3.players, s3.userClubId).find((p) => !hasTrait(p, "leader"))!;
     cold.form = [5.0, 5.2];
     cold.morale = 50;
-    const told = talkToPlayer(s3, cold.id, "warn");
-    expect("delta" in told && told.delta).toBeGreaterThan(0);
-    expect("morale" in told ? told.morale : -1).toBe(56);
+    const told = dialogue(s3, cold.id, "warn");
+    expect(told.resp.delta).toBeGreaterThan(0);
+    expect(told.resp.morale).toBe(56);
     // a struggling player shrugs off praise
     const s4 = newGame(106);
     const cold2 = squadOf(s4.players, s4.userClubId).find((p) => !hasTrait(p, "leader"))!;
     cold2.form = [5.0, 5.2];
     cold2.morale = 50;
-    const soft = talkToPlayer(s4, cold2.id, "praise");
-    expect("delta" in soft && soft.delta).toBe(1);
+    const soft = individualTalk(s4, cold2.id, "praise");
+    expect(soft.resp.delta).toBe(1);
     // not your player
     const rival = s4.players.find((x) => x.clubId !== s4.userClubId)!;
-    expect("error" in talkToPlayer(s4, rival.id, "praise")).toBe(true);
+    expect(individualTalk(s4, rival.id, "praise").resp.ok).toBe(false);
   });
 
   it("an unhappy player won't discuss a new deal (unless you overpay)", () => {
@@ -5100,6 +5114,251 @@ describe("pre-season & form: friendly weeks and the hot/cold hand", () => {
         save.phase,
         save.fixtures.filter((f) => f.friendly).map((f) => [f.round, f.played, f.homeGoals, f.awayGoals]),
         save.players.map((p) => [p.id, p.form, p.formMiss ?? 0])
+      ]);
+    };
+    expect(run()).toBe(run());
+  }, 30_000);
+});
+
+describe("motivation: talks, meetings and the big stage", () => {
+  const fresh = () => newGame(980);
+  const mine = (s: SaveGame, i = 3) => squadOf(s.players, s.userClubId)[i];
+
+  it("each conversation reads the player, not a dice roll", () => {
+    const save = fresh();
+    const p = mine(save);
+    // a man in form hears praise
+    p.form = [7.6, 7.2, 7.4];
+    const praised = individualTalk(save, p.id, "praise");
+    expect(praised.resp.ok).toBe(true);
+    expect(praised.resp.delta).toBeGreaterThanOrEqual(6);
+    // …and hates being criticised
+    const q = mine(save, 5);
+    q.form = [7.6, 7.2];
+    q.lastTalk = undefined;
+    const warned = individualTalk(save, q.id, "warn");
+    expect(warned.resp.delta).toBeLessThan(0);
+    // the struggling one needs the truth, and takes it
+    const r = mine(save, 7);
+    r.form = [5.1, 5.4];
+    r.lastTalk = undefined;
+    const told = individualTalk(save, r.id, "warn");
+    expect(told.resp.delta).toBeGreaterThan(0);
+    expect(told.save.players.find((x) => x.id === r.id)!.morale!).toBeGreaterThan(r.morale ?? 60);
+  });
+
+  it("a challenge fires up a confident player and buries a fragile one", () => {
+    const save = fresh();
+    const confident = mine(save, 2);
+    confident.morale = 70;
+    confident.form = [7.0, 6.9];
+    const up = individualTalk(save, confident.id, "challenge");
+    expect(up.resp.delta).toBeGreaterThan(0);
+    const fired = up.save.players.find((x) => x.id === confident.id)!;
+    expect(fired.pumped?.amount).toBeGreaterThan(0);
+    // the edge is live for two rounds and then gone
+    expect(fired.pumped!.until).toBe(up.save.round + 2);
+    // a low-mood player isn't looking for a challenge
+    const fragile = mine(save, 6);
+    fragile.morale = 35;
+    const down = individualTalk(save, fragile.id, "challenge");
+    expect(down.resp.delta).toBeLessThan(0);
+    expect(down.save.players.find((x) => x.id === fragile.id)!.pumped).toBeUndefined();
+  });
+
+  it("reassurance steadies a worried player and falls flat on a broken one", () => {
+    const save = fresh();
+    const worried = mine(save, 1);
+    worried.form = [5.2, 5.5];
+    worried.morale = 58;
+    const ok1 = individualTalk(save, worried.id, "reassure");
+    expect(ok1.resp.delta).toBeGreaterThanOrEqual(4);
+    const broken = mine(save, 8);
+    broken.form = [5.2];
+    broken.morale = 30;
+    broken.traits = [];
+    const flat = individualTalk(save, broken.id, "reassure");
+    expect(flat.resp.delta).toBeLessThanOrEqual(2);
+  });
+
+  it("one conversation per few matches, and leaders take things differently", () => {
+    const save = fresh();
+    const p = mine(save, 4);
+    const first = individualTalk(save, p.id, "praise");
+    expect(first.resp.ok).toBe(true);
+    expect(individualTalk(first.save, p.id, "praise").resp.ok).toBe(false); // cooling down
+    // a leader carries praise further
+    const leader = squadOf(save.players, save.userClubId).find((x) => hasTrait(x, "leader"));
+    if (leader) {
+      leader.form = [7.4, 7.1];
+      const plain = { ...leader, traits: leader.traits.filter((t) => t !== "leader") };
+      const withArmband = individualTalk(save, leader.id, "praise").resp.delta;
+      const withoutSave: SaveGame = {
+        ...save,
+        players: save.players.map((x) => (x.id === leader.id ? plain : x))
+      };
+      expect(withArmband).toBeGreaterThan(individualTalk(withoutSave, leader.id, "praise").resp.delta);
+    }
+  });
+
+  it("the advice knows what he needs to hear", () => {
+    const save = fresh();
+    const cold = mine(save, 0);
+    cold.form = [5.2, 5.4, 5.6];
+    cold.morale = 55;
+    expect(talkAdvice(save, cold)?.kind).toBe("reassure");
+    const hot = mine(save, 1);
+    hot.form = [7.4, 7.5];
+    hot.morale = 68;
+    expect(talkAdvice(save, hot)?.kind).toBe("challenge");
+    const list = talkSuggestions(save, 3);
+    expect(list.length).toBeGreaterThan(0);
+    expect(list.every((e) => e.why.length > 5)).toBe(true);
+  });
+
+  it("promised minutes are kept or paid for", () => {
+    const save = toLeague(fresh());
+    const p = squadOf(save.players, save.userClubId)[9];
+    const pledged = pledgeMinutes(save, p.id);
+    expect(pledged.resp.ok).toBe(true);
+    const promised = pledged.save.players.find((x) => x.id === p.id)!;
+    expect(promised.pledge?.minutes).toBe(30);
+    const before = promised.morale ?? 60;
+    // he played: kept (settled in the round the promise is due)
+    const kept = structuredClone({ ...pledged.save, round: pledged.save.round + 1 });
+    settlePledges(kept, { [p.id]: 62 });
+    const happy = kept.players.find((x) => x.id === p.id)!;
+    expect(happy.morale!).toBeGreaterThan(before);
+    expect(happy.pledge).toBeUndefined();
+    // he didn't: that costs you
+    const broken = structuredClone({ ...pledged.save, round: pledged.save.round + 1 });
+    settlePledges(broken, { [p.id]: 0 });
+    const angry = broken.players.find((x) => x.id === p.id)!;
+    expect(angry.morale!).toBeLessThan(before);
+    expect(angry.unhappyRounds).toBeGreaterThan(0);
+    // and you can't promise what injury prevents
+    const hurt = structuredClone(save);
+    hurt.players.find((x) => x.id === p.id)!.injuredWeeks = 2;
+    expect(pledgeMinutes(hurt, p.id).resp.ok).toBe(false);
+  });
+
+  it("a meeting moves the room — and the wrong one moves it the other way", () => {
+    const save = fresh();
+    // a struggling squad responds to "stick together"
+    const low: SaveGame = {
+      ...save,
+      players: save.players.map((p) => (p.clubId === save.userClubId ? { ...p, morale: 38 } : p))
+    };
+    const fit = meetingFit(low, "together");
+    expect(fit.fit).toBe("strong");
+    const stirred = teamMeeting(low, "together");
+    expect(stirred.resp.ok).toBe(true);
+    const after = stirred.save.players.filter((p) => p.clubId === low.userClubId);
+    expect(after.every((p) => (p.morale ?? 60) > 38)).toBe(true);
+    expect(stirred.save.meeting?.theme).toBe("together");
+    // a second meeting right away is refused
+    expect(teamMeeting(stirred.save, "standards").resp.ok).toBe(false);
+    // and a poorly judged one costs morale
+    const happy: SaveGame = {
+      ...save,
+      players: save.players.map((p) => (p.clubId === save.userClubId ? { ...p, morale: 78 } : p))
+    };
+    const risky = meetingFit(happy, "together");
+    expect(risky.fit).toBe("risky");
+    const backfired = teamMeeting(happy, "together");
+    const sunk = backfired.save.players.filter((p) => p.clubId === happy.userClubId);
+    expect(sunk.every((p) => (p.morale ?? 60) < 78)).toBe(true);
+  });
+
+  it("an easy week restores legs, a rally lifts the crowd, a warning settles unrest", () => {
+    const save = fresh();
+    const tired: SaveGame = {
+      ...save,
+      players: save.players.map((p) => (p.clubId === save.userClubId ? { ...p, condition: 55 } : p))
+    };
+    const rest = teamMeeting(tired, "recover");
+    expect(rest.save.players.filter((p) => p.clubId === tired.userClubId).every((p) => p.condition > 55)).toBe(true);
+    const rally: SaveGame = { ...save, media: { ...save.media!, fans: 40 } };
+    const fans = teamMeeting(rally, "fans");
+    expect(fans.save.media!.fans).toBe(43); // one bump, not one per player
+    const unrest: SaveGame = {
+      ...save,
+      players: save.players.map((p, i) =>
+        p.clubId === save.userClubId && i % 3 === 0 ? { ...p, transferRequest: true, morale: 30, unhappyRounds: 4 } : p
+      )
+    };
+    const badge = teamMeeting(unrest, "badge");
+    const settled = badge.save.players.filter((p) => p.clubId === unrest.userClubId && p.transferRequest);
+    expect(settled.every((p) => (p.unhappyRounds ?? 0) < 4)).toBe(true);
+  });
+
+  it("knows a big match when it sees one", () => {
+    const save = toLeague(fresh());
+    const fx = userFixture(save)!;
+    // round 1 with nobody having played: not a big match yet
+    expect(bigMatchFor(save, fx)).toBeNull();
+    // build a table where you and the opponent are both up top late in the season
+    const played = { ...save, round: 16 };
+    const target = played.fixtures.find(
+      (f) => f.round === 16 && !f.played && (f.homeId === played.userClubId || f.awayId === played.userClubId)
+    )!;
+    const oppId = target.homeId === played.userClubId ? target.awayId : target.homeId;
+    const withResults = structuredClone(played);
+    for (const f of withResults.fixtures) {
+      if (f.round > 15 || f.played) continue;
+      const mineHome = f.homeId === withResults.userClubId;
+      const oppHome = f.homeId === oppId;
+      f.played = true;
+      if (mineHome) { f.homeGoals = 2; f.awayGoals = 0; }
+      else if (oppHome) { f.homeGoals = 2; f.awayGoals = 1; }
+      else { f.homeGoals = 1; f.awayGoals = 1; }
+    }
+    const big = bigMatchFor(withResults, target);
+    expect(big).not.toBeNull();
+    expect(["Title six-pointer", "Against the leaders", "The decider"]).toContain(big!.label);
+    expect(big!.stakes.length).toBeGreaterThan(10);
+    // friendlies never qualify
+    const friendly = fresh().fixtures.find((f) => f.friendly)!;
+    expect(bigMatchFor(fresh(), friendly)).toBeNull();
+  });
+
+  it("the big stage lifts leaders and spooks the vulnerable", () => {
+    const save = fresh();
+    const kid = mine(save, 1);
+    kid.age = 19;
+    kid.morale = 60;
+    kid.traits = [];
+    const leader = mine(save, 2);
+    leader.morale = 60;
+    leader.traits = ["leader"];
+    const steady = mine(save, 3);
+    steady.morale = 60;
+    steady.age = 27;
+    steady.traits = [];
+    expect(bigMatchEdge(steady)).toBe(1);
+    expect(bigMatchEdge(kid)).toBeLessThan(1);
+    expect(bigMatchEdge(leader)).toBeGreaterThan(1);
+    const nervous = mine(save, 4);
+    nervous.morale = 30;
+    nervous.age = 28;
+    nervous.traits = [];
+    expect(bigMatchEdge(nervous)).toBeLessThan(1);
+  });
+
+  it("stays deterministic across talks, meetings and pledges", () => {
+    const run = () => {
+      let save = toLeague(newGame(981));
+      const p = squadOf(save.players, save.userClubId)[3];
+      const a = individualTalk(save, p.id, "challenge");
+      save = a.save;
+      const m = teamMeeting(save, "standards");
+      save = m.save;
+      const q = squadOf(save.players, save.userClubId)[6];
+      save = pledgeMinutes(save, q.id).save;
+      save = playRound(save).save;
+      return JSON.stringify([
+        save.players.map((x) => [x.id, x.morale, x.pumped ?? null, x.pledge ?? null]),
+        save.meeting
       ]);
     };
     expect(run()).toBe(run());

@@ -33,7 +33,7 @@ export const moraleEdge = (p: Player): number => 1 + ((p.morale ?? MORALE_START)
 export const moraleDev = (m: number): number => 1 + (m - MORALE_START) * 0.002;
 
 export type SquadStatus = "star" | "rotation" | "fringe" | "youth";
-const STATUS_WANT: Record<SquadStatus, number> = { star: 0.7, rotation: 0.45, fringe: 0.22, youth: 0.1 };
+export const STATUS_WANT: Record<SquadStatus, number> = { star: 0.7, rotation: 0.45, fringe: 0.22, youth: 0.1 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -243,54 +243,3 @@ export interface TalkResult {
 
 /** Rounds a player will accept between individual chats. */
 export const TALK_COOLDOWN = 4;
-
-/**
- * Praise or warn a player (FM-style interaction). Returns `{ error }` when the
- * chat isn't possible, otherwise the reaction.
- */
-export function talkToPlayer(
-  save: SaveGame,
-  playerId: string,
-  kind: "praise" | "warn"
-): TalkResult | { error: string } {
-  const p = save.players.find((x) => x.id === playerId);
-  if (!p) return { error: "No such player." };
-  if (p.clubId !== save.userClubId) return { error: "He's not your player." };
-  const now = save.season * 1000 + save.round;
-  if ((p.lastTalk ?? -9999) > now - TALK_COOLDOWN) {
-    return { error: "You've spoken to him recently — let it breathe for a few matches." };
-  }
-  const f = formOf(p);
-  const inForm = f !== null && f >= 6.8;
-  const poor = f !== null && f <= 5.8;
-  let delta: number;
-  let message: string;
-  if (kind === "praise") {
-    if (inForm) {
-      delta = 7;
-      message = `${p.name} is buzzing — praise lands perfectly when he's playing like this.`;
-    } else if (poor) {
-      delta = 1;
-      message = `${p.name} nods politely, but he knows he's not playing well.`;
-    } else {
-      delta = 4;
-      message = `${p.name} appreciates the kind words.`;
-    }
-  } else {
-    if (poor) {
-      delta = 6;
-      message = `${p.name} takes it on the chin — exactly the wake-up call he needed.`;
-    } else if (inForm) {
-      delta = -8;
-      message = `${p.name} is furious. Criticising your best performer rarely lands.`;
-    } else {
-      delta = -4;
-      message = `${p.name} isn't happy about being singled out.`;
-    }
-  }
-  if (hasTrait(p, "leader")) delta = kind === "praise" ? delta + 2 : Math.round(delta * 0.6);
-  p.morale = clamp((p.morale ?? MORALE_START) + delta, 5, 100);
-  p.lastTalk = now;
-  p.talkKind = kind;
-  return { message, delta, morale: p.morale };
-}

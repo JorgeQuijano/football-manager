@@ -44,8 +44,7 @@ export function Dynamics({ onOpenPlayer }: { onOpenPlayer: (id: string) => void 
 
   const doTalk = (p: Player, kind: "praise" | "warn") => {
     const res = talk(p.id, kind);
-    if (typeof res === "string") setMsg({ text: res, bad: true });
-    else setMsg({ text: res.message, bad: res.delta < 0 });
+    setMsg({ text: res?.message ?? "No game loaded.", bad: res ? !res.ok : true });
   };
 
   const topReason = (p: Player): string => {

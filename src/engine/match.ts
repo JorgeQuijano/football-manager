@@ -31,6 +31,7 @@ import { defaultRoleFor, roleFinish, ROLE_DEFS } from "./roles";
 import { DEFAULT_CONDITIONS, conditionEffects, refOf, weatherOf } from "./conditions";
 import { jadedFactor, jadedOf, pronenessOf, sharpnessFactor } from "./physical";
 import { formFactor } from "./stats";
+import { bigMatchEdge } from "./motivation";
 
 /**
  * Morale edge (engine/morale.ts, inlined here to keep match.ts free of the
@@ -67,12 +68,16 @@ export function staminaAt(s: MatchState, id: string, minute: number): number {
 const sideOfPlayer = (s: MatchState, p: Player): MatchSideState =>
   s.pin[p.id]?.s === 1 ? s.away : s.home;
 
-/** Morale, legs, match sharpness, wear, recent form and the words from the bench. */
-const bodyEdge = (p: Player): number => sharpnessFactor(p) * jadedFactor(p) * formFactor(p);
+/** Morale, legs, match sharpness, wear, recent form, a challenge and the words from the bench. */
+const bodyEdge = (s: MatchState, p: Player): number => {
+  const pump = p.pumped && s.round <= p.pumped.until ? 1 + p.pumped.amount : 1;
+  const big = s.big ? bigMatchEdge(p) : 1;
+  return sharpnessFactor(p) * jadedFactor(p) * formFactor(p) * pump * big;
+};
 
 /** Morale, legs and the words from the bench — what a player brings going forward. */
 const attEdge = (s: MatchState, p: Player): number =>
-  moraleEdge(p) * staminaFactor(s.stamina[p.id] ?? 100) * bodyEdge(p) * (1 + (sideOfPlayer(s, p).fire ?? 0));
+  moraleEdge(p) * staminaFactor(s.stamina[p.id] ?? 100) * bodyEdge(s, p) * (1 + (sideOfPlayer(s, p).fire ?? 0));
 
 /** …and what he brings when his side hasn't got the ball. */
 const defEdge = (s: MatchState, p: Player): number => {
@@ -80,7 +85,7 @@ const defEdge = (s: MatchState, p: Player): number => {
   return (
     moraleEdge(p) *
     staminaFactor(s.stamina[p.id] ?? 100) *
-    bodyEdge(p) *
+    bodyEdge(s, p) *
     (1 + (side.shape ?? 0) + (side.fire ?? 0) * 0.4)
   );
 };
@@ -146,6 +151,8 @@ export interface MatchInputs {
   awayPlan: SetPiecePlan;
   /** weather, referee and pitch (engine/conditions.ts); omitted = neutral */
   conditions?: MatchConditions;
+  /** a season-defining fixture: the pressure shows (v0.28) */
+  bigMatch?: boolean;
   rng: Rng;
   userSide?: "home" | "away";
 }
@@ -356,7 +363,8 @@ export function startMatch(inp: MatchInputs): MatchState {
     pin: {},
     stamina: {},
     staminaRate: {},
-    cond: inp.conditions ?? DEFAULT_CONDITIONS
+    cond: inp.conditions ?? DEFAULT_CONDITIONS,
+    big: inp.bigMatch === true
   };
   for (const p of [...inp.homeXI, ...inp.homeBench, ...inp.awayXI, ...inp.awayBench]) {
     state.ratings[p.id] = T.ratingBase;

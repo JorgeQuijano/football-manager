@@ -47,6 +47,9 @@ import {
   applyTeamTalk,
   addFocus as addFocusEngine,
   askAgent as askAgentEngine,
+  individualTalk,
+  pledgeMinutes,
+  teamMeeting as teamMeetingEngine,
   markAllInboxRead,
   openInboxItem as openInboxItemEngine,
   applyDiscipline,
@@ -70,13 +73,14 @@ import {
   hireScout as hireScoutEngine,
   scoutPlayer as scoutPlayerEngine,
   skipPress as skipPressEngine,
-  talkToPlayer as talkToPlayerEngine,
   toggleShortlist as toggleShortlistEngine,
   topUpScouting as topUpScoutingEngine,
   leaders as leadersOf
 } from "@/engine";
 import type {
   AgentInterest,
+  MeetingOutcome,
+  PlayerTalkKind,
   ContractTerms,
   DealTerms,
   OppInstruction,
@@ -187,7 +191,11 @@ interface AppState {
   toggleShortlist: (playerId: string) => void;
   topUpScouting: (amount: number) => string | null;
   /** praise or warn a player; returns an error string or the reaction */
-  talk: (playerId: string, kind: "praise" | "warn") => string | { message: string; delta: number };
+  talk: (playerId: string, kind: PlayerTalkKind) => { ok: boolean; message: string } | null;
+  /** promise him minutes next round (v0.28) */
+  pledge: (playerId: string) => string | null;
+  /** call a team meeting (v0.28) */
+  teamMeeting: (themeId: string) => MeetingOutcome | null;
   /** answer the current press question; returns the outcome or an error */
   answerPress: (index: number) => PressOutcome | { error: string };
   /** send the assistant to the press conference */
@@ -970,13 +978,33 @@ export const useGame = create<AppState>()((set, get) => ({
 
   talk: (playerId, kind) => {
     const { game } = get();
+    if (!game) return null;
+    const r = individualTalk(game, playerId, kind);
+    if (r.resp.ok) {
+      set({ game: r.save });
+      schedulePersist(r.save);
+    }
+    return { ok: r.resp.ok, message: r.resp.message };
+  },
+
+  pledge: (playerId: string) => {
+    const { game } = get();
     if (!game) return "No game loaded.";
-    const save = structuredClone(game);
-    const res = talkToPlayerEngine(save, playerId, kind);
-    if ("error" in res) return res.error;
-    set({ game: save });
-    schedulePersist(save);
-    return { message: res.message, delta: res.delta };
+    const r = pledgeMinutes(game, playerId);
+    if (!r.resp.ok) return r.resp.message;
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return null;
+  },
+
+  teamMeeting: (themeId: string) => {
+    const { game } = get();
+    if (!game) return null;
+    const r = teamMeetingEngine(game, themeId);
+    if (!r.resp.ok) return null;
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return r.resp;
   },
 
   answerPress: (index) => {

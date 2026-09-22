@@ -43,6 +43,7 @@ import { exportSaveFile, parseSaveFile } from "@/state/save";
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
 import { ArmbandCard, BodyCard, LearnerCard, TargetCard } from "@/ui/Individual";
+import { TalkPanel } from "@/ui/Motivation";
 import { Stars } from "@/ui/Scouting";
 
 export function SettingsSheet({
@@ -481,24 +482,10 @@ export function PlayerDetailSheet({
                           {talkMsg.text}
                         </p>
                       )}
-                      <div className="flex gap-2">
-                        {(["praise", "warn"] as const).map((k) => (
-                          <Button
-                            key={k}
-                            size="sm"
-                            variant="outline"
-                            className="h-11 flex-1"
-                            data-testid={`sheet-${k}`}
-                            onClick={() => {
-                              const res = talk(p.id, k);
-                              if (typeof res === "string") setTalkMsg({ text: res, bad: true });
-                              else setTalkMsg({ text: res.message, bad: res.delta < 0 });
-                            }}
-                          >
-                            {k === "praise" ? "Praise" : "Warn"}
-                          </Button>
-                        ))}
-                      </div>
+                      <p className="text-[10px] text-muted-foreground">
+                        Praise, warn, reassure or challenge him in the panel above — the full set of
+                        conversations lives there now.
+                      </p>
                     </>
                   )}
                 </div>
@@ -712,6 +699,7 @@ export function PlayerDetailSheet({
 
               {isOwn && (
                 <>
+                  <TalkPanel player={p} />
                   <BodyCard player={p} />
                   <TargetCard player={p} />
                   <LearnerCard player={p} />
