@@ -38,6 +38,16 @@ import {
   squadPlan
 } from "./planner";
 import {
+  FORM_BANDS,
+  SORT_MODES,
+  formBandFor,
+  formOf,
+  rating1,
+  ratingAvg,
+  recordMatch,
+  sortSquad
+} from "./stats";
+import {
   CORNER_ROUTINES,
   FK_ROUTINES,
   aiSetPieces,
@@ -66,7 +76,8 @@ import {
   windowTick
 } from "./transfers";
 import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
-import type { CornerRoutine, FreeKickRoutine, Intensity, Mentality, Player, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit } from "./types";
+import type { CornerRoutine, FreeKickRoutine, Intensity, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit } from "./types";
+import type { MatchStatCtx } from "./stats";
 
 function playSeason(start: SaveGame): SaveGame {
   let save = start;
@@ -280,6 +291,13 @@ describe("roles", () => {
     apps: 0,
     goals: 0,
     assists: 0,
+    mins: 0,
+    yellows: 0,
+    reds: 0,
+    ratingSum: 0,
+    ratingCount: 0,
+    form: [],
+    history: [],
     ...over,
     traits: over.traits ?? [],
     contract: over.contract ?? { wage: 0, until: 0 },
@@ -403,6 +421,13 @@ describe("lineup ops", () => {
       apps: 0,
       goals: 0,
       assists: 0,
+      mins: 0,
+      yellows: 0,
+      reds: 0,
+      ratingSum: 0,
+      ratingCount: 0,
+      form: [],
+      history: [],
       ...over,
       traits: over.traits ?? [],
       contract: over.contract ?? { wage: 0, until: 0 },
@@ -455,7 +480,14 @@ describe("conditioning", () => {
       suspension: 0,
       apps: 0,
       goals: 0,
-      assists: 0
+      assists: 0,
+      mins: 0,
+      yellows: 0,
+      reds: 0,
+      ratingSum: 0,
+      ratingCount: 0,
+      form: [],
+      history: []
     });
     const kid = mk(19, 78);
     const vet = mk(34, 52);
@@ -761,7 +793,14 @@ describe("motion", () => {
     suspension: 0,
     apps: 0,
     goals: 0,
-    assists: 0
+    assists: 0,
+    mins: 0,
+    yellows: 0,
+    reds: 0,
+    ratingSum: 0,
+    ratingCount: 0,
+    form: [],
+    history: []
   });
 
   it("every role has a motion profile and roles differ by design", () => {
@@ -832,7 +871,14 @@ describe("decisions", () => {
     suspension: 0,
     apps: 0,
     goals: 0,
-    assists: 0
+    assists: 0,
+    mins: 0,
+    yellows: 0,
+    reds: 0,
+    ratingSum: 0,
+    ratingCount: 0,
+    form: [],
+    history: []
   });
   const ctx = (phase: GamePhase, ball = { x: 55, y: 55 }, slot = { x: 50, y: 30 }): IntentCtx => ({
     phase,
@@ -993,7 +1039,14 @@ describe("traits", () => {
     suspension: 0,
     apps: 0,
     goals: 0,
-    assists: 0
+    assists: 0,
+    mins: 0,
+    yellows: 0,
+    reds: 0,
+    ratingSum: 0,
+    ratingCount: 0,
+    form: [],
+    history: []
   });
 
   it("generates 0-2 valid, group-appropriate traits deterministically", () => {
@@ -1231,6 +1284,13 @@ describe("training", () => {
     apps: 0,
     goals: 0,
     assists: 0,
+    mins: 0,
+    yellows: 0,
+    reds: 0,
+    ratingSum: 0,
+    ratingCount: 0,
+    form: [],
+    history: [],
     ...over
   });
   const plan = (unit: TrainingUnit, intensity: Intensity = "normal"): TrainingPlan => ({ unit, intensity });
@@ -1396,6 +1456,13 @@ describe("planner", () => {
     apps: 0,
     goals: 0,
     assists: 0,
+    mins: 0,
+    yellows: 0,
+    reds: 0,
+    ratingSum: 0,
+    ratingCount: 0,
+    form: [],
+    history: [],
     ...over
   });
 
@@ -1736,6 +1803,147 @@ describe("set piece creator", () => {
     expect(clean.takers.penalty).toBe("p1");
     expect(clean.familiarity["corner:crossed"]).toBe(100);
     expect(clean.familiarity["freekick:crossed"]).toBe(0);
+  });
+});
+
+describe("player stats & form", () => {
+  const mkS = (over: Partial<Player> = {}): Player => ({
+    id: "st1",
+    clubId: "c1",
+    name: "Stat Player",
+    age: 25,
+    pos: "MF",
+    attrs: { pace: 60, shooting: 60, passing: 60, defending: 60, physical: 60, reflexes: 40, handling: 40 },
+    traits: [],
+    contract: { wage: 0, until: 0 },
+    peak: 99,
+    dev: {},
+    devSeason: {},
+    focus: null,
+    condition: 100,
+    injuredWeeks: 0,
+    suspension: 0,
+    apps: 0,
+    goals: 0,
+    assists: 0,
+    mins: 0,
+    yellows: 0,
+    reds: 0,
+    ratingSum: 0,
+    ratingCount: 0,
+    form: [],
+    history: [],
+    ...over
+  });
+  const upd = (over: Partial<PlayerUpdate> = {}): PlayerUpdate => ({
+    playerId: "st1",
+    minutes: 90,
+    goals: 0,
+    assists: 0,
+    yellow: 0,
+    red: false,
+    injuredWeeks: 0,
+    conditionLoss: 0,
+    ...over
+  });
+  const ctx = (over: Partial<MatchStatCtx> = {}): MatchStatCtx => ({
+    season: 1,
+    round: 1,
+    opp: "NOR",
+    home: true,
+    rating: 7,
+    userClub: true,
+    ...over
+  });
+
+  it("folds a match into season stats, form and the log", () => {
+    const p = mkS();
+    recordMatch(p, upd({ minutes: 76, goals: 2, assists: 1, yellow: 1 }), ctx({ rating: 8.2 }));
+    expect(p.mins).toBe(76);
+    expect(p.yellows).toBe(1);
+    expect(p.form).toEqual([8.2]);
+    expect(ratingAvg(p)).toBeCloseTo(8.2, 5);
+    expect(p.history).toHaveLength(1);
+    expect(p.history[0]).toMatchObject({ r: 1, opp: "NOR", h: true, rt: 8.2, m: 76, g: 2, a: 1 });
+    recordMatch(p, upd({ minutes: 0 }), ctx({ rating: undefined })); // unused sub
+    expect(p.form).toHaveLength(1);
+    expect(ratingAvg(p)).toBeCloseTo(8.2, 5);
+    expect(p.history).toHaveLength(2);
+    expect(p.history[0].rt).toBe(0);
+  });
+
+  it("keeps the last six ratings, newest first, and bands them", () => {
+    const p = mkS();
+    for (let r = 1; r <= 8; r++) recordMatch(p, upd(), ctx({ rating: 4 + r * 0.5, round: r }));
+    expect(p.form).toHaveLength(6);
+    expect(p.form[0]).toBe(8); // newest first
+    expect(p.form[5]).toBe(5.5);
+    expect(formOf(p)).toBeCloseTo((8 + 7.5 + 7 + 6.5 + 6 + 5.5) / 6, 5);
+    expect(formBandFor(8.1)).toBe("brilliant");
+    expect(formBandFor(7)).toBe("good");
+    expect(formBandFor(6.2)).toBe("average");
+    expect(formBandFor(5)).toBe("poor");
+    expect(Object.keys(FORM_BANDS)).toHaveLength(4);
+    expect(rating1(null)).toBe("—");
+    expect(rating1(7.234)).toBe("7.2");
+    expect(formOf(mkS())).toBeNull();
+  });
+
+  it("logs matches for your club only, newest first, capped at ten", () => {
+    const p = mkS();
+    for (let r = 1; r <= 12; r++) recordMatch(p, upd(), ctx({ round: r }));
+    expect(p.history).toHaveLength(10);
+    expect(p.history[0].r).toBe(12);
+    const other = mkS({ clubId: "c9" });
+    recordMatch(other, upd(), ctx({ userClub: false }));
+    expect(other.history).toHaveLength(0);
+    expect(other.form).toHaveLength(1);
+  });
+
+  it("collects stats for AI players too (without a log)", () => {
+    const s = playRound(newGame(15)).save;
+    const ai = s.players.filter((p) => p.clubId !== s.userClubId && p.clubId !== "");
+    expect(ai.some((p) => (p.mins ?? 0) > 0 && p.form.length > 0)).toBe(true);
+    expect(ai.every((p) => p.history.length === 0)).toBe(true);
+    const mine = s.players.filter((p) => p.clubId === s.userClubId);
+    expect(mine.some((p) => p.history.length > 0)).toBe(true);
+    expect(mine.filter((p) => p.apps > 0).every((p) => p.ratingCount > 0 && p.mins > 0)).toBe(true);
+  });
+
+  it("resets season stats at the rollover but keeps the recent-match log", () => {
+    const s = playRound(newGame(17)).save;
+    const id = s.players.find((p) => p.clubId === s.userClubId && p.history.length > 0)!.id;
+    expect(s.players.find((p) => p.id === id)!.mins).toBeGreaterThan(0);
+    const next = nextSeason(s);
+    const after = next.players.find((p) => p.id === id)!;
+    expect(after.mins).toBe(0);
+    expect(after.ratingCount).toBe(0);
+    expect(after.ratingSum).toBe(0);
+    expect(after.form).toEqual([]);
+    expect(after.yellows).toBe(0);
+    expect(after.history.length).toBeGreaterThan(0);
+  });
+
+  it("sorts the squad by form, rating, goals and minutes", () => {
+    const overall = (p: Player) => p.peak;
+    const a = mkS({ id: "a", goals: 5, form: [8, 8], mins: 100 });
+    const b = mkS({ id: "b", goals: 1, form: [5, 5], mins: 900 });
+    const c = mkS({ id: "c", goals: 9, form: [], mins: 10, peak: 50 });
+    const ids = (arr: Player[]) => arr.map((p) => p.id).join("");
+    expect(ids(sortSquad([a, b, c], "form", overall))).toBe("abc"); // no form sinks
+    expect(ids(sortSquad([a, b, c], "goals", overall))).toBe("cab");
+    expect(ids(sortSquad([a, b, c], "minutes", overall))).toBe("bac");
+    expect(ids(sortSquad([a, b, c], "rating", overall))).toBe("abc");
+    expect(SORT_MODES).toHaveLength(6);
+  });
+
+  it("is deterministic across identical runs", () => {
+    const run = () => {
+      let s = newGame(19);
+      for (let r = 0; r < 3; r++) s = playRound(s).save;
+      return JSON.stringify(s.players.map((p) => [p.apps, p.mins, p.form, p.ratingCount, p.history.length]));
+    };
+    expect(run()).toBe(run());
   });
 });
 

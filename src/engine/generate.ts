@@ -108,7 +108,14 @@ function makePlayer(
     suspension: 0,
     apps: 0,
     goals: 0,
-    assists: 0
+    assists: 0,
+    mins: 0,
+    yellows: 0,
+    reds: 0,
+    ratingSum: 0,
+    ratingCount: 0,
+    form: [],
+    history: []
   };
   player.contract = contractFor(player, 1);
   player.peak = peakFor(player);

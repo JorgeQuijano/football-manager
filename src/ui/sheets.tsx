@@ -18,6 +18,7 @@ import {
 } from "@/engine";
 import { ATTR_KEYS, ATTR_LABEL, ATTR_SHORT } from "@/engine";
 import type { AttrKey } from "@/engine";
+import { FORM_BANDS, formBandFor, formOf, rating1, ratingAvg } from "@/engine";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -263,6 +264,92 @@ export function PlayerDetailSheet({
                     {p.clubId === "" ? "Free" : p.contract.until <= game.season ? "Expires" : `S${p.contract.until}`}
                   </div>
                 </div>
+              </div>
+
+              <div className="space-y-2 rounded-lg border border-border bg-card p-3" data-testid="player-stats">
+                <div className="flex items-baseline justify-between text-xs font-semibold">
+                  <span className="text-muted-foreground">This season</span>
+                  <span className="tnum">
+                    Avg {rating1(ratingAvg(p))}
+                    {formOf(p) !== null && (
+                      <span
+                        className="ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold"
+                        style={{
+                          background: `${FORM_BANDS[formBandFor(formOf(p)!)].tint}22`,
+                          color: FORM_BANDS[formBandFor(formOf(p)!)].tint
+                        }}
+                      >
+                        Form {FORM_BANDS[formBandFor(formOf(p)!)].label}
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5 text-center">
+                  {(
+                    [
+                      ["Apps", `${p.apps}`],
+                      ["Minutes", `${p.mins ?? 0}`],
+                      ["Goals", `${p.goals}`],
+                      ["Assists", `${p.assists}`],
+                      ["Cards", `${p.yellows ?? 0}Y${p.reds ? ` ${p.reds}R` : ""}`],
+                      ["Rating", rating1(ratingAvg(p))]
+                    ] as Array<[string, string]>
+                  ).map(([label, value]) => (
+                    <div key={label} className="rounded bg-background/60 py-1">
+                      <div className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
+                        {label}
+                      </div>
+                      <div className="text-sm font-extrabold tnum">{value}</div>
+                    </div>
+                  ))}
+                </div>
+                {(p.form ?? []).length > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                      Form
+                    </span>
+                    <span className="flex gap-1">
+                      {(p.form ?? []).slice(0, 6).map((r, i) => {
+                        const tint = FORM_BANDS[formBandFor(r)].tint;
+                        return (
+                          <span
+                            key={i}
+                            className="rounded px-1.5 py-0.5 text-[10px] font-bold tnum"
+                            style={{ background: `${tint}22`, color: tint }}
+                          >
+                            {r.toFixed(1)}
+                          </span>
+                        );
+                      })}
+                    </span>
+                  </div>
+                )}
+                {(p.history ?? []).length > 0 && (
+                  <div className="space-y-1 border-t border-border pt-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                      Recent matches
+                    </div>
+                    {(p.history ?? []).slice(0, 5).map((h, i) => {
+                      const tint = h.rt ? FORM_BANDS[formBandFor(h.rt)].tint : "#8B98A5";
+                      return (
+                        <div key={i} className="flex items-center justify-between text-[11px]">
+                          <span className="text-muted-foreground">
+                            {h.h ? "vs" : "@"} {h.opp}
+                            <span className="opacity-70"> · S{h.se} R{h.r}</span>
+                          </span>
+                          <span className="text-muted-foreground">
+                            {h.m}&#39;
+                            {h.g > 0 && <span className="text-foreground"> · {h.g}G</span>}
+                            {h.a > 0 && <span className="text-foreground"> · {h.a}A</span>}
+                          </span>
+                          <span className="w-8 text-right font-bold tnum" style={{ color: tint }}>
+                            {h.rt ? h.rt.toFixed(1) : "—"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div
@@ -537,6 +624,17 @@ export function PlayerPickerSheet({
                     {isCurrent && (
                       <span className="shrink-0 rounded bg-secondary px-1 py-0.5 text-[9px] font-bold text-muted-foreground">
                         In slot
+                      </span>
+                    )}
+                    {formOf(p) !== null && (
+                      <span
+                        className="shrink-0 rounded px-1 py-0.5 text-[9px] font-bold tnum"
+                        style={{
+                          background: `${FORM_BANDS[formBandFor(formOf(p)!)].tint}22`,
+                          color: FORM_BANDS[formBandFor(formOf(p)!)].tint
+                        }}
+                      >
+                        ★{rating1(formOf(p))}
                       </span>
                     )}
                   </span>

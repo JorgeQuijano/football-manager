@@ -398,7 +398,14 @@ export function makeYouth(save: SaveGame, clubId: string, idx: number): Player {
     suspension: 0,
     apps: 0,
     goals: 0,
-    assists: 0
+    assists: 0,
+    mins: 0,
+    yellows: 0,
+    reds: 0,
+    ratingSum: 0,
+    ratingCount: 0,
+    form: [],
+    history: []
   };
   p.peak = Math.min(96, Math.round(overallFor(p) + 22 + Math.floor(rng() * 14)));
   return p;

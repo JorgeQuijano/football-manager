@@ -480,7 +480,14 @@ export function makeFreeAgent(season: number, idx: number): Player {
     suspension: 0,
     apps: 0,
     goals: 0,
-    assists: 0
+    assists: 0,
+    mins: 0,
+    yellows: 0,
+    reds: 0,
+    ratingSum: 0,
+    ratingCount: 0,
+    form: [],
+    history: []
   };
   p.contract = { wage: wageDemand(p), until: 0 };
   p.peak = peakFor(p);
