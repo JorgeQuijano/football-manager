@@ -16,6 +16,7 @@ export * from "./morale";
 export * from "./conditions";
 export * from "./media";
 export * from "./calendar";
+export * from "./talks";
 export * from "./formations";
 export * from "./ratings";
 export * from "./league";

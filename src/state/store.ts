@@ -43,6 +43,7 @@ import type { BidResponse } from "@/engine";
 import type { AttrKey, CornerRoutine, FreeKickRoutine, TrainingPlan } from "@/engine";
 import { cleanSetPieces } from "@/engine";
 import {
+  applyTeamTalk,
   addFocus as addFocusEngine,
   answerPress as answerPressEngine,
   cancelRequest as cancelRequestEngine,
@@ -52,9 +53,18 @@ import {
   skipPress as skipPressEngine,
   talkToPlayer as talkToPlayerEngine,
   toggleShortlist as toggleShortlistEngine,
-  topUpScouting as topUpScoutingEngine
+  topUpScouting as topUpScoutingEngine,
+  leaders as leadersOf
 } from "@/engine";
-import type { PressOutcome, Position } from "@/engine";
+import type {
+  OppInstruction,
+  PlayerInstruction,
+  PressOutcome,
+  Position,
+  ShoutKind,
+  TalkKind,
+  TalkStage
+} from "@/engine";
 import { loadSave, persistSave } from "./save";
 
 export type Screen =
@@ -85,6 +95,14 @@ interface AppState {
   liveSub: (outId: string, inId: string) => string | null;
   liveMentality: (m: Mentality) => void;
   liveRole: (slot: number, role: RoleId) => void;
+  /** opposition instruction on one of their players (empty object = clear) */
+  setOi: (targetId: string, oi: OppInstruction) => string | null;
+  /** instruction for one of your own players */
+  setPi: (playerId: string, pi: PlayerInstruction) => string | null;
+  /** team talk: moves the dressing room, and the match */
+  teamTalk: (stage: TalkStage, kind: TalkKind) => string | null;
+  /** a touchline shout */
+  shout: (kind: ShoutKind) => void;
   startSecondHalf: () => void;
   skipTo: (to: "ht" | "ft") => void;
   setPlayhead: (m: number) => void;
@@ -250,6 +268,71 @@ export const useGame = create<AppState>()((set, get) => ({
     const roles = [...game.lineup.roles];
     if (side === "home" || side === "away") roles[slot] = role;
     const save = { ...game, lineup: { ...game.lineup, roles }, live: res.live! };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  setOi: (targetId, oi) => {
+    const { game } = get();
+    if (!game?.live) return "No live match.";
+    if (matchOver(game.live)) return "The match is over.";
+    const side = game.live.state.userSide ?? "home";
+    const minute = changeMinute(game.live);
+    const res = addLiveChange(game.live, playersById(game), { minute, kind: "oi", side, targetId, oi });
+    if (res.error) return res.error;
+    const save = { ...game, live: res.live! };
+    set({ game: save });
+    schedulePersist(save);
+    return null;
+  },
+
+  setPi: (playerId, pi) => {
+    const { game } = get();
+    if (!game?.live) return "No live match.";
+    if (matchOver(game.live)) return "The match is over.";
+    const side = game.live.state.userSide ?? "home";
+    const minute = changeMinute(game.live);
+    const res = addLiveChange(game.live, playersById(game), { minute, kind: "pi", side, targetId: playerId, pi });
+    if (res.error) return res.error;
+    const save = { ...game, live: res.live! };
+    set({ game: save });
+    schedulePersist(save);
+    return null;
+  },
+
+  teamTalk: (stage, kind) => {
+    const { game } = get();
+    if (!game?.live) return "No live match.";
+    if (matchOver(game.live)) return "The match is over.";
+    const side = game.live.state.userSide ?? "home";
+    const st = game.live.state;
+    if (st[side].talks[stage]) return "You have already had your say.";
+    const minute = changeMinute(game.live);
+    const players = playersById(game);
+    const res = addLiveChange(game.live, players, { minute, kind: "talk", side, stage, talk: kind });
+    if (res.error) return res.error;
+    // the words land in the dressing room too: morale moves for good
+    const opp = side === "home" ? st.away : st.home;
+    const gf = side === "home" ? st.home.goals : st.away.goals;
+    const ga = side === "home" ? st.away.goals : st.home.goals;
+    void opp;
+    const leaders = new Set(leadersOf(game, game.userClubId).map((p) => p.id));
+    const talked = applyTeamTalk(game, stage, kind, gf, ga, leaders);
+    const save = { ...game, players: talked.players, live: res.live! };
+    set({ game: save });
+    schedulePersist(save);
+    return null;
+  },
+
+  shout: (kind) => {
+    const { game } = get();
+    if (!game?.live) return;
+    if (matchOver(game.live)) return;
+    const side = game.live.state.userSide ?? "home";
+    const minute = changeMinute(game.live);
+    const res = addLiveChange(game.live, playersById(game), { minute, kind: "shout", side, shout: kind });
+    if (res.error) return;
+    const save = { ...game, live: res.live! };
     set({ game: save });
     schedulePersist(save);
   },

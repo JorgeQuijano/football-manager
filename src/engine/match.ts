@@ -16,6 +16,8 @@ import type {
 import { hashSeed, mulberry32, pick, pickWeighted, randInt, type Rng } from "./rng";
 import { T } from "./tuning";
 import { hasTrait } from "./traits";
+import { aiOppInstructions, oiEffect, oiOn, piEffect, piOf, shoutScale, talkDefFor } from "./talks";
+import type { KnockoutOutcome } from "./talks";
 import { CORNER_ROUTINES, FK_ROUTINES, familiarityFactor, familiarityOf } from "./setpieces";
 import {
   attackScore,
@@ -59,11 +61,62 @@ export function staminaAt(s: MatchState, id: string, minute: number): number {
   return Math.min(100, cur + ahead * rate);
 }
 
-/** Morale and legs together — what a player actually brings to this minute. */
-const edge = (s: MatchState, p: Player): number =>
-  moraleEdge(p) * staminaFactor(s.stamina[p.id] ?? 100);
+/** The side a player belongs to, from the match's own pin map. */
+const sideOfPlayer = (s: MatchState, p: Player): MatchSideState =>
+  s.pin[p.id]?.s === 1 ? s.away : s.home;
+
+/** Morale, legs and the words from the bench — what a player brings going forward. */
+const attEdge = (s: MatchState, p: Player): number =>
+  moraleEdge(p) * staminaFactor(s.stamina[p.id] ?? 100) * (1 + (sideOfPlayer(s, p).fire ?? 0));
+
+/** …and what he brings when his side hasn't got the ball. */
+const defEdge = (s: MatchState, p: Player): number => {
+  const side = sideOfPlayer(s, p);
+  return moraleEdge(p) * staminaFactor(s.stamina[p.id] ?? 100) * (1 + (side.shape ?? 0) + (side.fire ?? 0) * 0.4);
+};
+
+/** Opposition instructions on him × his own instructions — read straight off the state. */
+const instrFor = (s: MatchState, p: Player, kind: "shot" | "assist" | "finish" | "defense"): number => {
+  const me = s.pin[p.id]?.s;
+  const mine = me === 1 ? s.away : s.home;
+  const theirs = me === 1 ? s.home : s.away;
+  const oi = oiEffect(oiOn(theirs, p.id));
+  const pi = piEffect(piOf(mine, p.id));
+  if (kind === "shot") return oi.involve * pi.shot;
+  if (kind === "assist") return oi.involve * pi.assist;
+  if (kind === "finish") return oi.quality * pi.shotQuality;
+  return pi.defense;
+};
+
+/**
+ * How much the instructions set AGAINST this side choke its supply: marking and
+ * pressing key players costs the whole team chances, not just those players.
+ */
+const oiPressure = (opp: MatchSideState): number => {
+  const vals = Object.values(opp.oi ?? {});
+  if (!vals.length) return 1;
+  let prod = 1;
+  for (const v of vals) prod *= oiEffect(v).involve;
+  const avg = Math.pow(prod, 1 / vals.length);
+  const share = Math.min(1, vals.length / 11);
+  return Math.max(0.86, Math.min(1.05, 1 - (1 - avg) * share * 1.6));
+};
+
+/** How much a side's instructions raise (or lower) its fouling risk. */
+const foulScaleOf = (side: MatchSideState): number => {
+  let m = side.calm ? 0.85 : 1;
+  const vals = Object.values(side.oi ?? {});
+  if (vals.length) {
+    let prod = 1;
+    for (const oi of vals) prod *= oiEffect(oi).fouls;
+    m *= Math.pow(prod, 1 / vals.length);
+  }
+  return m;
+};
 
 export interface MatchInputs {
+  /** knockout tie: level after 90 means extra time, then penalties */
+  knockout?: boolean;
   round: number;
   homeClub: Club;
   awayClub: Club;
@@ -257,7 +310,14 @@ const buildSide = (
     mentality,
     goals: 0,
     subs: 0,
-    windows: 0
+    windows: 0,
+    oi: {},
+    pi: {},
+    fire: 0,
+    shape: 0,
+    shouts: 0,
+    calm: false,
+    talks: {}
   };
 };
 
@@ -307,6 +367,9 @@ export function startMatch(inp: MatchInputs): MatchState {
   }
   for (const p of inp.homeBench) state.pin[p.id] = { s: 0, pos: p.pos };
   for (const p of inp.awayBench) state.pin[p.id] = { s: 1, pos: p.pos };
+  // the AI reads your team and sets its own instructions (yours start blank)
+  if (inp.userSide !== "home") state.home.oi = aiOppInstructions(inp.awayXI);
+  if (inp.userSide !== "away") state.away.oi = aiOppInstructions(inp.homeXI);
   state.rngState = rng.state;
   // conditions: announce the weather and the referee
   const w = weatherOf(state.cond.weather);
@@ -440,7 +503,8 @@ const possessionPhase = (
       (x) =>
         Math.pow(clamp(opp.coords[x.slot]?.[1] ?? 50, 0, 100) / 100, 1.4) *
         (1 + x.p.attrs.defending / 150) *
-        edge(s, x.p)
+        defEdge(s, x.p) *
+        instrFor(s, x.p, "defense")
     );
     b = inter.slot;
   }
@@ -467,12 +531,14 @@ const resolveChance = (
       (0.5 + x.p.attrs.shooting / 100) *
       ROLE_DEFS[x.role].shot *
       (hasTrait(x.p, "shoots_on_sight") ? 1.25 : 1) *
-      edge(s, x.p)
+      attEdge(s, x.p) *
+      instrFor(s, x.p, "shot")
   );
   const chain = buildChain(atkSide, atk, rng, shooter.slot);
   const gk = dfn.find((x) => x.p.pos === "GK");
-  const finish = roleFinish(shooter.p, shooter.role) * ROLE_DEFS[shooter.role].finish * edge(s, shooter.p);
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) * edge(s, gk.p) : 50;
+  const finish =
+    roleFinish(shooter.p, shooter.role) * ROLE_DEFS[shooter.role].finish * attEdge(s, shooter.p) * instrFor(s, shooter.p, "finish");
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * defEdge(s, gk.p) : 50;
   const eff = conditionEffects(s.cond);
   let pGoal = T.conversionBase * (1 + (finish - 60) / 120) * (1 + (60 - gkSkill) / 160) * eff.conversion;
   pGoal = clamp(pGoal, 0.04, 0.3);
@@ -585,7 +651,8 @@ const resolveChance = (
               x.p.attrs.passing *
               ROLE_DEFS[x.role].assist *
               (hasTrait(x.p, "killer_balls") ? 1.3 : 1) *
-              edge(s, x.p)
+              attEdge(s, x.p) *
+              instrFor(s, x.p, "assist")
           )
         : undefined;
     if (assister) {
@@ -623,9 +690,10 @@ const resolveChance = (
   } else {
     const blockers = dfn.filter((x) => x.p.pos !== "GK");
     const defMean =
-      dfn.reduce((acc, x) => acc + defenseScore(x.p, x.role) * edge(s, x.p), 0) / Math.max(1, dfn.length);
+      dfn.reduce((acc, x) => acc + defenseScore(x.p, x.role) * defEdge(s, x.p) * instrFor(s, x.p, "defense"), 0) /
+      Math.max(1, dfn.length);
     if (blockers.length > 0 && rng() < T.blockShare * eff.turnover * clamp(defMean / 62, 0.6, 1.4)) {
-      const blocker = pickWeighted(rng, blockers, (x) => defenseScore(x.p, x.role) * edge(s, x.p));
+      const blocker = pickWeighted(rng, blockers, (x) => defenseScore(x.p, x.role) * defEdge(s, x.p) * instrFor(s, x.p, "defense"));
       out = "block";
       b = blocker.slot;
       s.ratings[blocker.p.id] = clamp(s.ratings[blocker.p.id] + 0.15, 4, 10);
@@ -709,7 +777,7 @@ const processFoul = (
   );
   const evBefore = s.events.length;
   const effF = conditionEffects(s.cond);
-  if (rng() < T.cardShareOfFouls * effF.cards) {
+  if (rng() < T.cardShareOfFouls * effF.cards * foulScaleOf(committed)) {
     if (rng() < T.redChancePerFoul * (hasTrait(offender.p, "dives_in") ? 1.5 : 1)) {
       leaveSlot(s, committed, offender.slot, m);
       updOf(s, offender.p.id).red = true;
@@ -811,7 +879,7 @@ const resolvePenalty = (
         (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
     );
   const gk = proto(defSide, players).find((x) => x.p.pos === "GK");
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) * edge(s, gk.p) : 50;
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * defEdge(s, gk.p) : 50;
   const pGoal = clamp(
     (T.penaltyGoalBase +
       (taker.p.attrs.shooting - gkSkill) / 300 +
@@ -897,11 +965,11 @@ const resolveFreeKick = (
           ? x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20
           : x.p.attrs.shooting * 0.75 + roleFinish(x.p, x.role) * 0.25) *
         (hasTrait(x.p, "dead_ball") ? 1.4 : 1) *
-        edge(s, x.p)
+        attEdge(s, x.p)
     );
   const dfn = proto(defSide, players);
   const gk = dfn.find((x) => x.p.pos === "GK");
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) * edge(s, gk.p) : 50;
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * defEdge(s, gk.p) : 50;
   // a crossed routine is a headed delivery (corner-like); everything else is a shot
   const contenders = atk.filter((x) => x.p.id !== taker.p.id);
   const header =
@@ -1037,7 +1105,7 @@ const resolveCorner = (
       (x) =>
         (x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20) *
         (hasTrait(x.p, "dead_ball") ? 1.4 : 1) *
-        edge(s, x.p)
+        attEdge(s, x.p)
     );
   const flagX = rng() < 0.5 ? 2 : 98;
   const contenders = atk.filter((x) => x.p.id !== taker.p.id);
@@ -1056,7 +1124,7 @@ const resolveCorner = (
       : taker;
   const dfn = proto(defSide, players);
   const gk = dfn.find((x) => x.p.pos === "GK");
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) * edge(s, gk.p) : 50;
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * defEdge(s, gk.p) : 50;
   const pGoal = clamp(
     T.cornerGoalBase *
       eff.goal *
@@ -1242,8 +1310,9 @@ const minuteStep = (s: MatchState, m: number, rng: Rng, players: Map<string, Pla
   const hRoles = hp.map((x) => x.role);
   const aPlayers = ap.map((x) => x.p);
   const aRoles = ap.map((x) => x.role);
-  const attH = attackStrength(hPlayers, hRoles, s.home.mentality) * T.homeAdvantage;
-  const attA = attackStrength(aPlayers, aRoles, s.away.mentality);
+  // the away side's instructions press the home attackers (and vice versa)
+  const attH = attackStrength(hPlayers, hRoles, s.home.mentality) * T.homeAdvantage * oiPressure(s.away);
+  const attA = attackStrength(aPlayers, aRoles, s.away.mentality) * oiPressure(s.home);
   const defH = defenseStrength(hPlayers, hRoles, s.home.mentality);
   const defA = defenseStrength(aPlayers, aRoles, s.away.mentality);
   const pH = clamp(T.baseChancePerMinute * 2 * (attH / (attH + defA)), 0.02, 0.45);
@@ -1261,7 +1330,10 @@ const minuteStep = (s: MatchState, m: number, rng: Rng, players: Map<string, Pla
 
   const pFoul = (T.foulPerMatch / 90) * conditionEffects(s.cond).fouls;
   if (rng() < pFoul) {
-    const homeCommits = rng() < 0.5;
+    // instructions change who fouls — but the aggression mostly shows up in the book
+    const fh = 1 + (foulScaleOf(s.home) - 1) * 0.35;
+    const fa = 1 + (foulScaleOf(s.away) - 1) * 0.35;
+    const homeCommits = rng() < fh / (fh + fa);
     processFoul(
       s,
       homeCommits ? s.home : s.away,
@@ -1352,7 +1424,7 @@ export function applySubstitution(
 }
 
 /** Wrap the state up into the final MatchResult. Pure; safe to call more than once. */
-export function finalizeMatch(state: MatchState): MatchResult {
+export function finalizeMatch(state: MatchState, outcome?: KnockoutOutcome): MatchResult {
   const s: MatchState = structuredClone(state);
   const rng = mulberry32(s.rngState);
   s.events.push({
@@ -1411,16 +1483,133 @@ export function finalizeMatch(state: MatchState): MatchResult {
     events: s.events,
     ratings: rounded,
     updates: finalUpdates,
-    scorers: s.scorers
+    scorers: s.scorers,
+    ...(outcome && outcome.aet ? { aet: true } : {}),
+    ...(outcome?.pens ? { pens: outcome.pens } : {})
   };
 }
 
-/** One-shot simulation (AI matches) — identical results to split/live runs of the same seed. */
-export function simulateMatch(inp: MatchInputs): MatchResult {
+/** Everyone involved in a match, by id. */
+const playersFor = (inp: MatchInputs): Map<string, Player> => {
   const players = new Map<string, Player>();
   for (const p of [...inp.homeXI, ...inp.homeBench, ...inp.awayXI, ...inp.awayBench]) {
     players.set(p.id, p);
   }
+  return players;
+};
+
+/** The five takers a side would choose: best finishers first. */
+const takersFor = (side: MatchSideState, players: Map<string, Player>): Player[] =>
+  side.slots
+    .filter((id): id is string => !!id)
+    .map((id) => players.get(id))
+    .filter((p): p is Player => !!p)
+    .sort((a, b) => b.attrs.shooting * 0.7 + b.attrs.physical * 0.3 - (a.attrs.shooting * 0.7 + a.attrs.physical * 0.3));
+
+/**
+ * Penalties. Five each, then sudden death; a taker scores when he beats the
+ * keeper (shooting + calm against reflexes and handling).
+ */
+export function shootout(
+  s: MatchState,
+  players: Map<string, Player>,
+  rng: Rng
+): { home: number; away: number; kicks: { clubId: string; name: string; scored: boolean; kick: number }[] } {
+  const homeTakers = takersFor(s.home, players);
+  const awayTakers = takersFor(s.away, players);
+  const homeGk = homeTakers.find((p) => p.pos === "GK") ?? homeTakers[0];
+  const awayGk = awayTakers.find((p) => p.pos === "GK") ?? awayTakers[0];
+  const kicks: { clubId: string; name: string; scored: boolean; kick: number }[] = [];
+  let home = 0;
+  let away = 0;
+  let n = 0;
+  const takeKick = (taker: Player | undefined, keeper: Player | undefined, clubId: string, name: string) => {
+    const skill = taker ? taker.attrs.shooting * 0.75 + taker.attrs.physical * 0.25 : 45;
+    const gloves = keeper ? keeper.attrs.reflexes * 0.6 + keeper.attrs.handling * 0.4 : 50;
+    const p = clamp(0.74 + (skill - gloves) / 320, 0.45, 0.93);
+    void name;
+    return rng() < p;
+  };
+  for (let i = 0; i < 5; i++) {
+    const h = homeTakers[i];
+    kicks.push({ clubId: s.home.clubId, name: h?.name ?? "the taker", scored: takeKick(h, awayGk, s.home.clubId, h?.name ?? ""), kick: kicks.length + 1 });
+    if (kicks[kicks.length - 1].scored) home++;
+    const a = awayTakers[i];
+    kicks.push({ clubId: s.away.clubId, name: a?.name ?? "the taker", scored: takeKick(a, homeGk, s.away.clubId, a?.name ?? ""), kick: kicks.length + 1 });
+    if (kicks[kicks.length - 1].scored) away++;
+    n++;
+    // decided already? (a side cannot catch up with the kicks left)
+    const leftH = Math.max(0, 5 - (i + 1));
+    if (home > away + leftH || away > home + leftH) break;
+  }
+  for (const k of kicks) {
+    s.events.push({
+      minute: s.total + 1,
+      type: "info",
+      text: `Shootout ${k.kick}: ${k.name} ${k.scored ? "scores" : "misses"}.`
+    });
+  }
+  let round = 0;
+  while (home === away && round < 12) {
+    round++;
+    const h = homeTakers[round % Math.max(1, homeTakers.length)];
+    kicks.push({ clubId: s.home.clubId, name: h?.name ?? "the taker", scored: takeKick(h, awayGk, s.home.clubId, h?.name ?? ""), kick: kicks.length + 1 });
+    if (kicks[kicks.length - 1].scored) home++;
+    s.events.push({ minute: s.total + 1, type: "info", text: `Sudden death: ${kicks[kicks.length - 1].name} ${kicks[kicks.length - 1].scored ? "scores" : "misses"}.` });
+    const a = awayTakers[round % Math.max(1, awayTakers.length)];
+    kicks.push({ clubId: s.away.clubId, name: a?.name ?? "the taker", scored: takeKick(a, homeGk, s.away.clubId, a?.name ?? ""), kick: kicks.length + 1 });
+    if (kicks[kicks.length - 1].scored) away++;
+    s.events.push({ minute: s.total + 1, type: "info", text: `Sudden death: ${kicks[kicks.length - 1].name} ${kicks[kicks.length - 1].scored ? "scores" : "misses"}.` });
+  }
+  void n;
+  return { home, away, kicks };
+}
+
+/**
+ * Play out a knockout tie: 90 minutes, extra time if level, penalties if still
+ * level. Returns the final state (with the goals updated) and how it finished.
+ */
+export function resolveKnockout(
+  state: MatchState,
+  players: Map<string, Player>
+): { state: MatchState; outcome: KnockoutOutcome } {
+  let s = advanceTo(state, state.total, players);
+  if (s.home.goals !== s.away.goals) return { state: s, outcome: { aet: false } };
+  const etStart = s.total;
+  s = { ...s, total: s.total + 30 };
+  s.events.push({
+    minute: etStart,
+    type: "info",
+    text: `Level after 90 — extra time at ${s.home.short}'s ground.`
+  });
+  s = advanceTo(s, s.total, players);
+  if (s.home.goals !== s.away.goals) {
+    s.events.push({
+      minute: s.total,
+      type: "full",
+      text: `${s.home.short} ${s.home.goals}–${s.away.goals} ${s.away.short} after extra time.`
+    });
+    return { state: s, outcome: { aet: true } };
+  }
+  const rng2 = mulberry32(s.rngState);
+  const pens = shootout(s, players, rng2);
+  s.rngState = rng2.state;
+  const winner = pens.home > pens.away ? s.home : s.away;
+  s.events.push({
+    minute: s.total + 1,
+    type: "full",
+    text: `${winner.name} win the shootout ${Math.max(pens.home, pens.away)}–${Math.min(pens.home, pens.away)}.`
+  });
+  return { state: s, outcome: { aet: true, pens: { home: pens.home, away: pens.away } } };
+}
+
+/** One-shot simulation (AI matches) — identical results to split/live runs of the same seed. */
+export function simulateMatch(inp: MatchInputs): MatchResult {
+  const players = playersFor(inp);
   const s = startMatch(inp);
+  if (inp.knockout) {
+    const { state, outcome } = resolveKnockout(s, players);
+    return finalizeMatch(state, outcome);
+  }
   return finalizeMatch(advanceTo(s, s.total, players));
 }

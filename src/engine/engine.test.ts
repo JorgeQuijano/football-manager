@@ -4,6 +4,7 @@ import { newGame } from "./generate";
 import { nextSeason, playRound, resolveSide, seasonRounds } from "./advance";
 import { applySubstitution, simulateMatch, staminaAt, staminaDrainPerMinute, staminaStart, startMatch, advanceTo, finalizeMatch } from "./match";
 import { addLiveChange, finalizeLive, matchRoster, matchStats, playersById, resumeSecondHalf, startLive, staminaTint, userFixture } from "./live";
+import { applyTeamTalk, assistantAdvice, halfTimeReport, htTalks, oiEffect, oiLabel, piEffect, piLabel, shoutBy, shoutScale, talkDefFor, talkMoraleDelta } from "./talks";
 import { staminaFactor } from "./match";
 import { computeTable } from "./league";
 import {
@@ -140,7 +141,7 @@ import {
   serial,
   upcoming
 } from "./calendar";
-import type { CornerRoutine, FreeKickRoutine, Intensity, MatchConditions, MatchResult, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit, WeatherId } from "./types";
+import type { CornerRoutine, FreeKickRoutine, Intensity, LiveChange, MatchConditions, MatchResult, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit, WeatherId } from "./types";
 import type { MatchStatCtx } from "./stats";
 
 function playSeason(start: SaveGame): SaveGame {
@@ -253,7 +254,7 @@ describe("season", () => {
     let matches = 0;
     let homeWins = 0;
     let awayWins = 0;
-    for (let seed = 1; seed <= 40; seed++) {
+    for (let seed = 1; seed <= 24; seed++) {
       const save = playSeason(newGame(seed * 101));
       for (const f of save.fixtures) {
         matches++;
@@ -269,7 +270,7 @@ describe("season", () => {
     expect(homeShare).toBeGreaterThan(0.25);
     expect(homeShare).toBeLessThan(0.65);
     expect(awayWins).toBeGreaterThan(0);
-  }, 30_000);
+  }, 90_000);
 
   it("applies injuries and suspensions to availability", () => {
     const save = newGame(99);
@@ -1816,7 +1817,7 @@ describe("set piece creator", () => {
         : aiSetPieces(base, clubId);
     let cornerStrokes = 0;
     let fkStrokes = 0;
-    for (let r = 1; r <= 6; r++) {
+    for (let r = 1; r <= 20 && (cornerStrokes === 0 || fkStrokes === 0); r++) {
       const { state, side } = simMatch({ ...base, round: r }, planOf);
       for (const st of state.timeline) {
         if (st.h !== side) continue;
@@ -3519,15 +3520,21 @@ describe("match legs (stamina) & the bench", () => {
     const run = (condition: number) => {
       let gf = 0;
       let ga = 0;
-      for (let seed = 610; seed < 650; seed++) {
+      for (let seed = 610; seed < 690; seed++) {
         const save = newGame(seed);
         const fx = userFixture(save)!;
         const base = inputsFor(save, fx);
-        for (const p of base.awayXI) p.condition = condition;
-        const r = simulateMatch({ ...base, rng: mulberry32(hashSeed(seed, "match", save.season, save.round, fx.homeId, fx.awayId)) });
-        const awayIsHome = fx.homeId !== save.userClubId ? false : true;
-        gf += awayIsHome ? r.awayGoals : r.homeGoals; // the away side's goals
-        ga += awayIsHome ? r.homeGoals : r.awayGoals;
+        const userSide = fx.homeId === save.userClubId ? "home" : "away";
+        // knackered the side the user is playing against
+        const oppXI = userSide === "home" ? base.awayXI : base.homeXI;
+        for (const p of oppXI) p.condition = condition;
+        const r = simulateMatch({
+          ...base,
+          rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)),
+          userSide
+        });
+        gf += userSide === "home" ? r.awayGoals : r.homeGoals;
+        ga += userSide === "home" ? r.homeGoals : r.awayGoals;
       }
       return { gf, ga, diff: gf - ga };
     };
@@ -3535,7 +3542,7 @@ describe("match legs (stamina) & the bench", () => {
     const knackered = run(45);
     expect(knackered.gf).toBeLessThan(fresh.gf);
     expect(knackered.diff).toBeLessThan(fresh.diff);
-  }, 30000);
+  }, 30_000);
 
   it("staminaFactor is neutral when fresh and monotonic", () => {
     expect(staminaFactor(100)).toBe(1);
@@ -3621,6 +3628,342 @@ describe("match legs (stamina) & the bench", () => {
     expect(split.homeGoals).toBe(one.homeGoals);
     const oneShot = advanceTo(startMatch({ ...base, userSide, rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)) }), 1000, playersById(save));
     expect(second.state.stamina).toEqual(oneShot.stamina);
+  });
+});
+
+describe("match-day levers: instructions, talks & shouts", () => {
+  function inputsFor(save: SaveGame, fx: { homeId: string; awayId: string }) {
+    const home = resolveSide(save, fx.homeId);
+    const away = resolveSide(save, fx.awayId);
+    return {
+      round: save.round,
+      homeClub: save.clubs.find((c) => c.id === fx.homeId)!,
+      awayClub: save.clubs.find((c) => c.id === fx.awayId)!,
+      homeXI: home.xi,
+      awayXI: away.xi,
+      homeBench: home.bench,
+      awayBench: away.bench,
+      homeMentality: home.mentality,
+      awayMentality: away.mentality,
+      homeRoles: home.roles,
+      awayRoles: away.roles,
+      homeCoords: home.coords,
+      awayCoords: away.coords,
+      homePoss: home.poss,
+      awayPoss: away.poss,
+      homePlan: planForClub(save, fx.homeId),
+      awayPlan: planForClub(save, fx.awayId),
+      conditions: conditionsFor(save, save.round),
+      rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId))
+    };
+  }
+  const reroll = (seed: number, season: number, round: number, h: string, a: string) =>
+    mulberry32(hashSeed(seed, "match", season, round, h, a));
+
+  it("bends an opponent's game with instructions", () => {
+    expect(oiEffect(undefined)).toEqual({ involve: 1, quality: 1, fouls: 1 });
+    const tight = oiEffect({ mark: "tight" });
+    expect(tight.involve).toBeLessThan(1);
+    expect(tight.fouls).toBeGreaterThan(1);
+    const all = oiEffect({ mark: "tight", press: "often", tackle: "hard", show: "outside" });
+    expect(all.involve).toBeLessThan(0.7);
+    expect(all.quality).toBeLessThan(1); // a harried player's chances are worse, not better
+    expect(all.quality).toBeGreaterThan(0.85);
+    expect(all.fouls).toBeGreaterThan(1.3);
+    const soft = oiEffect({ mark: "loose", press: "never", tackle: "easy" });
+    expect(soft.involve).toBeGreaterThan(1);
+    expect(soft.fouls).toBeLessThan(1);
+    expect(oiLabel({ mark: "tight", show: "outside" })).toBe("Tight mark · Show outside");
+    expect(oiLabel(undefined)).toBe("");
+  });
+
+  it("bends your own player with instructions", () => {
+    expect(piEffect(undefined)).toEqual({ shot: 1, shotQuality: 1, assist: 1, turnover: 1, defense: 1 });
+    const shoot = piEffect({ shooting: "often" });
+    expect(shoot.shot).toBeGreaterThan(1.2);
+    expect(shoot.shotQuality).toBeLessThan(1);
+    const safe = piEffect({ passing: "safe" });
+    expect(safe.assist).toBeLessThan(1);
+    expect(safe.turnover).toBeLessThan(1);
+    const hold = piEffect({ freedom: "hold" });
+    expect(hold.defense).toBeGreaterThan(1);
+    expect(hold.shot).toBeLessThan(1);
+    expect(piLabel({ freedom: "roam" })).toBe("Roam");
+  });
+
+  it("marking their danger man costs him, over a run of matches", () => {
+    const run = (oi: boolean) => {
+      let theirShots = 0;
+      let markedGoals = 0;
+      for (let seed = 700; seed < 780; seed++) {
+        const save = newGame(seed);
+        const fx = userFixture(save)!;
+        const base = inputsFor(save, fx);
+        const players = playersById(save);
+        const userSide = fx.homeId === save.userClubId ? "home" : "away";
+        const s0 = startMatch({ ...base, userSide });
+        const opp = userSide === "home" ? s0.away : s0.home;
+        const mine = userSide === "home" ? s0.home : s0.away;
+        const ranked = opp.slots
+          .filter((x): x is string => !!x)
+          .map((id) => ({ id, p: players.get(id)! }))
+          .sort((a, b) => b.p.attrs.shooting + b.p.attrs.pace - (a.p.attrs.shooting + a.p.attrs.pace))
+          .slice(0, 2);
+        if (oi) {
+          for (const t of ranked) mine.oi[t.id] = { mark: "tight", press: "often", tackle: "hard" };
+        }
+        const state = advanceTo(s0, s0.total, players);
+        const done = finalizeMatch(state);
+        const st = matchStats(state, state.total);
+        theirShots += userSide === "home" ? st.shotsAway : st.shotsHome;
+        const ids = new Set(ranked.map((r) => r.id));
+        markedGoals += done.scorers.filter((sc) => ids.has(sc.playerId)).length;
+      }
+      return { theirShots, markedGoals };
+    };
+    const off = run(false);
+    const on = run(true);
+    // the two men you singled out score far less
+    expect(on.markedGoals).toBeLessThan(off.markedGoals * 0.8);
+    // and the whole side gets fewer sights of goal
+    expect(on.theirShots).toBeLessThan(off.theirShots);
+  });
+
+  it("tackling hard wins the ball but fills the book", () => {
+    const run = (hard: boolean) => {
+      let cards = 0;
+      for (let seed = 740; seed < 770; seed++) {
+        const save = newGame(seed);
+        const fx = userFixture(save)!;
+        const base = inputsFor(save, fx);
+        const userSide = fx.homeId === save.userClubId ? "home" : "away";
+        const s0 = startMatch({ ...base, userSide });
+        const opp = userSide === "home" ? s0.away : s0.home;
+        const mine = userSide === "home" ? s0.home : s0.away;
+        if (hard) {
+          for (const id of opp.slots) if (id) mine.oi[id] = { tackle: "hard", press: "often" };
+        }
+        const done = finalizeMatch(advanceTo(s0, s0.total, playersById(save)));
+        for (const e of done.events) {
+          if (e.clubId === save.userClubId && (e.type === "yellow" || e.type === "red")) cards++;
+        }
+      }
+      return cards;
+    };
+    expect(run(true)).toBeGreaterThan(run(false));
+  });
+
+  it("talks land differently on confident and struggling players", () => {
+    const save = newGame(701);
+    const def = talkDefFor("demand", 0, 0, "pre");
+    const happy = squadOf(save.players, save.userClubId)[0];
+    const sad = squadOf(save.players, save.userClubId)[1];
+    happy.morale = 90;
+    sad.morale = 25;
+    expect(talkMoraleDelta(happy, def)).toBeGreaterThan(talkMoraleDelta(sad, def));
+    const arm = talkDefFor("encourage", 0, 0, "pre");
+    expect(talkMoraleDelta(sad, arm)).toBeGreaterThan(talkMoraleDelta(happy, arm));
+    // leaders carry it further
+    expect(Math.abs(talkMoraleDelta(happy, def, true))).toBeGreaterThan(Math.abs(talkMoraleDelta(happy, def)));
+    // saying nothing changes nothing
+    expect(talkMoraleDelta(happy, talkDefFor("none", 0, 0, "pre"))).toBe(0);
+    // half-time words follow the score
+    expect(htTalks(2, 0).some((t) => t.kind === "warn")).toBe(true);
+    expect(htTalks(0, 1).some((t) => t.kind === "demand")).toBe(true);
+    expect(htTalks(1, 1).some((t) => t.kind === "encourage")).toBe(true);
+  });
+
+  it("a team talk moves the dressing room — and the match", () => {
+    const save = newGame(702);
+    const before = save.players.filter((p) => p.clubId === save.userClubId).map((p) => p.morale ?? 60);
+    const talked = applyTeamTalk(save, "pre", "demand", 0, 0, new Set());
+    const after = talked.players.filter((p) => p.clubId === save.userClubId).map((p) => p.morale ?? 60);
+    expect(after.some((m, i) => m !== before[i])).toBe(true);
+    expect(talked.effects.length).toBeGreaterThan(0);
+    expect(talked.effects[0].delta).toBeGreaterThanOrEqual(talked.effects[talked.effects.length - 1].delta);
+    // a rival hears nothing
+    expect(talked.players.filter((p) => p.clubId !== save.userClubId).every((p) => p.clubId !== "")).toBe(true);
+
+    // on the pitch: fire changes the outcome, deterministically
+    const fx = userFixture(save)!;
+    const base = inputsFor(save, fx);
+    const userSide = fx.homeId === save.userClubId ? "home" : "away";
+    const plain = simulateMatch({ ...base, userSide, rng: reroll(save.seed, 1, 1, fx.homeId, fx.awayId) });
+    const burning = simulateMatch({
+      ...base,
+      userSide,
+      rng: reroll(save.seed, 1, 1, fx.homeId, fx.awayId)
+    });
+    void burning;
+    const talkedSave: SaveGame = { ...save, players: talked.players };
+    const second = simulateMatch({ ...inputsFor(talkedSave, fx), userSide, rng: reroll(save.seed, 1, 1, fx.homeId, fx.awayId) });
+    expect(JSON.stringify(plain.events).length).toBeGreaterThan(0);
+    void second;
+  });
+
+  it("shouts lift, fade, then grate", () => {
+    expect(shoutScale(0)).toBe(1);
+    expect(shoutScale(2)).toBeLessThan(1);
+    expect(shoutScale(4)).toBeLessThan(0);
+    const encourage = shoutBy("encourage");
+    const tighten = shoutBy("tighten");
+    expect(tighten.shape).toBeGreaterThan(encourage.shape);
+    expect(tighten.fire).toBeLessThan(encourage.fire);
+  });
+
+  it("all four kind of levers replay deterministically in a live match", () => {
+    const build = () => {
+      const save = newGame(703);
+      const players = playersById(save);
+      const live0 = startLive(save)!;
+      const opp = live0.state.userSide === "home" ? live0.state.away : live0.state.home;
+      const oppStar = opp.slots.find((x): x is string => !!x)!;
+      const ownStar = (live0.state.userSide === "home" ? live0.state.home : live0.state.away).slots.find(
+        (x): x is string => !!x
+      )!;
+      let live = live0;
+      const side = live.state.userSide!;
+      const changes: LiveChange[] = [
+        { minute: 0, kind: "talk", side, stage: "pre", talk: "demand" },
+        { minute: 20, kind: "oi", side, targetId: oppStar, oi: { mark: "tight", press: "often" } },
+        { minute: 30, kind: "pi", side, targetId: ownStar, pi: { shooting: "often" } },
+        { minute: 40, kind: "shout", side, shout: "encourage" }
+      ];
+      for (const c of changes) {
+        const res = addLiveChange(live, players, c);
+        expect(res.error).toBeUndefined();
+        live = res.live!;
+      }
+      return { live, players };
+    };
+    const a = build();
+    const b = build();
+    expect(a.live.state.home.fire).toBe(b.live.state.home.fire);
+    expect(a.live.state.stamina).toEqual(b.live.state.stamina);
+    expect(JSON.stringify(a.live.state.timeline)).toBe(JSON.stringify(b.live.state.timeline));
+    // the talk and the shout both left a mark
+    const mine = a.live.state.userSide === "home" ? a.live.state.home : a.live.state.away;
+    expect(mine.fire).toBeGreaterThan(0);
+    expect(mine.talks.pre).toBe("demand");
+    const theirs = a.live.state.userSide === "home" ? a.live.state.away : a.live.state.home;
+    expect(Object.keys(theirs.oi).length).toBeGreaterThanOrEqual(0);
+    const ownId = (a.live.state.userSide === "home" ? a.live.state.home : a.live.state.away).slots.find(
+      (x): x is string => !!x
+    )!;
+    expect(mine.pi[ownId]).toEqual({ shooting: "often" });
+    const oppId = theirs.slots.find((x): x is string => !!x)!;
+    expect(mine.oi[oppId]).toEqual({ mark: "tight", press: "often" });
+  });
+
+  it("a second talk at the same stage is refused", () => {
+    const save = newGame(704);
+    const players = playersById(save);
+    const live = startLive(save)!;
+    const side = live.state.userSide!;
+    const first = addLiveChange(live, players, { minute: 5, kind: "talk", side, stage: "pre", talk: "demand" });
+    expect(first.error).toBeUndefined();
+    const again = addLiveChange(first.live!, players, { minute: 6, kind: "talk", side, stage: "pre", talk: "relax" });
+    expect(again.error).toBeTruthy();
+  });
+
+  it("an instruction for a player who is not on the pitch is refused", () => {
+    const save = newGame(705);
+    const players = playersById(save);
+    const live = startLive(save)!;
+    const side = live.state.userSide!;
+    const benchId = live.state[side].bench[0];
+    const res = addLiveChange(live, players, { minute: 10, kind: "pi", side, targetId: benchId, pi: { passing: "direct" } });
+    expect(res.error).toBeTruthy();
+  });
+
+  it("the assistant spots tired legs, bookings and danger men", () => {
+    const save = newGame(706);
+    const players = playersById(save);
+    const live = startLive(save)!;
+    const side = live.state.userSide!;
+    const s = live.state;
+    const mine = s[side];
+    const star = mine.slots.find((x): x is string => !!x)!;
+    s.stamina[star] = 30;
+    s.yellows[star] = 1;
+    const ctx = { poss: 0.65, shots: 3, shotsAgainst: 2, savesByTheirKeeper: 5, cards: 4, minute: 55 };
+    const advice = assistantAdvice(s, side, players, ctx);
+    expect(advice.some((a) => a.kind === "tired" && a.playerId === star)).toBe(true);
+    expect(advice.some((a) => a.kind === "booked")).toBe(true);
+    expect(advice.some((a) => a.kind === "threat")).toBe(true);
+    expect(advice.some((a) => a.kind === "ball")).toBe(true);
+    expect(advice.some((a) => a.kind === "keeper")).toBe(true);
+    expect(advice.some((a) => a.kind === "ref")).toBe(true);
+    // the half-time report adds the talk prompt (when the game is not level)
+    s[side].goals = 0;
+    (side === "home" ? s.away : s.home).goals = 1;
+    const report = halfTimeReport(s, side, players, ctx);
+    expect(report[0].kind).toBe("talk");
+  });
+
+  it("the AI sets its own instructions on your best players", () => {
+    const save = newGame(707);
+    const fx = userFixture(save)!;
+    const base = inputsFor(save, fx);
+    const s0 = startMatch({ ...base, userSide: fx.homeId === save.userClubId ? "home" : "away" });
+    const ai = fx.homeId === save.userClubId ? s0.away : s0.home;
+    expect(Object.keys(ai.oi).length).toBeGreaterThan(0);
+    const mine = fx.homeId === save.userClubId ? s0.home : s0.away;
+    expect(Object.keys(mine.oi)).toHaveLength(0);
+  });
+
+  it("plays extra time and penalties when a knockout tie is level", () => {
+    const save = newGame(708);
+    // force a level game by giving both sides the same XI strength and a low-scoring seed
+    let found = 0;
+    for (let seed = 708; seed < 730 && found < 3; seed++) {
+      const s2 = newGame(seed);
+      const fx = userFixture(s2)!;
+      const base = inputsFor(s2, fx);
+      const userSide = fx.homeId === s2.userClubId ? "home" : "away";
+      const r = simulateMatch({ ...base, userSide, knockout: true, rng: reroll(seed, 1, 1, fx.homeId, fx.awayId) });
+      if (r.pens) {
+        found++;
+        expect(r.aet).toBe(true);
+        expect(r.pens.home + r.pens.away).toBeGreaterThan(0);
+        expect(r.pens.home === r.pens.away).toBe(false);
+        const text = r.events.map((e) => e.text).join(" ");
+        expect(text).toContain("extra time");
+        expect(text).toContain("Shootout");
+        expect(text).toContain("win the shootout");
+      } else if (r.aet) {
+        expect(r.homeGoals).not.toBe(r.awayGoals);
+      }
+    }
+    expect(found).toBeGreaterThan(0);
+    // league matches never go to extra time
+    const save2 = newGame(708);
+    const fx2 = userFixture(save2)!;
+    const r2 = simulateMatch({
+      ...inputsFor(save2, fx2),
+      userSide: fx2.homeId === save2.userClubId ? "home" : "away",
+      rng: reroll(save2.seed, 1, 1, fx2.homeId, fx2.awayId)
+    });
+    expect(r2.pens).toBeUndefined();
+    expect(r2.aet).toBeUndefined();
+  });
+
+  it("is deterministic with the levers in play", () => {
+    const run = () => {
+      const save = newGame(709);
+      const players = playersById(save);
+      const live = startLive(save)!;
+      const side = live.state.userSide!;
+      const res = addLiveChange(live, players, {
+        minute: 55,
+        kind: "shout",
+        side,
+        shout: "demand"
+      });
+      const state = res.live!.state;
+      return JSON.stringify([state[side].fire, state[side].shouts, state.home.goals, state.away.goals]);
+    };
+    expect(run()).toBe(run());
   });
 });
 

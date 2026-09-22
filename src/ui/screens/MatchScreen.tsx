@@ -10,7 +10,12 @@ import type {
   TraitId
 } from "@/engine";
 import {
+  FT_TALKS,
+  PRE_TALKS,
+  assistantAdvice,
   decideIntent,
+  halfTimeReport,
+  htTalks,
   hashSeed,
   motionFor,
   mulberry32,
@@ -37,6 +42,7 @@ import {
 } from "@/components/ui/sheet";
 import { useGame } from "@/state/store";
 import { posChip } from "@/ui/format";
+import { InstructionsPanel, LeverTabs, Nudges, OppositionPanel, TalkPanel } from "@/ui/MatchLevers";
 import { drawFrame, slotScreen, type Frame, type FramePlayer } from "@/ui/matchPitch";
 
 /** A little row of dots: filled = used. */
@@ -108,6 +114,10 @@ function LiveMatchScreen() {
   const live = useGame((s) => s.game!.live)!;
   const finishMatch = useGame((s) => s.finishMatch);
   const liveSub = useGame((s) => s.liveSub);
+  const setOi = useGame((s) => s.setOi);
+  const setPi = useGame((s) => s.setPi);
+  const teamTalk = useGame((s) => s.teamTalk);
+  const shout = useGame((s) => s.shout);
   const liveMentality = useGame((s) => s.liveMentality);
   const liveRole = useGame((s) => s.liveRole);
   const startSecondHalf = useGame((s) => s.startSecondHalf);
@@ -132,6 +142,7 @@ function LiveMatchScreen() {
   const [pendingOut, setPendingOut] = useState<string | null>(null);
   const [subErr, setSubErr] = useState<string | null>(null);
   const [expandedSlot, setExpandedSlot] = useState<number | null>(null);
+  const [lever, setLever] = useState<"subs" | "instructions" | "opposition" | "talk">("subs");
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
@@ -880,9 +891,58 @@ function LiveMatchScreen() {
   }, [ft, userPlayers]);
 
   const side = st[userSide];
+  const benchPlayers = useMemo(() => new Map(game.players.map((p) => [p.id, p] as const)), [game.players]);
+  const theirSide = st[userSide === "home" ? "away" : "home"];
   const byId = (id: string | null | undefined) =>
     id ? game.players.find((p) => p.id === id) : undefined;
   const possPct = Math.round(stats.possHome * 100);
+  // the assistant keeps an eye on legs, bookings and their danger men
+  const advice = useMemo(() => {
+    const isHome = userSide === "home";
+    const isMine = (h: number, a: number) => (isHome ? h : a);
+    const saves = Math.max(0, isMine(stats.onTargetAway, stats.onTargetHome) - isMine(st.away.goals, st.home.goals));
+    const cards = st.events.filter((e) => e.type === "yellow" || e.type === "red").length;
+    return assistantAdvice(st, userSide, benchPlayers, {
+      poss: isHome ? stats.possHome : 1 - stats.possHome,
+      shots: isMine(stats.shotsHome, stats.shotsAway),
+      shotsAgainst: isMine(stats.shotsAway, stats.shotsHome),
+      savesByTheirKeeper: saves,
+      cards,
+      minute: ui.minute
+    });
+  }, [st, stats, ui.minute, userSide, benchPlayers]);
+  const htReport = useMemo(() => {
+    if (!htReady && ui.minute < 45) return [];
+    const isHome = userSide === "home";
+    const isMine = (h: number, a: number) => (isHome ? h : a);
+    const cards = st.events.filter((e) => e.type === "yellow" || e.type === "red").length;
+    const saves = Math.max(0, isMine(stats.onTargetAway, stats.onTargetHome) - isMine(st.away.goals, st.home.goals));
+    return halfTimeReport(st, userSide, benchPlayers, {
+      poss: isHome ? stats.possHome : 1 - stats.possHome,
+      shots: isMine(stats.shotsHome, stats.shotsAway),
+      shotsAgainst: isMine(stats.shotsAway, stats.shotsHome),
+      savesByTheirKeeper: saves,
+      cards,
+      minute: Math.max(ui.minute, 45)
+    });
+  }, [st, stats, ui.minute, userSide, benchPlayers, htReady]);
+  const talkOptions = useMemo(() => {
+    if (st[userSide].talks.pre === undefined && ui.minute <= 15 && !ftReady) return PRE_TALKS;
+    if (st[userSide].talks.ht === undefined && (ui.minute >= 45 || htReady)) {
+      const opp = userSide === "home" ? st.away : st.home;
+      void opp;
+      return htTalks(side.goals, theirSide.goals);
+    }
+    if (ftReady && st[userSide].talks.ft === undefined) return FT_TALKS;
+    return null;
+  }, [st, ui.minute, userSide, side.goals, theirSide.goals, htReady, ftReady]);
+  const talkStage: "pre" | "ht" | "ft" | null = !talkOptions
+    ? null
+    : talkOptions === PRE_TALKS
+      ? "pre"
+      : talkOptions === FT_TALKS
+        ? "ft"
+        : "ht";
   // who is on, who is left on the bench, who has already been used
   const roster = matchRoster(st, userSide);
   const cameOnAt = new Map(roster.cameOn.map((x) => [x.id, x.minute] as const));
@@ -949,6 +1009,37 @@ function LiveMatchScreen() {
                 Poss {Math.round(halfStats.possHome * 100)}% · Shots {halfStats.shotsHome}–
                 {halfStats.shotsAway} · Corners {halfStats.cornersHome}–{halfStats.cornersAway}
               </div>
+              {htReport.length > 0 && (
+                <ul className="mt-3 space-y-1 text-left" data-testid="ht-report">
+                  {htReport.slice(0, 3).map((a, i) => (
+                    <li key={`${a.kind}-${i}`} className="flex items-start gap-1.5 text-[11px] leading-snug">
+                      <span className="mt-0.5 text-[#FFB020]">◆</span>
+                      <span>{a.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {talkStage === "ht" && talkOptions && (
+                <div className="mt-3 space-y-1.5 text-left" data-testid="ht-talks">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Team talk
+                  </div>
+                  {talkOptions.map((o) => (
+                    <button
+                      key={o.kind}
+                      data-testid={`ht-talk-${o.kind}`}
+                      onClick={() => {
+                        const err = teamTalk("ht", o.kind);
+                        setSubErr(err);
+                        afterLiveChange();
+                      }}
+                      className="min-h-11 w-full rounded-xl border border-border bg-card px-3 py-2 text-left text-[12px] font-semibold"
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="mt-3 grid gap-2">
                 <Button
                   data-testid="ht-changes"
@@ -985,11 +1076,38 @@ function LiveMatchScreen() {
               <div className="mt-1 text-2xl font-extrabold tnum">
                 {st.home.short} {st.home.goals}–{st.away.goals} {st.away.short}
               </div>
+              {(ft?.aet || ft?.pens) && (
+                <div className="mt-1 text-[11px] font-bold" data-testid="ft-decided">
+                  {ft?.pens
+                    ? `After extra time · ${ft.pens.home}–${ft.pens.away} on penalties`
+                    : "Decided in extra time"}
+                </div>
+              )}
               <div className="mt-1 text-[10px] font-semibold text-muted-foreground" data-testid="ft-conditions">
                 {weatherOf(st.cond.weather).label} · Ref {refOf(st.cond.ref).name} · Off {stats.offsideHome}–
                 {stats.offsideAway}
                 {stats.varHome + stats.varAway > 0 ? ` · VAR ×${stats.varHome + stats.varAway}` : ""}
               </div>
+              {talkStage === "ft" && talkOptions && (
+                <div className="mt-3 space-y-1.5 text-left" data-testid="ft-talks">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Post-match
+                  </div>
+                  {talkOptions.map((o) => (
+                    <button
+                      key={o.kind}
+                      data-testid={`ft-talk-${o.kind}`}
+                      onClick={() => {
+                        const err = teamTalk("ft", o.kind);
+                        setSubErr(err);
+                      }}
+                      className="min-h-11 w-full rounded-xl border border-border bg-card px-3 py-2 text-left text-[12px] font-semibold"
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {performers.length > 0 && (
                 <ul className="mt-2 space-y-1 text-left">
                   {performers.map(([id, rating]) => {
@@ -1100,6 +1218,59 @@ function LiveMatchScreen() {
             </SheetTitle>
           </SheetHeader>
           <div className="max-h-[66vh] space-y-4 overflow-y-auto px-4 pb-6 pt-1" data-testid="ch-sheet">
+            <LeverTabs value={lever} onChange={setLever} badge={advice.length} />
+            <Nudges advice={advice} />
+
+            {lever === "instructions" && (
+              <InstructionsPanel
+                side={side}
+                byId={byId}
+                values={side.pi ?? {}}
+                onChange={(id, pi) => {
+                  const err = setPi(id, pi);
+                  setSubErr(err);
+                  afterLiveChange();
+                }}
+              />
+            )}
+
+            {lever === "opposition" && (
+              <OppositionPanel
+                theirSlots={theirSide.slots}
+                theirPoss={theirSide.poss}
+                byId={byId}
+                values={side.oi ?? {}}
+                suggestionId={advice.find((a) => a.kind === "threat")?.playerId}
+                onChange={(id, oi) => {
+                  const err = setOi(id, oi);
+                  setSubErr(err);
+                  afterLiveChange();
+                }}
+              />
+            )}
+
+            {lever === "talk" && (
+              <TalkPanel
+                stage={talkStage}
+                options={talkOptions ?? []}
+                onTalk={(stage, kind) => {
+                  const err = teamTalk(stage, kind);
+                  setSubErr(err);
+                  afterLiveChange();
+                }}
+                shout={(kind) => {
+                  shout(kind);
+                  afterLiveChange();
+                }}
+                shoutsUsed={side.shouts ?? 0}
+                fire={side.fire ?? 0}
+                shape={side.shape ?? 0}
+                done={{ pre: side.talks?.pre, ht: side.talks?.ht, ft: side.talks?.ft }}
+              />
+            )}
+
+            {lever === "subs" && (
+              <>
             <div className="rounded-xl border border-border bg-card px-3 py-2 text-[11px] font-semibold text-muted-foreground tnum">
               Subs {side.subs}/{T.maxSubs} · Windows {side.windows}/{T.subWindowsMax} (half time
               always free)
@@ -1330,6 +1501,8 @@ function LiveMatchScreen() {
                 })}
               </div>
             </div>
+              </>
+            )}
           </div>
         </SheetContent>
       </Sheet>
