@@ -631,3 +631,20 @@ A strong fit moves every squad member **+5** (leaders +6), even **+2**, risky **
 `bigMatchFor` returns a label + one-line stakes read; the Home next-match card wears it, and it's **symmetric** — the opposition feel the pressure too. In the engine, `MatchState.big` multiplies each player's contribution: **−1.5%** for the young (under 22) or the anxious (morale < 45), **+2%** for leaders and the confident (morale ≥ 75), neutral otherwise (`bigMatchEdge`). Friendlies never count.
 
 All three are deterministic: talks and meetings are seeded off `season × round × id` and everything the manager does lands in the save, so the same seed replays identically. The pre-match talks and shouts of v0.23 keep their own multipliers — motivation is what you do between matches.
+
+## 34. Discipline: walking the tightrope (`discipline.ts`)
+
+Cards now have consequences beyond the sending-off.
+
+**Accumulation bans** — a season's yellows (`Player.yellows`, reset each pre-season) are counted in blocks of **five**: the 5th booking is a **one-match ban**, the 10th another, and so on (`banForCrossing`). The engine checks the crossing after every match — for every club, not just yours, so AI sides lose players too.
+
+**The warning before it** — the 4th booking (and the 9th) puts a note in the inbox: *one booking from a ban*. The player sheet says the same thing under **Cards** (`yellowBanLine`), and the squad list tags him **· 1 yellow from a ban**. `onTheEdge(players, clubId)` lists everyone walking the rope, sorted by how deep they already are.
+
+**Different reds, different bans** — the match engine now tags *why* a player went (`PlayerUpdate.redKind`):
+
+- **second yellow** — one match (he was already going off)
+- **straight red** — **two matches** ("reckless lunge"), announced with its own news line
+
+**Serving** — the existing rule does the rest: a suspended player can't be picked — each match he doesn't play burns one week off the ban (`Player.suspension`). Only **your** players generate inbox items; the rest of the division collects its bans quietly.
+
+**Reading it in the app** — squad list: `· suspended` / `· 1 yellow from a ban`; player sheet: the Cards stat, the ban line and the remaining matches out.

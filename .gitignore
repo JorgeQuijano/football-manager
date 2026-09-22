@@ -5,3 +5,5 @@ coverage
 screenshots
 *.local
 .DS_Store
+
+stats.json

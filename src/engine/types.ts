@@ -388,6 +388,8 @@ export interface PlayerUpdate {
   assists: number;
   yellow: number;
   red: boolean;
+  /** why he went: a second booking or a straight red — different bans (engine/discipline.ts) */
+  redKind?: "straight" | "second";
   injuredWeeks: number; // if > 0, newly injured
   conditionLoss: number;
 }

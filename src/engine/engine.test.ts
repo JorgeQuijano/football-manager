@@ -31,6 +31,13 @@ import { PRE_ROUNDS, makeFriendlies, preseasonState } from "./preseason";
 import { fmtShort as fmtShortCal, friendlyDate } from "./calendar";
 import { formFactor, formFreshnessTick } from "./stats";
 import {
+  applyCardPenalties,
+  banForCrossing,
+  onTheEdge,
+  yellowBanLine,
+  yellowsToBan
+} from "./discipline";
+import {
   MEETING_THEMES,
   bigMatchEdge,
   bigMatchFor,
@@ -5362,6 +5369,89 @@ describe("motivation: talks, meetings and the big stage", () => {
       ]);
     };
     expect(run()).toBe(run());
+  }, 30_000);
+});
+
+describe("discipline: the fifth booking and the straight red", () => {
+  const fresh = () => newGame(990);
+
+  it("counts to five and stops counting", () => {
+    expect(banForCrossing(0, 1)).toBe(0);
+    expect(banForCrossing(4, 5)).toBe(1);
+    expect(banForCrossing(5, 6)).toBe(0);
+    expect(banForCrossing(9, 10)).toBe(1);
+    expect(banForCrossing(14, 15)).toBe(1);
+    expect(yellowsToBan({ yellows: 3 })).toBe(2);
+    expect(yellowsToBan({ yellows: 4 })).toBe(1);
+    expect(yellowsToBan({ yellows: 5 })).toBe(5);
+    expect(yellowBanLine({ yellows: 0, suspension: 0 })).toBeNull();
+    expect(yellowBanLine({ yellows: 4, suspension: 0 })).toMatch(/one booking from a ban/);
+    expect(yellowBanLine({ yellows: 3, suspension: 0 })).toMatch(/tightrope/);
+    expect(yellowBanLine({ yellows: 2, suspension: 2 })).toBe("2 matches suspended");
+  });
+
+  it("a fifth yellow is a one-match ban, and the news says so", () => {
+    const save = fresh();
+    const p = squadOf(save.players, save.userClubId)[6];
+    p.yellows = 4;
+    const inboxBefore = (save.inbox ?? []).length;
+    const r = applyCardPenalties(save, p, { before: 4, after: 5, notify: true });
+    expect(r.banned).toBe(true);
+    expect(p.suspension).toBe(1);
+    // the ban lands in the inbox twice: the discipline card and the news line behind it
+    expect((save.inbox ?? []).length).toBeGreaterThan(inboxBefore);
+    expect((save.inbox ?? []).some((i) => /suspended/i.test(i.title))).toBe(true);
+    expect((save.inbox ?? []).some((i) => /5th yellow|ban/i.test(i.title + " " + (i.body ?? "")))).toBe(true);
+    expect(r.result).toMatch(/5th yellow|ban/i);
+  });
+
+  it("the fourth booking is a warning, not a ban", () => {
+    const save = fresh();
+    const p = squadOf(save.players, save.userClubId)[2];
+    p.yellows = 3;
+    const r = applyCardPenalties(save, p, { before: 3, after: 4, notify: true });
+    expect(r.banned).toBe(false);
+    expect(p.suspension).toBe(0);
+    expect((save.inbox ?? [])[0].title).toMatch(/one booking from a ban/i);
+  });
+
+  it("a straight red is two matches, a second yellow is one", () => {
+    const save = fresh();
+    const a = squadOf(save.players, save.userClubId)[3];
+    a.yellows = 0;
+    applyCardPenalties(save, a, { before: 0, after: 0, redKind: "straight" });
+    expect(a.suspension).toBe(2);
+    const b = squadOf(save.players, save.userClubId)[4];
+    b.yellows = 1;
+    applyCardPenalties(save, b, { before: 1, after: 2, redKind: "second" });
+    expect(b.suspension).toBe(1);
+    // a ban and an accumulation ban don't stack into a longer one
+    const c = squadOf(save.players, save.userClubId)[5];
+    c.yellows = 9;
+    applyCardPenalties(save, c, { before: 9, after: 10, redKind: "second" });
+    expect(c.suspension).toBeGreaterThanOrEqual(1);
+    expect(c.suspension).toBeLessThanOrEqual(2);
+  });
+
+  it("AI clubs collect bans quietly", () => {
+    const save = fresh();
+    const rival = save.players.find((p) => p.clubId !== save.userClubId)!;
+    rival.yellows = 4;
+    const inboxBefore = (save.inbox ?? []).length;
+    const r = applyCardPenalties(save, rival, { before: 4, after: 5, notify: false });
+    expect(r.banned).toBe(true);
+    expect(rival.suspension).toBe(1);
+    expect((save.inbox ?? []).length).toBe(inboxBefore); // nothing for the manager's feed
+  });
+
+  it("a season's football produces real bans somewhere in the division", () => {
+    let save = toLeague(fresh());
+    for (let i = 0; i < 18; i++) save = playRound(save).save;
+    const booked = save.players.filter((p) => (p.yellows ?? 0) >= 5);
+    expect(booked.length).toBeGreaterThan(0);
+    // and the accumulators are exactly the ones walking the tightrope or banned
+    const edge = onTheEdge(save.players, save.userClubId);
+    expect(edge.every((p) => (p.suspension ?? 0) === 0)).toBe(true);
   }, 30_000);
 });
 

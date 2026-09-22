@@ -10,6 +10,7 @@ import { TF, freshFinances, makeFreeAgent, rollContracts, windowTick } from "./t
 import { INTENSITIES, developRound, learnTraits, resetSeasonDev, youthIntake } from "./training";
 import { growFamiliarity, planForClub } from "./setpieces";
 import { recordMatch } from "./stats";
+import { applyCardPenalties } from "./discipline";
 import { scoutingBudgetFor, scoutingTick } from "./scouting";
 import { payPrize, recordSeason, roundAwards } from "./history";
 import { moraleTick, MORALE_START } from "./morale";
@@ -116,7 +117,7 @@ const applyResult = (
     }
     p.goals += u.goals;
     p.assists += u.assists;
-    if (u.red) p.suspension = Math.max(p.suspension, 1);
+    const cardsBefore = p.yellows ?? 0;
     if (u.injuredWeeks > 0) p.injuredWeeks = Math.max(p.injuredWeeks, u.injuredWeeks);
     if (u.conditionLoss > 0) {
       p.condition = Math.max(5, Math.round(p.condition - u.conditionLoss));
@@ -131,6 +132,15 @@ const applyResult = (
       rating: result.ratings[u.playerId],
       userClub: p.clubId === save.userClubId
     });
+    // cards have consequences (engine/discipline.ts): accumulation bans, straight-red bans
+    if (u.yellow > 0 || u.red) {
+      applyCardPenalties(save, p, {
+        before: cardsBefore,
+        after: p.yellows ?? 0,
+        redKind: u.redKind,
+        notify: p.clubId === save.userClubId
+      });
+    }
   }
 };
 

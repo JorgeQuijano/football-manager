@@ -18,7 +18,8 @@ import {
   squadOf,
   suitability,
   totalsFor,
-  TRAITS
+  TRAITS,
+  yellowBanLine
 } from "@/engine";
 import { ATTR_KEYS, ATTR_LABEL, ATTR_SHORT } from "@/engine";
 import type { AttrKey } from "@/engine";
@@ -528,6 +529,17 @@ export function PlayerDetailSheet({
                     </div>
                   ))}
                 </div>
+                {yellowBanLine(p) && (
+                  <p
+                    className={`text-[11px] font-semibold ${
+                      (p.suspension ?? 0) > 0 ? "text-[#FF6157]" : "text-[#FFB020]"
+                    }`}
+                    data-testid="ban-line"
+                  >
+                    {yellowBanLine(p)}
+                    {(p.suspension ?? 0) === 0 ? ` (${p.yellows ?? 0}Y this season)` : ""}
+                  </p>
+                )}
                 {(p.form ?? []).length > 0 && (
                   <div className="flex items-center gap-1.5">
                     <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">

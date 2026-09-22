@@ -20,12 +20,6 @@ import {
 } from "@/engine";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from "@/components/ui/dropdown-menu";
 import { useGame } from "@/state/store";
 import { condColor, fitLevel, shortName } from "@/ui/format";
 import { PlayerPickerSheet } from "@/ui/sheets";
@@ -50,6 +44,7 @@ export function Tactics() {
   const setBuilderFor = useGame((s) => s.setBuilderFor);
   const deleteCustomFormation = useGame((s) => s.deleteCustomFormation);
   const [picker, setPicker] = useState<Picker>(null);
+  const [autoOpen, setAutoOpen] = useState(false);
   const [swapMode, setSwapMode] = useState(false);
   const [sel, setSel] = useState<Sel>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -224,25 +219,44 @@ export function Tactics() {
             </div>
           )}
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger
+        <div className="relative">
+          <button
             data-testid="auto-pick"
+            aria-expanded={autoOpen}
+            onClick={() => setAutoOpen((v) => !v)}
             className="flex h-10 items-center gap-1 rounded-xl bg-secondary px-3 text-sm font-semibold text-secondary-foreground active:bg-secondary/80"
           >
             Auto pick
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
             </svg>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem data-testid="auto-best" onClick={() => runAuto("best")}>
-              Best XI
-            </DropdownMenuItem>
-            <DropdownMenuItem data-testid="auto-fresh" onClick={() => runAuto("freshest")}>
-              Freshest XI (rest tired)
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          </button>
+          {autoOpen && (
+            <div
+              data-testid="auto-menu"
+              className="absolute right-0 z-30 mt-1 w-56 overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-lg"
+            >
+              {(
+                [
+                  ["auto-best", "Best XI", "best"],
+                  ["auto-fresh", "Freshest XI (rest tired)", "freshest"]
+                ] as const
+              ).map(([testid, label, mode]) => (
+                <button
+                  key={testid}
+                  data-testid={testid}
+                  className="flex h-11 w-full items-center rounded-lg px-3 text-left text-sm font-medium text-popover-foreground active:bg-secondary"
+                  onClick={() => {
+                    setAutoOpen(false);
+                    runAuto(mode);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {note && (

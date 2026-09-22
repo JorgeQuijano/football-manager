@@ -23,6 +23,7 @@ export * from "./physical";
 export * from "./individual";
 export * from "./inbox";
 export * from "./motivation";
+export * from "./discipline";
 export * from "./formations";
 export * from "./ratings";
 export * from "./league";
