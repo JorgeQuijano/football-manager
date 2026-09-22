@@ -22,7 +22,7 @@ import {
 } from "@/engine";
 import { ATTR_KEYS, ATTR_LABEL, ATTR_SHORT } from "@/engine";
 import type { AttrKey } from "@/engine";
-import { FORM_BANDS, formBandFor, formOf, rating1, ratingAvg } from "@/engine";
+import { FORM_BANDS, formBandFor, formOf, moodOf, moraleFactors, rating1, ratingAvg } from "@/engine";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -205,6 +205,8 @@ export function PlayerDetailSheet({
   const game = useGame((s) => s.game)!;
   const setFocus = useGame((s) => s.setFocus);
   const toggleShortlist = useGame((s) => s.toggleShortlist);
+  const talk = useGame((s) => s.talk);
+  const [talkMsg, setTalkMsg] = useState<{ text: string; bad: boolean } | null>(null);
   const p = playerId ? game.players.find((x) => x.id === playerId) : undefined;
   const est = p ? estimateFor(game, p) : null;
   const isOwn = !!p && p.clubId === game.userClubId;
@@ -334,6 +336,81 @@ export function PlayerDetailSheet({
                   </div>
                 </div>
               </div>
+
+              {(isOwn || est.tier === "extensive") && (
+                <div className="space-y-2 rounded-lg border border-border bg-card p-3" data-testid="player-morale">
+                  <div className="flex items-center justify-between text-xs font-semibold">
+                    <span className="text-muted-foreground">Mood</span>
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="rounded px-1.5 py-0.5 text-[10px] font-bold"
+                        style={{
+                          background: `${moodOf(p.morale ?? 60).tint}22`,
+                          color: moodOf(p.morale ?? 60).tint
+                        }}
+                        data-testid="sheet-mood"
+                      >
+                        {moodOf(p.morale ?? 60).label}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground tnum">{Math.round(p.morale ?? 60)}</span>
+                    </span>
+                  </div>
+                  <span className="block h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+                    <span
+                      className="block h-full rounded-full"
+                      style={{
+                        width: `${p.morale ?? 60}%`,
+                        background: moodOf(p.morale ?? 60).tint
+                      }}
+                    />
+                  </span>
+                  {isOwn && (
+                    <>
+                      <div className="space-y-0.5">
+                        {moraleFactors(game, p).map((f) => (
+                          <div key={f.label} className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="truncate text-muted-foreground">{f.label}</span>
+                            <span
+                              className="shrink-0 font-semibold tnum"
+                              style={{ color: f.val > 0 ? "#2ED573" : f.val < 0 ? "#FF8A5C" : "#8B98A5" }}
+                            >
+                              {f.val > 0 ? `+${f.val.toFixed(1)}` : f.val < 0 ? f.val.toFixed(1) : "—"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      {p.transferRequest && (
+                        <p className="text-[11px] font-semibold text-[#FF8A5C]" data-testid="sheet-request">
+                          Has handed in a transfer request.
+                        </p>
+                      )}
+                      {talkMsg && (
+                        <p className={`text-[11px] font-semibold ${talkMsg.bad ? "text-[#FF6B6B]" : "text-primary"}`} data-testid="sheet-talk-msg">
+                          {talkMsg.text}
+                        </p>
+                      )}
+                      <div className="flex gap-2">
+                        {(["praise", "warn"] as const).map((k) => (
+                          <Button
+                            key={k}
+                            size="sm"
+                            variant="outline"
+                            className="h-11 flex-1"
+                            data-testid={`sheet-${k}`}
+                            onClick={() => {
+                              const res = talk(p.id, k);
+                              if (typeof res === "string") setTalkMsg({ text: res, bad: true });
+                              else setTalkMsg({ text: res.message, bad: res.delta < 0 });
+                            }}
+                          >
+                            {k === "praise" ? "Praise" : "Warn"}
+                          </Button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-2 rounded-lg border border-border bg-card p-3" data-testid="player-stats">
                 <div className="flex items-baseline justify-between text-xs font-semibold">

@@ -102,6 +102,7 @@ function makePlayer(
     traits: traitsFor({ id, pos, attrs, age } as Player, mulberry32(hashSeed(id, "traits"))),
     contract: { wage: 0, until: 0 },
     peak: 0,
+    morale: 60,
     dev: {},
     devSeason: {},
     focus: null,

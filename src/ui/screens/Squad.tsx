@@ -4,6 +4,7 @@ import {
   FORM_BANDS,
   formBandFor,
   formOf,
+  moodOf,
   overallFor,
   rating1,
   sortSquad,
@@ -13,12 +14,13 @@ import {
 import { useGame } from "@/state/store";
 import { posChip } from "@/ui/format";
 import { PlannerView } from "@/ui/Planner";
+import { Dynamics } from "@/ui/Dynamics";
 import { PlayerDetailSheet } from "@/ui/sheets";
 
 export function Squad() {
   const game = useGame((s) => s.game)!;
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"squad" | "planner">("squad");
+  const [tab, setTab] = useState<"squad" | "planner" | "dynamics">("squad");
   const [sortMode, setSortMode] = useState<SortMode>("position");
 
   const club = game.clubs.find((c) => c.id === game.userClubId)!;
@@ -31,8 +33,8 @@ export function Squad() {
         {club.name} · {squad.length} players
       </p>
 
-      <div className="mt-3 grid grid-cols-2 gap-1.5">
-        {(["squad", "planner"] as const).map((t) => (
+      <div className="mt-3 grid grid-cols-3 gap-1.5">
+        {(["squad", "planner", "dynamics"] as const).map((t) => (
           <button
             key={t}
             data-testid={`squad-tab-${t}`}
@@ -43,7 +45,7 @@ export function Squad() {
                 : "border border-border bg-card text-muted-foreground"
             }`}
           >
-            {t === "squad" ? "Roster" : "Planner"}
+            {t === "squad" ? "Roster" : t === "planner" ? "Planner" : "Dynamics"}
           </button>
         ))}
       </div>
@@ -51,6 +53,10 @@ export function Squad() {
       {tab === "planner" ? (
         <div className="mt-4">
           <PlannerView onOpenPlayer={setDetailId} />
+        </div>
+      ) : tab === "dynamics" ? (
+        <div className="mt-4">
+          <Dynamics onOpenPlayer={setDetailId} />
         </div>
       ) : (
         <>
@@ -100,6 +106,12 @@ export function Squad() {
                   </span>
                   <span className="flex shrink-0 flex-col items-end gap-1">
                     <span className="flex items-center gap-1.5">
+                      <span
+                        className="h-2 w-2 rounded-full"
+                        title={moodOf(p.morale ?? 60).label}
+                        style={{ background: moodOf(p.morale ?? 60).tint }}
+                        data-testid={`mood-${p.id}`}
+                      />
                       {band && f !== null && (
                         <span
                           className="rounded px-1 py-0.5 text-[9px] font-bold tnum"
