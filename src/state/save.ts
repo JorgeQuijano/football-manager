@@ -122,6 +122,12 @@ export function normalizeSave(save: SaveGame): SaveGame {
     if (typeof p.lastTalk !== "number" || !Number.isFinite(p.lastTalk)) delete p.lastTalk;
     if (p.talkKind !== "praise" && p.talkKind !== "warn") delete p.talkKind;
   }
+  // motivation (v0.28): pumped, pledges, meetings
+  if (save.meeting && (typeof save.meeting.theme !== "string" || typeof save.meeting.round !== "number")) save.meeting = undefined;
+  for (const p of save.players) {
+    if (p.pumped && (typeof p.pumped.until !== "number" || typeof p.pumped.amount !== "number")) p.pumped = undefined;
+    if (p.pledge && (typeof p.pledge.round !== "number" || typeof p.pledge.minutes !== "number")) p.pledge = undefined;
+  }
   // inbox (v0.26)
   if (!Array.isArray(save.inbox)) save.inbox = [];
   save.inbox = save.inbox.filter((i) => i && typeof i.title === "string" && typeof i.id === "string").slice(0, 60);

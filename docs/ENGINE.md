@@ -591,3 +591,43 @@ Everything that is about one player rather than the team.
 The Home screen now carries an **In form** card: the three hottest regulars and any cold ones (below 6.4), with "hot players play above their level, cold ones below it".
 
 **Tests** (`describe("pre-season & form…")`, 9): a new save opening in pre-season with three friendlies on the right Saturdays, a friendly building legs and form while leaving the table and season stats untouched (and the window open), the first league round starting after the third friendly, the diary's friendly Saturdays and July paging, a hot side beating a cold one over 80 matches, `formFactor` neutral/clamped, three weeks out killing a streak, the rollover building a fresh pre-season, and determinism through both phases.
+
+## 33. Motivation: individual talks, team meetings and the big stage (`motivation.ts`, `MatchState.big`)
+
+Three layers, one idea: **the dressing room is a lever, and it has a right moment.**
+
+**Individual talks (v0.28)** — the v0.18 praise/warn pair grows into four conversations plus a promise:
+
+| Kind | Lands when | Effect |
+|---|---|---|
+| **Praise** | form ≥ 6.4 | +7 (leaders +9) |
+| **Warn** | form < 6.4, or morale already low | +6 on the struggling; −4 on a man in form |
+| **Reassure** | poor form but morale still standing (≥ 50) | +5; reads as empty words to a broken man (+1) |
+| **Challenge** | morale ≥ 65 **and** form ≥ 6.2 | +4 and a **±1.5% match edge for two rounds** (`Player.pumped`); −5 on anyone not ready to hear it |
+
+One conversation per player every `TALK_COOLDOWN` (4) rounds; leaders take praise further (+2) and shrug off criticism more easily. `talkAdvice(save, p)` picks the conversation the player needs — the Squad screen's **Needs a word** card lists the three best candidates with the reason and a one-tap button.
+
+**Promises (`pledgeMinutes`)** — "give me minutes". The player gets +3 now and a `Player.pledge` due next round. Play him (`settlePledges` at round completion, 30+ minutes) → +6 and the debt is paid; leave him out → **−8 morale and an unhappy round**. Injury or suspension blocks the promise, and a player who'll have his minutes is asked to accept a **bench role** instead.
+
+**Team meetings (`teamMeeting`)** — one every two rounds (`meetingAvailable`), six themes, each with a context fit:
+
+| Theme | Strong fit when | Risky when |
+|---|---|---|
+| Hold the standards | squad morale ≥ 62 | morale < 50 |
+| Stick together | morale < 50 or two straight defeats | morale ≥ 70 ("no crisis here") |
+| Aim higher | you sit top four | you sit 7th or lower |
+| Nobody is above the badge | unrest, transfer requests | no unrest at all |
+| Give the fans something | fans < 50 | fans ≥ 70 |
+| Rest and recover | average condition < 70 | condition ≥ 85 |
+
+A strong fit moves every squad member **+5** (leaders +6), even **+2**, risky **−4**; `recover` also hands out **+6 condition**, `fans` lifts fan confidence **+3** when it lands, and `badge` knocks a round off every unsettled player's patience. The result screen lists who took it best — and the board noticed.
+
+**Big matches (`bigMatchFor`)** — a fixture is big when the stakes are real, checked against the live table (both sides must have played at least three rounds):
+
+- **Title six-pointer** — both sides top four, within three points
+- **Against the leaders** — the leaders at your place/away with you within four
+- **The decider** — the final round, within three points of the top
+
+`bigMatchFor` returns a label + one-line stakes read; the Home next-match card wears it, and it's **symmetric** — the opposition feel the pressure too. In the engine, `MatchState.big` multiplies each player's contribution: **−1.5%** for the young (under 22) or the anxious (morale < 45), **+2%** for leaders and the confident (morale ≥ 75), neutral otherwise (`bigMatchEdge`). Friendlies never count.
+
+All three are deterministic: talks and meetings are seeded off `season × round × id` and everything the manager does lands in the save, so the same seed replays identically. The pre-match talks and shouts of v0.23 keep their own multipliers — motivation is what you do between matches.

@@ -21,6 +21,7 @@ import { useGame } from "@/state/store";
 import { formColor, initials, ordinal, shortName } from "@/ui/format";
 import { SettingsSheet } from "@/ui/sheets";
 import { MediaCard } from "@/ui/Press";
+import { MatchStakes, MeetingCard } from "@/ui/Motivation";
 
 export function Home() {
   const game = useGame((s) => s.game)!;
@@ -117,6 +118,10 @@ export function Home() {
         </div>
       )}
 
+      <div className="mt-3">
+        <MeetingCard />
+      </div>
+
       {game.round < 0 && (
         <Card className="mt-4 border-primary/40">
           <CardContent className="space-y-2 p-4" data-testid="preseason-card">
@@ -175,6 +180,7 @@ export function Home() {
             <div className="mt-0.5 text-xs text-muted-foreground">
               {isHome ? "Home" : "Away"} · {isHome ? club.name : opponent.name}'s ground
             </div>
+            <MatchStakes />
             <div className="mt-1.5 text-[11px] font-semibold" data-testid="home-conditions">
               <span style={{ color: weatherOf(conditionsFor(game, game.round).weather).tint }}>
                 {conditionLine(conditionsFor(game, game.round))}

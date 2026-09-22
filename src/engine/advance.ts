@@ -23,6 +23,7 @@ import { pushNews } from "./training";
 import { formFreshnessTick, recordForm } from "./stats";
 import { moveTick, retrainTick, settleTargets } from "./individual";
 import { pushInbox } from "./inbox";
+import { bigMatchFor, settlePledges } from "./motivation";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -94,6 +95,7 @@ const matchInputs = (save: SaveGame, round: number, homeId: string, awayId: stri
     homePlan: planForClub(save, homeId),
     awayPlan: planForClub(save, awayId),
     conditions: conditionsFor(save, round),
+    bigMatch: bigMatchFor(save, save.fixtures.find((f) => f.round === round && f.homeId === homeId && f.awayId === awayId) ?? save.fixtures[0]) !== null,
     rng
   };
 };
@@ -248,6 +250,8 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
   const minutesById: Record<string, number> = {};
   for (const r of save.lastResults)
     for (const u of r.updates) minutesById[u.playerId] = (minutesById[u.playerId] ?? 0) + u.minutes;
+  // promises of minutes come due the round after they were made
+  settlePledges(save, minutesById);
   const withDev = developRound(save, minutesById);
   // a week without football dulls a hot streak
   formFreshnessTick(save, playedIds);

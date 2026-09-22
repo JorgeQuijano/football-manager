@@ -15,6 +15,7 @@ import { useGame } from "@/state/store";
 import { posChip } from "@/ui/format";
 import { PlannerView } from "@/ui/Planner";
 import { CaptainCard, DisciplineCard } from "@/ui/Individual";
+import { WordWatch } from "@/ui/Motivation";
 import { Dynamics } from "@/ui/Dynamics";
 import { PlayerDetailSheet } from "@/ui/sheets";
 
@@ -62,6 +63,7 @@ export function Squad() {
       ) : (
         <>
           <div className="mt-3 space-y-2">
+            <WordWatch />
             <CaptainCard />
             <DisciplineCard />
           </div>

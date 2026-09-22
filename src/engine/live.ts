@@ -19,6 +19,7 @@ import {
 import { resolveSide } from "./advance";
 import { planForClub } from "./setpieces";
 import { conditionsFor } from "./conditions";
+import { bigMatchFor } from "./motivation";
 import { ROLE_GROUPS } from "./roles";
 
 export const playersById = (save: SaveGame): Map<string, Player> =>
@@ -64,6 +65,7 @@ export function startLive(save: SaveGame): LiveMatch | undefined {
     homePlan: planForClub(save, fx.homeId),
     awayPlan: planForClub(save, fx.awayId),
     conditions: conditionsFor(save, save.round),
+    bigMatch: bigMatchFor(save, fx) !== null,
     rng,
     userSide
   });

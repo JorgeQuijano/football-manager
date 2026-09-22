@@ -192,7 +192,11 @@ export interface Player {
   /** absolute round (season*1000+round) of the last individual chat */
   lastTalk?: number;
   /** what was said last */
-  talkKind?: "praise" | "warn";
+  talkKind?: "praise" | "warn" | "reassure" | "challenge";
+  /** fired up by a challenge: a small match edge until this round */
+  pumped?: { until: number; amount: number };
+  /** promised minutes in this round (v0.28) */
+  pledge?: { round: number; minutes: number };
   /** career league totals per club (folded in each pre-season) — club record books */
   totals?: Record<string, ClubTotals>;
   /** league titles won (honours) */
@@ -589,6 +593,9 @@ export interface MatchState {
   /** stamina lost per minute, per player on the pitch (engine/match.ts) */
   staminaRate: Record<string, number>;
   /** weather, referee and pitch for this match (engine/conditions.ts) */
+  /** a big match: leaders rise, nerves show (v0.28) */
+  big?: boolean;
+
   cond: MatchConditions;
   rngState: number;
   userSide?: "home" | "away";
@@ -834,6 +841,8 @@ export interface SaveGame {
   inboxSeq?: number;
   /** pre-season or in the league proper (v0.27) */
   phase?: "pre" | "league";
+  /** the last team meeting (v0.28) */
+  meeting?: { season: number; round: number; theme: string };
   /** the armband — engine/individual.ts */
   captain?: string;
   vice?: string;
