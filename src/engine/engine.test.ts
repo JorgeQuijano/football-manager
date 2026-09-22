@@ -27,6 +27,9 @@ import {
 import { LOAN, bidForLoan, exerciseLoanOption, loanAsk, loanRollover, loanCount, loaneesIn, loaneesOut, sendOnLoan } from "./loans";
 import { dealCost, dealValue, termsDemand } from "./transfers";
 import { INBOX_CAP, inboxFor, inboxUnread, markAllInboxRead, openInboxItem, pushInbox } from "./inbox";
+import { PRE_ROUNDS, makeFriendlies, preseasonState } from "./preseason";
+import { fmtShort as fmtShortCal, friendlyDate } from "./calendar";
+import { formFactor, formFreshnessTick } from "./stats";
 import { pushNews } from "./training";
 import {
   INTL_ROUNDS,
@@ -202,8 +205,13 @@ import {
 import type { BoardPolicy, TransferOffer, CornerRoutine, FreeKickRoutine, Intensity, LiveChange, MatchConditions, MatchResult, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit, WeatherId } from "./types";
 import type { MatchStatCtx } from "./stats";
 
+/** Jump straight into the league: pre-season friendlies remain unplayed (v0.27). */
+function toLeague(save: SaveGame): SaveGame {
+  return { ...save, round: 1, phase: "league" };
+}
+
 function playSeason(start: SaveGame): SaveGame {
-  let save = start;
+  let save = toLeague(start);
   const rounds = seasonRounds(save);
   while (save.round <= rounds) {
     save = playRound(save).save;
@@ -254,17 +262,22 @@ describe("generation", () => {
   });
 
   it("fixtures: 18 rounds, each club home 9 / away 9, every pair twice", () => {
-    expect(save.fixtures).toHaveLength(90);
-    const rounds = new Set(save.fixtures.map((f) => f.round));
+    const league = save.fixtures.filter((f) => !f.friendly);
+    expect(league).toHaveLength(90);
+    const rounds = new Set(league.map((f) => f.round));
     expect(rounds.size).toBe(18);
     for (const club of save.clubs) {
-      const mine = save.fixtures.filter((f) => f.homeId === club.id || f.awayId === club.id);
+      const mine = league.filter((f) => f.homeId === club.id || f.awayId === club.id);
       expect(mine).toHaveLength(18);
       expect(mine.filter((f) => f.homeId === club.id)).toHaveLength(9);
       expect(mine.filter((f) => f.awayId === club.id)).toHaveLength(9);
     }
+    // three pre-season friendlies, all involving you
+    const friendlies = save.fixtures.filter((f) => f.friendly);
+    expect(friendlies).toHaveLength(3);
+    expect(friendlies.every((f) => f.homeId === save.userClubId || f.awayId === save.userClubId)).toBe(true);
     const unordered = new Map<string, number>();
-    for (const f of save.fixtures) {
+    for (const f of league) {
       const key = [f.homeId, f.awayId].sort().join(":");
       unordered.set(key, (unordered.get(key) ?? 0) + 1);
     }
@@ -314,7 +327,7 @@ describe("season", () => {
     let awayWins = 0;
     for (let seed = 1; seed <= 24; seed++) {
       const save = playSeason(newGame(seed * 101));
-      for (const f of save.fixtures) {
+      for (const f of save.fixtures.filter((x) => !x.friendly)) {
         matches++;
         goals += f.homeGoals! + f.awayGoals!;
         if (f.homeGoals! > f.awayGoals!) homeWins++;
@@ -349,9 +362,13 @@ describe("season", () => {
     const s1 = playSeason(newGame(31));
     const s2 = nextSeason(s1);
     expect(s2.season).toBe(2);
-    expect(s2.round).toBe(1);
-    expect(s2.fixtures).toHaveLength(90);
+    // the new season opens in pre-season: three friendlies, then the league
+    expect(s2.round).toBe(PRE_ROUNDS[0]);
+    expect(s2.phase).toBe("pre");
+    expect(s2.fixtures.filter((f) => !f.friendly)).toHaveLength(90);
     expect(s2.fixtures.every((f) => !f.played)).toBe(true);
+    const league = toLeague(s2);
+    expect(league.round).toBe(1);
     const lineup = autoLineup(
       squadOf(s2.players, s2.userClubId),
       resolveFormation(s2.lineup.formation, s2.customFormations)!
@@ -2026,7 +2043,7 @@ describe("player stats & form", () => {
   });
 
   it("collects stats for AI players too (without a log)", () => {
-    const s = playRound(newGame(15)).save;
+    const s = playRound(toLeague(newGame(15))).save;
     const ai = s.players.filter((p) => p.clubId !== s.userClubId && p.clubId !== "");
     expect(ai.some((p) => (p.mins ?? 0) > 0 && p.form.length > 0)).toBe(true);
     expect(ai.every((p) => p.history.length === 0)).toBe(true);
@@ -2036,7 +2053,7 @@ describe("player stats & form", () => {
   });
 
   it("resets season stats at the rollover but keeps the recent-match log", () => {
-    const s = playRound(newGame(17)).save;
+    const s = playRound(toLeague(newGame(17))).save;
     const id = s.players.find((p) => p.clubId === s.userClubId && p.history.length > 0)!.id;
     expect(s.players.find((p) => p.id === id)!.mins).toBeGreaterThan(0);
     const next = nextSeason(s);
@@ -2452,7 +2469,7 @@ describe("history, records & awards", () => {
   });
 
   it("awards a player of the round every round — best rating, minimum minutes", () => {
-    let save = newGame(77);
+    let save = toLeague(newGame(77));
     save = playRound(save).save;
     expect(save.awards.rounds).toHaveLength(1);
     expect(save.awards.rounds[0].round).toBe(1);
@@ -2535,7 +2552,7 @@ describe("history, records & awards", () => {
   });
 
   it("has no history mid-season and is deterministic", () => {
-    let save = newGame(81);
+    let save = toLeague(newGame(81));
     for (let i = 0; i < 5; i++) save = playRound(save).save;
     expect(save.history.seasons).toHaveLength(0);
     expect(save.awards.rounds).toHaveLength(5);
@@ -3109,7 +3126,7 @@ describe("media & press", () => {
   });
 
   it("a promised win is checked — kept or thrown back at you", () => {
-    const s = newGame(205);
+    const s = toLeague(newGame(205));
     s.media!.press = {
       season: 1,
       round: 1,
@@ -3141,7 +3158,7 @@ describe("media & press", () => {
     expect(s.media!.headlines.some((h) => h.kind === "promise" && h.tone === "good")).toBe(true);
 
     // and a broken one bites
-    const s2 = newGame(205);
+    const s2 = toLeague(newGame(205));
     s2.media!.press = {
       season: 1,
       round: 1,
@@ -3193,7 +3210,7 @@ describe("media & press", () => {
   });
 
   it("keeps a short feed — capped and newest first", () => {
-    const s = newGame(207);
+    const s = toLeague(newGame(207));
     for (let r = 1; r <= 30; r++) {
       mediaTick(s, [
         { round: r, homeId: s.userClubId, awayId: "c2", homeGoals: 1, awayGoals: 0, scorers: [{ name: "A", minute: 5 }] }
@@ -3330,7 +3347,7 @@ describe("calendar", () => {
     expect(seasonRoundsOf(save)).toBe(18);
     // a full month of paging for one season
     const months = seasonMonths(save);
-    expect(months[0]).toEqual({ y: 2026, m: 7 }); // August 2026
+    expect(months[0]).toEqual({ y: 2026, m: 6 }); // July 2026 — pre-season opens here
     expect(months[months.length - 1]).toEqual({ y: 2026, m: 11 }); // December 2026
   });
 
@@ -3365,7 +3382,7 @@ describe("calendar", () => {
   });
 
   it("carries results into the past and leaves the future open", () => {
-    const played = playRound(newGame(503));
+    const played = playRound(toLeague(newGame(503)));
     const save = played.save;
     const past = roundDate(1, 1);
     const pastDay = dayFor(save, past)!;
@@ -3416,8 +3433,11 @@ describe("calendar", () => {
     // day of the month is present in the flat list
     expect(sameDay(aug.weeks[1][1]!.date, { y: 2026, m: 7, d: 3 })).toBe(true);
     expect(aug.weeks[1][6]!.match?.round).toBe(1); // the opener: Saturday, column 6
-    expect(aug.days.some((d) => d.date.d === 1)).toBe(false); // before the season opens
-    for (let d = 3; d <= 31; d++) expect(aug.days.some((x) => x.date.d === d)).toBe(true);
+    // 1 Aug is the last pre-season friendly, so the month opens there
+    const firstFriendly = aug.days.find((d) => d.date.d === 1)!;
+    expect(firstFriendly.friendly).toBe(true);
+    expect(firstFriendly.match?.round).toBe(-1);
+    for (let d = 1; d <= 31; d++) expect(aug.days.some((x) => x.date.d === d)).toBe(true);
     // 8 Aug is inside the month and is the opener
     const opener = aug.days.find((d) => d.date.d === 8)!;
     expect(opener.match?.round).toBe(1);
@@ -3425,7 +3445,7 @@ describe("calendar", () => {
   });
 
   it("follows the round being played as 'this week'", () => {
-    const save = newGame(506);
+    const save = toLeague(newGame(506));
     const sat = roundDate(1, 1);
     expect(dayFor(save, sat)!.currentWeek).toBe(true);
     expect(dayFor(save, addDays(sat, -5))!.currentWeek).toBe(true);
@@ -3437,7 +3457,7 @@ describe("calendar", () => {
   });
 
   it("lists the fixtures still to come with their dates", () => {
-    const save = newGame(507);
+    const save = toLeague(newGame(507));
     const up = upcoming(save, 5);
     expect(up).toHaveLength(5);
     expect(up[0].round).toBe(1);
@@ -3634,7 +3654,7 @@ describe("match legs (stamina) & the bench", () => {
   });
 
   it("the roster knows who is on, who is left and who has been used", () => {
-    const save = newGame(605);
+    const save = toLeague(newGame(605));
     const fx = userFixture(save)!;
     const base = inputsFor(save, fx);
     const s0 = startMatch(base);
@@ -3754,7 +3774,7 @@ describe("match-day levers: instructions, talks & shouts", () => {
       let theirShots = 0;
       let markedGoals = 0;
       for (let seed = 700; seed < 780; seed++) {
-        const save = newGame(seed);
+        const save = toLeague(newGame(seed));
         const fx = userFixture(save)!;
         const base = inputsFor(save, fx);
         const players = playersById(save);
@@ -4513,7 +4533,7 @@ describe("individual players: bodies, targets, retraining, moves, discipline & t
       let gf = 0;
       let ga = 0;
       for (let seed = 640; seed < 720; seed++) {
-        const save = newGame(seed);
+        const save = toLeague(newGame(seed));
         const fx = userFixture(save)!;
         const base = inputsForLocal(save, fx);
         const userSide = fx.homeId === save.userClubId ? "home" : "away";
@@ -4814,7 +4834,7 @@ describe("quality of life: the inbox, the data hub's shots and save slots", () =
   });
 
   it("a match report lands in the inbox and the unread count follows", () => {
-    const out = playRound(fresh());
+    const out = playRound(toLeague(fresh()));
     const save = out.save;
     const match = (save.inbox ?? []).find((i) => i.kind === "match");
     expect(match).toBeTruthy();
@@ -4893,9 +4913,9 @@ describe("quality of life: the inbox, the data hub's shots and save slots", () =
   it("a mid-season save round-trips through a slot unchanged", async () => {
     // the storage layer is IndexedDB, which vitest doesn't provide — the pure shape is
     // what matters here: a JSON round trip must survive with the new fields intact
-    const save = playRound(fresh()).save;
+    const save = playRound(toLeague(fresh())).save;
     const copy = normalizeSave(JSON.parse(JSON.stringify(save)) as SaveGame);
-    expect(copy.inbox?.length).toBe(save.inbox?.length);
+    expect(copy.inbox?.length).toBe(save.inbox?.length ?? 0);
     expect(copy.lastUserMatch?.shots?.length).toBe(save.lastUserMatch?.shots?.length);
     expect(copy.inboxSeq).toBe(save.inboxSeq);
   });
@@ -4907,6 +4927,179 @@ describe("quality of life: the inbox, the data hub's shots and save slots", () =
       return JSON.stringify([
         save.inbox?.slice(0, 5).map((i) => [i.id, i.kind, i.title]),
         save.lastUserMatch?.shots
+      ]);
+    };
+    expect(run()).toBe(run());
+  }, 30_000);
+});
+
+describe("pre-season & form: friendly weeks and the hot/cold hand", () => {
+  const fresh = () => newGame(970);
+
+  it("every save opens in pre-season with three friendlies on the calendar", () => {
+    const save = fresh();
+    expect(save.phase).toBe("pre");
+    expect(save.round).toBe(-3);
+    const fs = save.fixtures.filter((f) => f.friendly);
+    expect(fs).toHaveLength(3);
+    expect(fs.map((f) => f.round)).toEqual([-3, -2, -1]);
+    expect(fs.every((f) => !f.played)).toBe(true);
+    // three Saturdays before the opener: 18 and 25 July, 1 August 2026
+    expect(fmtShortCal(friendlyDate(1, 0))).toMatch(/18 Jul/);
+    expect(fmtShortCal(friendlyDate(1, 1))).toMatch(/25 Jul/);
+    expect(fmtShortCal(friendlyDate(1, 2))).toMatch(/1 Aug/);
+    // the league fixtures are still all there, untouched
+    expect(save.fixtures.filter((f) => f.round > 0)).toHaveLength(seasonRounds(save) * 5);
+  });
+
+  it("a friendly builds legs and form but never the record books", () => {
+    const out = playRound(fresh());
+    const save = out.save;
+    const playedFriendly = save.fixtures.find((f) => f.friendly && f.played)!;
+    expect(playedFriendly).toBeTruthy();
+    expect(save.round).toBe(-2);
+    expect(save.phase).toBe("pre");
+    // the table is untouched
+    const table = computeTable(save.fixtures, save.clubs);
+    expect(table.every((r) => r.p === 0 && r.pts === 0)).toBe(true);
+    // no season stats either — but the ratings did land on the form guide
+    const mine = squadOf(save.players, save.userClubId);
+    expect(mine.every((p) => p.apps === 0 && p.goals === 0)).toBe(true);
+    const withForm = mine.filter((p) => (p.form ?? []).length > 0);
+    expect(withForm.length).toBeGreaterThan(8);
+    // and the window is open for business
+    expect(transferWindow(save).open).toBe(true);
+    expect(transferWindow(save).kind).toBe("summer");
+  });
+
+  it("when the friendlies are done the league begins", () => {
+    let save = fresh();
+    for (let i = 0; i < 3; i++) save = playRound(save).save;
+    expect(save.phase).toBe("league");
+    expect(save.round).toBe(1);
+    expect(save.fixtures.filter((f) => f.friendly && f.played)).toHaveLength(3);
+    // and the first league round is playable
+    const out = playRound(save);
+    expect(out.save.round).toBe(2);
+    const table = computeTable(out.save.fixtures, out.save.clubs);
+    expect(table.some((r) => r.p > 0)).toBe(true);
+  });
+
+  it("the diary knows about friendly Saturdays", () => {
+    const save = fresh();
+    const day = dayFor(save, friendlyDate(1, 0))!;
+    expect(day.friendly).toBe(true);
+    expect(day.match?.round).toBe(-3);
+    expect(day.match?.oppId).not.toBe(save.userClubId);
+    const months = seasonMonths(save).map((m) => m.m);
+    expect(months).toContain(6); // July
+    expect(months).toContain(7); // August
+  });
+
+  function inputsForLocalFriendly(save: SaveGame, fx: { homeId: string; awayId: string }) {
+    const home = resolveSide(save, fx.homeId);
+    const away = resolveSide(save, fx.awayId);
+    return {
+      round: save.round,
+      homeClub: save.clubs.find((c) => c.id === fx.homeId)!,
+      awayClub: save.clubs.find((c) => c.id === fx.awayId)!,
+      homeXI: home.xi,
+      awayXI: away.xi,
+      homeBench: home.bench,
+      awayBench: away.bench,
+      homeMentality: home.mentality,
+      awayMentality: away.mentality,
+      homeRoles: home.roles,
+      awayRoles: away.roles,
+      homeCoords: home.coords,
+      awayCoords: away.coords,
+      homePoss: home.poss,
+      awayPoss: away.poss,
+      homePlan: planForClub(save, fx.homeId),
+      awayPlan: planForClub(save, fx.awayId),
+      conditions: conditionsFor(save, save.round)
+    };
+  }
+
+  it("form moves a side: hot players win you games", () => {
+    const run = (rating: number) => {
+      let gf = 0;
+      let ga = 0;
+      for (let seed = 700; seed < 780; seed++) {
+        const save = toLeague(newGame(seed));
+        const fx = userFixture(save)!;
+        const base = inputsForLocalFriendly(save, fx);
+        const userSide = fx.homeId === save.userClubId ? "home" : "away";
+        const oppXI = userSide === "home" ? base.awayXI : base.homeXI;
+        for (const p of oppXI) p.form = [rating, rating, rating];
+        const r = simulateMatch({
+          ...base,
+          rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)),
+          userSide
+        });
+        gf += userSide === "home" ? r.awayGoals : r.homeGoals;
+        ga += userSide === "home" ? r.homeGoals : r.awayGoals;
+      }
+      return gf - ga;
+    };
+    expect(run(4.2)).toBeLessThan(run(8.4));
+  }, 30_000);
+
+  it("formFactor is neutral without a run of games and clamps at ±4%", () => {
+    const save = fresh();
+    const p = squadOf(save.players, save.userClubId)[2];
+    expect(formFactor(p)).toBe(1);
+    p.form = [8.0];
+    expect(formFactor(p)).toBe(1);
+    p.form = [8.0, 8.0];
+    expect(formFactor(p)).toBeGreaterThan(1);
+    expect(formFactor(p)).toBeLessThanOrEqual(1.04);
+    p.form = [4.0, 4.0, 4.0];
+    expect(formFactor(p)).toBeLessThan(1);
+    expect(formFactor(p)).toBeGreaterThanOrEqual(0.96);
+  });
+
+  it("three weeks without football and the streak is gone", () => {
+    const save = fresh();
+    const p = squadOf(save.players, save.userClubId)[3];
+    p.form = [8.5, 8.1, 7.9];
+    p.formMiss = 0;
+    formFreshnessTick(save, new Set());
+    expect(p.formMiss).toBe(1);
+    expect(p.form).toHaveLength(3);
+    formFreshnessTick(save, new Set());
+    formFreshnessTick(save, new Set());
+    expect(p.form).toHaveLength(0);
+    expect(formFactor(p)).toBe(1);
+    // playing resets it
+    p.formMiss = 2;
+    formFreshnessTick(save, new Set([p.id]));
+    expect(p.formMiss).toBe(0);
+  });
+
+  it("pre-season rolls over into a new pre-season, friendlies and all", () => {
+    let save = fresh();
+    for (let i = 0; i < 3; i++) save = playRound(save).save;
+    for (let r = 1; r <= seasonRounds(save); r++) save = playRound(save).save;
+    const next = nextSeason(save);
+    expect(next.season).toBe(2);
+    expect(next.phase).toBe("pre");
+    expect(next.round).toBe(-3);
+    const fs = next.fixtures.filter((f) => f.friendly);
+    expect(fs).toHaveLength(3);
+    expect(fs.every((f) => !f.played)).toBe(true);
+    expect(next.fixtures.filter((f) => f.round > 0)).toHaveLength(seasonRounds(next) * 5);
+  }, 30_000);
+
+  it("stays deterministic through pre-season and the league", () => {
+    const run = () => {
+      let save = newGame(971);
+      for (let i = 0; i < 4; i++) save = playRound(save).save;
+      return JSON.stringify([
+        save.round,
+        save.phase,
+        save.fixtures.filter((f) => f.friendly).map((f) => [f.round, f.played, f.homeGoals, f.awayGoals]),
+        save.players.map((p) => [p.id, p.form, p.formMiss ?? 0])
       ]);
     };
     expect(run()).toBe(run());

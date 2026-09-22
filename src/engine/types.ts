@@ -177,6 +177,8 @@ export interface Player {
   ratingCount: number;
   /** last up to 6 match ratings, newest first — the form guide */
   form: number[];
+  /** rounds since his last appearance (3+ = his streak has gone cold) */
+  formMiss?: number;
   /** recent matches for the user's players, newest first (capped) */
   history: PlayerMatch[];
   /** morale 0-100 (60 = neutral); drives match edge, training gain and contract talks */
@@ -338,7 +340,9 @@ export interface Club {
 }
 
 export interface Fixture {
-  round: number; // 1..18
+  round: number; // 1..18 (negative rounds are pre-season friendlies)
+  /** a pre-season friendly: sharpness and form, never the table (v0.27) */
+  friendly?: boolean;
   homeId: string;
   awayId: string;
   played: boolean;
@@ -828,6 +832,8 @@ export interface SaveGame {
   /** the club inbox, newest first (engine/inbox.ts) */
   inbox?: InboxItem[];
   inboxSeq?: number;
+  /** pre-season or in the league proper (v0.27) */
+  phase?: "pre" | "league";
   /** the armband — engine/individual.ts */
   captain?: string;
   vice?: string;

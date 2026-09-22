@@ -30,6 +30,7 @@ import {
 import { defaultRoleFor, roleFinish, ROLE_DEFS } from "./roles";
 import { DEFAULT_CONDITIONS, conditionEffects, refOf, weatherOf } from "./conditions";
 import { jadedFactor, jadedOf, pronenessOf, sharpnessFactor } from "./physical";
+import { formFactor } from "./stats";
 
 /**
  * Morale edge (engine/morale.ts, inlined here to keep match.ts free of the
@@ -66,8 +67,8 @@ export function staminaAt(s: MatchState, id: string, minute: number): number {
 const sideOfPlayer = (s: MatchState, p: Player): MatchSideState =>
   s.pin[p.id]?.s === 1 ? s.away : s.home;
 
-/** Morale, legs, match sharpness, wear and the words from the bench. */
-const bodyEdge = (p: Player): number => sharpnessFactor(p) * jadedFactor(p);
+/** Morale, legs, match sharpness, wear, recent form and the words from the bench. */
+const bodyEdge = (p: Player): number => sharpnessFactor(p) * jadedFactor(p) * formFactor(p);
 
 /** Morale, legs and the words from the bench — what a player brings going forward. */
 const attEdge = (s: MatchState, p: Player): number =>

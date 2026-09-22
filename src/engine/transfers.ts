@@ -136,13 +136,15 @@ export function freshFinances(save: Pick<SaveGame, "clubs" | "players">): Record
 }
 
 /** Is a window open right now, and what should the UI say? */
-export function transferWindow(save: Pick<SaveGame, "round" | "clubs">): {
+export function transferWindow(save: Pick<SaveGame, "round" | "clubs"> & { phase?: "pre" | "league" }): {
   open: boolean;
   label: string;
   kind: "summer" | "winter" | "closed";
 } {
   const r = save.round;
   const rounds = (save.clubs.length - 1) * 2;
+  // pre-season is the busiest window of the year
+  if (r < 1) return { open: true, kind: "summer", label: `Summer window · pre-season business` };
   if (r >= TF.summer[0] && r <= TF.summer[1])
     return { open: true, kind: "summer", label: `Summer window · closes after round ${TF.summer[1]}` };
   if (r >= TF.winter[0] && r <= TF.winter[1])

@@ -5,6 +5,7 @@ import { FORMATIONS, T } from "./tuning";
 import { autoLineup } from "./ratings";
 import { builtinFormation } from "./formations";
 import { buildFixtures } from "./league";
+import { makeFriendlies } from "./preseason";
 import { contractFor, freshFinances } from "./transfers";
 import { peakFor } from "./training";
 import { defaultSetPieces } from "./setpieces";
@@ -156,6 +157,9 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     ? userClubId
     : clubs[0].id;
   const fixtures = buildFixtures(clubs, 1, seed);
+  // pre-season opens three weeks early with three friendlies (v0.27)
+  const friendlies = makeFriendlies({ seed, clubs, userClubId: chosen }, 1);
+  fixtures.push(...friendlies);
   const lineup: Lineup = autoLineup(
     players.filter((p) => p.clubId === chosen),
     builtinFormation("4-3-3")
@@ -167,7 +171,8 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     saveVersion: 1,
     seed,
     season: 1,
-    round: 1,
+    round: -3,
+    phase: "pre",
     userClubId: chosen,
     clubs,
     players,
@@ -189,6 +194,8 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     policy: policyFor({ seed, clubs, players }, 1),
     devNews: []
   };
-  makePress(save); // the press want a word before round 1
+  makePress(save); // the press want a word before the opener
+  // …and it belongs to the league opener, not the friendly weeks
+  if (save.media?.press) save.media.press.round = 1;
   return save;
 }

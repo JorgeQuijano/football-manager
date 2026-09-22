@@ -1,4 +1,4 @@
-import type { Player, PlayerUpdate, Position } from "./types";
+import type { Player, PlayerUpdate, SaveGame, Position } from "./types";
 
 /** Form bands (average of the last few ratings) with display tints. */
 export type FormBand = "brilliant" | "good" | "average" | "poor";
@@ -45,6 +45,25 @@ export interface MatchStatCtx {
 }
 
 /** Fold one match's update into a player's season stats, form and match log. */
+/** Push a fresh rating onto the form guide (last 6, newest first). */
+export function recordForm(p: Player, rating: number): void {
+  p.form = [rating, ...(p.form ?? [])].slice(0, 6);
+  p.formMiss = 0;
+}
+
+/**
+ * How hot he is: the average of his recent ratings against 6.5 (the neutral mark),
+ * worth up to ±4% in a match. Neutral until he has at least two ratings behind him.
+ */
+export function formFactor(p: Player): number {
+  const f = p.form ?? [];
+  if (f.length < 2) return 1;
+  const avg = formOf(p) ?? 6.5;
+  return Math.round(Math.max(0.96, Math.min(1.04, 1 + (avg - 6.5) * 0.012)) * 1000) / 1000;
+}
+
+export const formHotter = (a: Player, b: Player): number => (formOf(b) ?? 6.5) - (formOf(a) ?? 6.5);
+
 export function recordMatch(p: Player, u: PlayerUpdate, ctx: MatchStatCtx): void {
   p.mins = (p.mins ?? 0) + u.minutes;
   p.yellows = (p.yellows ?? 0) + (u.yellow ?? 0);
@@ -53,7 +72,7 @@ export function recordMatch(p: Player, u: PlayerUpdate, ctx: MatchStatCtx): void
   if (u.minutes > 0 && typeof rt === "number" && Number.isFinite(rt)) {
     p.ratingSum = (p.ratingSum ?? 0) + rt;
     p.ratingCount = (p.ratingCount ?? 0) + 1;
-    p.form = [rt, ...(p.form ?? [])].slice(0, 6);
+    recordForm(p, rt);
   }
   if (ctx.userClub) {
     p.history = [
@@ -115,4 +134,17 @@ export function sortSquad(players: Player[], mode: SortMode, overall: (p: Player
       break;
   }
   return arr;
+}
+
+/** A round without football dulls the streak: three weeks out and it's gone. */
+export function formFreshnessTick(save: SaveGame, playedIds: Set<string>): void {
+  for (const p of save.players) {
+    if (playedIds.has(p.id)) {
+      p.formMiss = 0;
+      continue;
+    }
+    const miss = (p.formMiss ?? 0) + 1;
+    p.formMiss = miss;
+    if (miss >= 3 && (p.form ?? []).length > 0) p.form = [];
+  }
 }

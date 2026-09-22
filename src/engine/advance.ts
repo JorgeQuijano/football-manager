@@ -18,6 +18,9 @@ import { mediaGate, mediaTick, makePress } from "./media";
 import { applyPreContracts, payAddons, payTransferAddons, policyFor, settleDebts, policyPayoff } from "./market";
 import { loanRollover } from "./loans";
 import { internationalTick, jadedTick, sharpnessTick } from "./physical";
+import { PRE_ROUNDS, makeFriendlies, preseasonState } from "./preseason";
+import { pushNews } from "./training";
+import { formFreshnessTick, recordForm } from "./stats";
 import { moveTick, retrainTick, settleTargets } from "./individual";
 import { pushInbox } from "./inbox";
 
@@ -156,6 +159,8 @@ export function prepareRound(input: SaveGame): SaveGame {
 
 /** Apply the user's finished match, run between-rounds recovery and advance the round. */
 export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGame {
+  // pre-season: a friendly week, not a league one (v0.27)
+  if (input.round < 0) return completeFriendly(input, userResult);
   const save: SaveGame = structuredClone(input);
   const round = save.round;
 
@@ -244,6 +249,8 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
   for (const r of save.lastResults)
     for (const u of r.updates) minutesById[u.playerId] = (minutesById[u.playerId] ?? 0) + u.minutes;
   const withDev = developRound(save, minutesById);
+  // a week without football dulls a hot streak
+  formFreshnessTick(save, playedIds);
   // bodies: match sharpness rises and falls, wear accumulates, learners learn
   sharpnessTick(withDev, minutesById);
   jadedTick(withDev, minutesById);
@@ -260,6 +267,53 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
   // media: results move the fans, promises come due, the next conference is booked
   mediaTick(withTransfers, withTransfers.lastResults);
   return withTransfers;
+}
+
+/**
+ * A pre-season friendly: sharpness, form, condition and knocks — never the record books.
+ */
+export function completeFriendly(input: SaveGame, userResult?: MatchResult): SaveGame {
+  const save: SaveGame = structuredClone(input);
+  const round = save.round;
+  const fx = save.fixtures.find(
+    (f) => f.round === round && f.friendly && !f.played && (f.homeId === save.userClubId || f.awayId === save.userClubId)
+  );
+  if (fx && userResult) {
+    fx.played = true;
+    fx.homeGoals = userResult.homeGoals;
+    fx.awayGoals = userResult.awayGoals;
+    for (const u of userResult.updates) {
+      const p = save.players.find((pp) => pp.id === u.playerId);
+      if (!p) continue;
+      if (u.conditionLoss > 0) p.condition = Math.max(5, Math.round(p.condition - u.conditionLoss));
+      if (u.injuredWeeks > 0) p.injuredWeeks = Math.max(p.injuredWeeks, u.injuredWeeks);
+      const rt = userResult.ratings[u.playerId];
+      if (u.minutes > 0 && typeof rt === "number" && Number.isFinite(rt)) recordForm(p, rt);
+    }
+  }
+  save.live = undefined;
+  save.lastUserMatch = userResult;
+
+  const minutesById: Record<string, number> = {};
+  if (userResult) for (const u of userResult.updates) minutesById[u.playerId] = (minutesById[u.playerId] ?? 0) + u.minutes;
+  sharpnessTick(save, minutesById);
+  jadedTick(save, minutesById);
+  developRound(save, minutesById);
+  scoutingTick(save);
+  windowTick(save);
+
+  const after = preseasonState(save);
+  const next = PRE_ROUNDS.find((r) => save.fixtures.some((f) => f.round === r && f.friendly && !f.played));
+  if (next !== undefined) {
+    save.round = next;
+  } else {
+    // the flag drops: the league begins
+    save.round = 1;
+    save.phase = "league";
+    pushNews(save, "Pre-season is over — the league season starts this weekend.");
+  }
+  void after;
+  return save;
 }
 
 /**
@@ -294,11 +348,15 @@ export function nextSeason(input: SaveGame): SaveGame {
   // retirements remove players and before the season counters reset
   recordSeason(save);
   save.season += 1;
-  save.round = 1;
+  save.round = PRE_ROUNDS[0];
+  save.phase = "pre";
   save.live = undefined;
   save.offers = [];
   save.pending = undefined;
-  save.fixtures = buildFixtures(save.clubs, save.season, save.seed);
+  save.fixtures = [
+    ...buildFixtures(save.clubs, save.season, save.seed),
+    ...makeFriendlies(save, save.season)
+  ];
   // season-end: did he hit the personal target you set him? (before anything resets)
   settleTargets(save);
   // season-end: trait learning reads last season's minutes; then reset trackers + intake

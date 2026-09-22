@@ -12,10 +12,13 @@ import {
   seasonRounds,
   userFixtureForRound,
   weatherOf,
-  inboxUnread
+  inboxUnread,
+  friendlyDate,
+  formOf,
+  squadOf
 } from "@/engine";
 import { useGame } from "@/state/store";
-import { formColor, initials, ordinal } from "@/ui/format";
+import { formColor, initials, ordinal, shortName } from "@/ui/format";
 import { SettingsSheet } from "@/ui/sheets";
 import { MediaCard } from "@/ui/Press";
 
@@ -25,6 +28,18 @@ export function Home() {
   const setScreen = useGame((s) => s.setScreen);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const unread = inboxUnread(game);
+  const skipPreseason = useGame((s) => s.skipPreseason);
+  // the three hottest and two coldest regulars — who's playing well right now
+  const formWatch = (() => {
+    const withForm = squadOf(game.players, game.userClubId)
+      .map((p) => ({ p, f: formOf(p) ?? 0 }))
+      .filter((e) => e.f > 0 && (e.p.form?.length ?? 0) >= 2);
+    if (!withForm.length) return [] as { p: typeof withForm[number]["p"]; f: number; hot: boolean }[];
+    const sorted = withForm.slice().sort((a, b) => b.f - a.f);
+    const hot = sorted.slice(0, 3).map((e) => ({ ...e, hot: true }));
+    const cold = sorted.slice(-2).filter((e) => e.f < 6.4).map((e) => ({ ...e, hot: false }));
+    return [...hot, ...cold];
+  })();
 
   const club = game.clubs.find((c) => c.id === game.userClubId)!;
   const table = computeTable(game.fixtures, game.clubs);
@@ -102,12 +117,59 @@ export function Home() {
         </div>
       )}
 
+      {game.round < 0 && (
+        <Card className="mt-4 border-primary/40">
+          <CardContent className="space-y-2 p-4" data-testid="preseason-card">
+            <div className="flex items-center justify-between">
+              <span className="eyebrow">Pre-season</span>
+              <span className="text-[11px] font-bold text-primary tnum">
+                friendly {game.round + 4} of 3
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Friendlies build match sharpness and form, and they never touch the table. The league
+              starts on {fmtShort(roundDate(game.season, 1))} — this is your window for signings too.
+            </p>
+            <Button
+              variant="secondary"
+              className="h-11 w-full"
+              data-testid="skip-preseason"
+              onClick={skipPreseason}
+            >
+              Skip the rest of pre-season
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {formWatch.length > 0 && (
+        <div className="mt-3 rounded-xl border border-border bg-card p-3" data-testid="form-watch">
+          <div className="eyebrow">In form</div>
+          <div className="mt-1 space-y-1">
+            {formWatch.map(({ p, f, hot }) => (
+              <div key={p.id} className="flex items-center justify-between text-[11px] font-semibold">
+                <span className="min-w-0 truncate">
+                  {shortName(p.name)} <span className="text-muted-foreground">{p.pos}</span>
+                </span>
+                <span className="shrink-0 tnum" style={{ color: hot ? "#2ED573" : "#FF6B6B" }}>
+                  {hot ? "▲" : "▼"} {f.toFixed(1)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Last six ratings — hot players play above their level, cold ones below it.
+          </p>
+        </div>
+      )}
+
       {nextFixture && opponent && (
         <Card className="mt-4">
           <CardContent className="p-4">
             <div className="eyebrow">
-              Next · Round {game.round} of {seasonRounds(game)} ·{" "}
-              {fmtShort(roundDate(game.season, Math.min(game.round, seasonRounds(game))))}
+              {nextFixture?.friendly
+                ? `Pre-season · friendly ${game.round + 4} of 3 · ${fmtShort(friendlyDate(game.season, game.round + 3))}`
+                : `Next · Round ${game.round} of ${seasonRounds(game)} · ${fmtShort(roundDate(game.season, Math.min(game.round, seasonRounds(game))))}`}
             </div>
             <div className="mt-1.5 text-lg font-bold leading-tight">{opponent.name}</div>
             <div className="mt-0.5 text-xs text-muted-foreground">

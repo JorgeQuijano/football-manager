@@ -58,6 +58,7 @@ export function computeTable(fixtures: Fixture[], clubs: Club[]): TableRow[] {
     });
   }
   for (const f of fixtures) {
+    if (f.friendly || f.round < 1) continue; // pre-season never counts
     if (!f.played || f.homeGoals == null || f.awayGoals == null) continue;
     const h = rows.get(f.homeId)!;
     const a = rows.get(f.awayId)!;
@@ -112,6 +113,7 @@ export function formGuide(
     .filter(
       (f) =>
         f.played &&
+        !f.friendly && // pre-season results never count towards league form
         f.homeGoals != null &&
         f.awayGoals != null &&
         (f.homeId === clubId || f.awayId === clubId)
