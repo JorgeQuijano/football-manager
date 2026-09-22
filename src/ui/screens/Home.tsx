@@ -6,7 +6,9 @@ import {
   computeTable,
   conditionLine,
   conditionsFor,
+  fmtShort,
   formGuide,
+  roundDate,
   seasonRounds,
   userFixtureForRound,
   weatherOf
@@ -86,7 +88,8 @@ export function Home() {
         <Card className="mt-4">
           <CardContent className="p-4">
             <div className="eyebrow">
-              Next · Round {game.round} of {seasonRounds(game)}
+              Next · Round {game.round} of {seasonRounds(game)} ·{" "}
+              {fmtShort(roundDate(game.season, Math.min(game.round, seasonRounds(game))))}
             </div>
             <div className="mt-1.5 text-lg font-bold leading-tight">{opponent.name}</div>
             <div className="mt-0.5 text-xs text-muted-foreground">

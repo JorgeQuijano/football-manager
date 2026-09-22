@@ -23,6 +23,7 @@ import { hasTrait, TRAITS, traitsFor } from "./traits";
 import {
   ATTR_KEYS,
   INTENSITIES,
+  UNITS,
   aiPlan,
   developPlayer,
   developRound,
@@ -122,6 +123,22 @@ import {
 import { DEFAULT_CONDITIONS, REFS, WEATHERS, conditionEffects, conditionLine, conditionsFor, pitchOf, weatherOf } from "./conditions";
 import { HEADLINES_CAP, answerPress, mediaGate, mediaTick, makePress, questionPool, skipPress } from "./media";
 import { normalizeSave } from "../state/save";
+import {
+  addDays,
+  calendarMonth,
+  dayFor,
+  dayOfWeek,
+  daysInMonth,
+  diffDays,
+  fromSerial,
+  roundDate,
+  seasonMonths,
+  seasonRoundsOf,
+  seasonStart,
+  sameDay,
+  serial,
+  upcoming
+} from "./calendar";
 import type { CornerRoutine, FreeKickRoutine, Intensity, MatchConditions, MatchResult, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit, WeatherId } from "./types";
 import type { MatchStatCtx } from "./stats";
 
@@ -3224,6 +3241,164 @@ describe("media & press", () => {
     expect(fixed2.media!.press).toBeNull();
     expect(fixed2.media!.promises).toEqual([]);
     expect(fixed2.media!.pressCount).toBe(0);
+  });
+});
+
+describe("calendar", () => {
+  it("does civil date arithmetic without Date", () => {
+    expect(serial({ y: 1970, m: 0, d: 1 })).toBe(0);
+    expect(dayOfWeek({ y: 1970, m: 0, d: 1 })).toBe(4); // a Thursday
+    expect(dayOfWeek({ y: 2000, m: 0, d: 1 })).toBe(6); // a Saturday
+    expect(dayOfWeek(seasonStart(1))).toBe(6); // 8 Aug 2026 is a Saturday
+    expect(daysInMonth(2028, 1)).toBe(29); // leap year
+    expect(daysInMonth(2027, 1)).toBe(28);
+    for (let i = 0; i < 400; i++) {
+      const d = addDays({ y: 2026, m: 0, d: 1 }, i);
+      expect(sameDay(fromSerial(serial(d)), d)).toBe(true);
+    }
+  });
+
+  it("lays the season out week by week", () => {
+    const save = newGame(501);
+    expect(seasonStart(1)).toEqual({ y: 2026, m: 7, d: 8 });
+    expect(seasonStart(3)).toEqual({ y: 2028, m: 7, d: 8 });
+    expect(roundDate(1, 1)).toEqual({ y: 2026, m: 7, d: 8 });
+    expect(roundDate(1, 18)).toEqual(addDays({ y: 2026, m: 7, d: 8 }, 119)); // 5 Dec 2026
+    expect(roundDate(2, 1)).toEqual({ y: 2027, m: 7, d: 8 });
+    expect(dayOfWeek(roundDate(1, 7))).toBe(6); // every match day is a Saturday
+    expect(seasonRoundsOf(save)).toBe(18);
+    // a full month of paging for one season
+    const months = seasonMonths(save);
+    expect(months[0]).toEqual({ y: 2026, m: 7 }); // August 2026
+    expect(months[months.length - 1]).toEqual({ y: 2026, m: 11 }); // December 2026
+  });
+
+  it("marks match days, training days and rest days", () => {
+    const save = newGame(502);
+    const sat = roundDate(1, 1);
+    const matchDay = dayFor(save, sat)!;
+    const fx = save.fixtures.find(
+      (f) => f.round === 1 && (f.homeId === save.userClubId || f.awayId === save.userClubId)
+    )!;
+    const opp = fx.homeId === save.userClubId ? fx.awayId : fx.homeId;
+    expect(matchDay.match?.round).toBe(1);
+    expect(matchDay.match?.oppId).toBe(opp);
+    expect(matchDay.match?.home).toBe(fx.homeId === save.userClubId);
+    expect(matchDay.match?.played).toBe(false);
+    expect(matchDay.training).toBeUndefined();
+
+    const mon = addDays(sat, -5);
+    const trainingDay = dayFor(save, mon)!;
+    expect(trainingDay.training?.unit).toBe(save.training.unit);
+    expect(trainingDay.training?.label).toContain(UNITS[save.training.unit].label);
+    expect(trainingDay.match).toBeUndefined();
+
+    const sun = addDays(sat, 1);
+    const rest = dayFor(save, sun)!;
+    expect(rest.training).toBeUndefined();
+    expect(rest.match).toBeUndefined();
+
+    // outside the season there is no calendar at all
+    expect(dayFor(save, addDays(sat, -30))).toBeNull();
+    expect(dayFor(save, addDays(sat, 200))).toBeNull();
+  });
+
+  it("carries results into the past and leaves the future open", () => {
+    const played = playRound(newGame(503));
+    const save = played.save;
+    const past = roundDate(1, 1);
+    const pastDay = dayFor(save, past)!;
+    expect(pastDay.match?.played).toBe(true);
+    expect(typeof pastDay.match?.result).toBe("string");
+    expect(typeof pastDay.match?.gf).toBe("number");
+    const next = roundDate(1, save.round);
+    expect(dayFor(save, next)!.match?.played).toBe(false);
+    expect(dayFor(save, next)!.match?.result).toBeUndefined();
+  });
+
+  it("marks the transfer windows and the season's bookends", () => {
+    const save = newGame(504);
+    const dayAt = (round: number) => dayFor(save, roundDate(1, round))!;
+    const midweek = (round: number) => dayFor(save, addDays(roundDate(1, round), -3))!;
+    expect(dayAt(1).events).toContain("Season opener");
+    expect(dayAt(1).events).toContain("Summer window opens");
+    expect(dayAt(3).events).toContain("Summer window closes");
+    expect(dayAt(9).events).toContain("Winter window opens");
+    expect(dayAt(10).events).toContain("Winter window closes");
+    expect(dayAt(5).events).toEqual([]);
+    expect(dayAt(18).events).toContain("Final day");
+    // window markers sit on match day, not across the whole week
+    expect(midweek(1).events).toEqual([]);
+    expect(midweek(3).events).toEqual([]);
+  });
+
+  it("builds a month grid that lines up with the weekday", () => {
+    const save = newGame(505);
+    const aug = calendarMonth(save, 2026, 7);
+    expect(aug.label).toBe("August 2026");
+    expect(aug.weeks).toHaveLength(6);
+    for (const w of aug.weeks) expect(w).toHaveLength(7);
+    // 1 Aug 2026 is a Saturday: six empty cells lead the month
+    const firstRow = aug.weeks[0];
+    expect(firstRow[0]).toBeNull();
+    for (let i = 0; i < 6; i++) expect(firstRow[i]).toBeNull();
+    // every populated cell sits in its own weekday column — for every month of the season
+    for (const { y, m } of seasonMonths(save)) {
+      const cal = calendarMonth(save, y, m);
+      for (const row of cal.weeks) {
+        row.forEach((day, col) => {
+          if (day) expect(day.dow).toBe(col);
+        });
+      }
+    }
+    // the season's first Monday opens the grid's second row, and every in-season
+    // day of the month is present in the flat list
+    expect(sameDay(aug.weeks[1][1]!.date, { y: 2026, m: 7, d: 3 })).toBe(true);
+    expect(aug.weeks[1][6]!.match?.round).toBe(1); // the opener: Saturday, column 6
+    expect(aug.days.some((d) => d.date.d === 1)).toBe(false); // before the season opens
+    for (let d = 3; d <= 31; d++) expect(aug.days.some((x) => x.date.d === d)).toBe(true);
+    // 8 Aug is inside the month and is the opener
+    const opener = aug.days.find((d) => d.date.d === 8)!;
+    expect(opener.match?.round).toBe(1);
+    expect(opener.events).toContain("Season opener");
+  });
+
+  it("follows the round being played as 'this week'", () => {
+    const save = newGame(506);
+    const sat = roundDate(1, 1);
+    expect(dayFor(save, sat)!.currentWeek).toBe(true);
+    expect(dayFor(save, addDays(sat, -5))!.currentWeek).toBe(true);
+    expect(dayFor(save, addDays(sat, 7))!.currentWeek).toBe(false);
+    const next = playRound(save).save;
+    expect(next.round).toBe(2);
+    expect(dayFor(next, addDays(sat, 7))!.currentWeek).toBe(true);
+    expect(dayFor(next, sat)!.currentWeek).toBe(false);
+  });
+
+  it("lists the fixtures still to come with their dates", () => {
+    const save = newGame(507);
+    const up = upcoming(save, 5);
+    expect(up).toHaveLength(5);
+    expect(up[0].round).toBe(1);
+    expect(up.map((u) => u.round)).toEqual([1, 2, 3, 4, 5]);
+    for (let i = 1; i < up.length; i++) {
+      expect(diffDays(up[i].date, up[i - 1].date)).toBe(7);
+    }
+    expect(up[0].training).toContain(UNITS[save.training.unit].label);
+    // after a round the list shifts by one
+    const after = playRound(save).save;
+    expect(upcoming(after, 3).map((u) => u.round)).toEqual([2, 3, 4]);
+  });
+
+  it("is deterministic and never touches the save", () => {
+    const save = newGame(508);
+    const before = JSON.stringify(save);
+    const a = JSON.stringify(calendarMonth(save, 2026, 9));
+    const b = JSON.stringify(calendarMonth(save, 2026, 9));
+    expect(a).toBe(b);
+    expect(JSON.stringify(save)).toBe(before);
+    // and identical across two saves from the same seed
+    expect(JSON.stringify(calendarMonth(newGame(508), 2026, 9))).toBe(a);
   });
 });
 
