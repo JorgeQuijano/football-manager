@@ -29,6 +29,15 @@ import {
   learnTraits
 } from "./training";
 import {
+  CAREER_STAGES,
+  DEPTH_MIN,
+  STAGE_ORDER,
+  careerStage,
+  contractState,
+  depthLevel,
+  squadPlan
+} from "./planner";
+import {
   acceptOffer,
   bidForPlayer,
   freeAgents,
@@ -1350,6 +1359,127 @@ describe("training", () => {
     expect(new Set(units).size).toBeGreaterThan(2);
     const next = { ...s, season: 2 };
     expect(s.clubs.map((c) => aiPlan(next, c.id).unit)).not.toEqual(units);
+  });
+});
+
+describe("planner", () => {
+  const mkP = (over: Partial<Player> = {}): Player => ({
+    id: "pl1",
+    clubId: "c1",
+    name: "Plan Player",
+    age: 25,
+    pos: "FW",
+    attrs: { pace: 50, shooting: 50, passing: 50, defending: 50, physical: 50, reflexes: 40, handling: 40 },
+    traits: [],
+    contract: { wage: 0, until: 0 },
+    peak: 51,
+    dev: {},
+    devSeason: {},
+    focus: null,
+    condition: 100,
+    injuredWeeks: 0,
+    suspension: 0,
+    apps: 0,
+    goals: 0,
+    assists: 0,
+    ...over
+  });
+
+  it("career stages follow age and room to grow", () => {
+    expect(careerStage(mkP({ age: 17 }))).toBe("breakthrough");
+    expect(careerStage(mkP({ age: 22 }))).toBe("emerging");
+    expect(careerStage(mkP({ age: 25, peak: 99 }))).toBe("emerging"); // big room to grow
+    expect(careerStage(mkP({ age: 25, peak: 51 }))).toBe("peak"); // at his ceiling
+    expect(careerStage(mkP({ age: 31 }))).toBe("experienced");
+    expect(careerStage(mkP({ age: 36 }))).toBe("veteran");
+    expect(Object.keys(CAREER_STAGES).length).toBe(5);
+  });
+
+  it("classifies contract states", () => {
+    const s = newGame(7);
+    const p = mkP({ age: 25 });
+    expect(contractState({ ...p, contract: { wage: 0, until: s.season } }, s)).toBe("expiring");
+    expect(contractState({ ...p, contract: { wage: 0, until: s.season + 1 } }, s)).toBe("lastyear");
+    expect(contractState({ ...p, contract: { wage: 0, until: s.season + 3 } }, s)).toBe("secure");
+    expect(contractState({ ...p, age: 37, contract: { wage: 0, until: s.season + 3 } }, s)).toBe(
+      "retiring"
+    );
+  });
+
+  it("maps numbers to depth levels", () => {
+    expect(depthLevel("GK", 1)).toBe("gap");
+    expect(depthLevel("GK", 2)).toBe("thin");
+    expect(depthLevel("GK", 3)).toBe("ok");
+    expect(depthLevel("GK", 5)).toBe("deep");
+    expect(depthLevel("DF", 4)).toBe("gap");
+    expect(depthLevel("DF", 6)).toBe("thin");
+    expect(depthLevel("DF", 7)).toBe("ok");
+    expect(depthLevel("FW", 2)).toBe("gap");
+    expect(depthLevel("FW", 5)).toBe("ok");
+    expect(DEPTH_MIN.GK).toBe(2);
+  });
+
+  it("builds ranked groups from the formation", () => {
+    const s = newGame(7);
+    const plan = squadPlan(s);
+    expect(plan.groups.map((g) => g.pos)).toEqual(["GK", "DF", "MF", "FW"]);
+    expect(plan.groups[0].slots.length).toBe(1);
+    expect(plan.groups[1].slots.length).toBe(4);
+    const mine = squadOf(s.players, s.userClubId);
+    for (const g of plan.groups) {
+      expect(g.players.length).toBe(mine.filter((p) => p.pos === g.pos).length);
+      const scores = g.players.map((x) => x.score);
+      expect([...scores].sort((a, b) => b - a)).toEqual(scores);
+      expect(g.players.map((x) => x.rank)).toEqual(g.players.map((_, i) => i + 1));
+    }
+    expect(plan.total).toBe(mine.length);
+  });
+
+  it("flags gaps when a line is gutted", () => {
+    const s = structuredClone(newGame(7));
+    const fw = s.players.filter((p) => p.clubId === s.userClubId && p.pos === "FW");
+    fw.slice(0, fw.length - 3).forEach((p) => (p.clubId = ""));
+    const thin = squadPlan(s).groups.find((g) => g.pos === "FW")!;
+    expect(thin.players.length).toBe(3);
+    expect(thin.depth).toBe("thin");
+    s.players.find((p) => p.id === fw[fw.length - 1].id)!.clubId = "";
+    const gap = squadPlan(s).groups.find((g) => g.pos === "FW")!;
+    expect(gap.depth).toBe("gap");
+  });
+
+  it("projects next season: departures drop out, ages tick up", () => {
+    const s = structuredClone(newGame(7));
+    const mine = squadOf(s.players, s.userClubId);
+    const victim = mine.find((p) => p.pos === "FW")!;
+    victim.contract.until = s.season; // out of contract at season end
+    const now = squadPlan(s, "now");
+    const next = squadPlan(s, "next");
+    const gOf = (plan: ReturnType<typeof squadPlan>, pos: "FW") =>
+      plan.groups.find((x) => x.pos === pos)!;
+    expect(gOf(next, "FW").players.find((x) => x.player.id === victim.id)!.leaving).toBe(true);
+    expect(gOf(now, "FW").players.length).toBe(gOf(next, "FW").players.length);
+    expect(next.kept).toBe(now.total - next.expiring);
+    expect(next.expiring).toBeGreaterThanOrEqual(1);
+    const oldest = [...mine].sort((a, b) => b.age - a.age)[0];
+    const inNow = squadPlan(s, "now")
+      .groups.flatMap((x) => x.players)
+      .find((x) => x.player.id === oldest.id)!;
+    const inNext = squadPlan(s, "next")
+      .groups.flatMap((x) => x.players)
+      .find((x) => x.player.id === oldest.id)!;
+    expect(inNext.player.age).toBe(Math.min(40, inNow.player.age + 1));
+    expect(next.wageBillKept).toBeLessThanOrEqual(next.wageBill);
+  });
+
+  it("summarises the experience matrix and wages", () => {
+    const s = newGame(7);
+    const plan = squadPlan(s);
+    expect(plan.stages.map((x) => x.stage)).toEqual(STAGE_ORDER);
+    expect(plan.stages.reduce((n, x) => n + x.count, 0)).toBe(plan.total);
+    expect(plan.avgAge).toBeGreaterThan(17);
+    expect(plan.avgAge).toBeLessThan(40);
+    expect(plan.wageBill).toBe(wageBill(s, s.userClubId));
+    expect(JSON.stringify(squadPlan(s))).toBe(JSON.stringify(squadPlan(s)));
   });
 });
 
