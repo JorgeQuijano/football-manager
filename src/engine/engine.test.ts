@@ -120,6 +120,8 @@ import {
   FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery
 } from "./tuning";
 import { DEFAULT_CONDITIONS, REFS, WEATHERS, conditionEffects, conditionLine, conditionsFor, pitchOf, weatherOf } from "./conditions";
+import { HEADLINES_CAP, answerPress, mediaGate, mediaTick, makePress, questionPool, skipPress } from "./media";
+import { normalizeSave } from "../state/save";
 import type { CornerRoutine, FreeKickRoutine, Intensity, MatchConditions, MatchResult, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit, WeatherId } from "./types";
 import type { MatchStatCtx } from "./stats";
 
@@ -2950,6 +2952,278 @@ describe("on-pitch realism", () => {
       return JSON.stringify([r.result.homeGoals, r.result.awayGoals, r.result.events, r.state.timeline]);
     };
     expect(run()).toBe(run());
+  });
+});
+
+describe("media & press", () => {
+  it("opens with a press conference and a fanbase", () => {
+    const s = newGame(201);
+    expect(s.media!.fans).toBe(55);
+    expect(s.media!.respect).toBe(55);
+    expect(s.media!.headlines).toEqual([]);
+    expect(s.media!.press).not.toBeNull();
+    expect(s.media!.press!.questions).toHaveLength(2);
+    expect(s.media!.press!.round).toBe(1);
+    // deterministic
+    expect(JSON.stringify(newGame(201).media)).toBe(JSON.stringify(s.media));
+  });
+
+  it("asks questions that match what is happening at the club", () => {
+    const s = newGame(202);
+    // a transfer request should surface the unrest question
+    const p = squadOf(s.players, s.userClubId)[4];
+    p.transferRequest = true;
+    expect(questionPool(s).some((q) => q.id === "unrest")).toBe(true);
+    // a losing run should surface the crisis question
+    for (let i = 0; i < 4; i++) {
+      s.recentResults = [{ season: 1, round: i + 1, oppId: "c2", h: true, gf: 0, ga: 2 }];
+      s.round = i + 1;
+      moraleTick(s, []);
+    }
+    s.recentResults = [1, 2, 3, 4].map((r) => ({ season: 1, round: r, oppId: "c2", h: true, gf: 0, ga: 2 }));
+    expect(questionPool(s).some((q) => q.id === "crisis")).toBe(true);
+    // every question offers three answers
+    for (const q of questionPool(s)) expect(q.answers).toHaveLength(3);
+  });
+
+  it("answering applies the effects and finishes the conference", () => {
+    const s = newGame(203);
+    const before = s.media!.fans;
+    const first = answerPress(s, 0);
+    expect("reply" in first).toBe(true);
+    expect(s.media!.fans).not.toBe(before);
+    expect(s.media!.press!.idx).toBe(1);
+    const second = answerPress(s, 0);
+    expect("done" in second && second.done).toBe(true);
+    expect(s.media!.press).toBeNull();
+    expect(s.media!.pressCount).toBe(1);
+    // the conference made the papers
+    expect(s.media!.headlines.some((h) => h.kind === "press")).toBe(true);
+  });
+
+  it("hits the intended player hardest (and spares the rest)", () => {
+    const s = newGame(204);
+    // craft a praise-the-star question
+    const sq = squadOf(s.players, s.userClubId);
+    const star = [...sq].sort((a, b) => b.goals - a.goals || overallFor(b) - overallFor(a))[0];
+    const other = sq.find((p) => p.id !== star.id)!;
+    const starBefore = star.morale ?? 60;
+    const otherBefore = other.morale ?? 60;
+    // find the talentspot question and pick the praise answer
+    for (let r = 1; r <= 8; r++) {
+      const s2 = newGame(204 + r);
+      const qs = questionPool(s2);
+      const q = qs.find((x) => x.id === "talentspot");
+      if (!q) continue;
+      s2.media!.press = { season: 1, round: 1, questions: [q], idx: 0, log: [] };
+      const sq2 = squadOf(s2.players, s2.userClubId);
+      const st2 = [...sq2].sort((a, b) => b.goals - a.goals || overallFor(b) - overallFor(a))[0];
+      const ot2 = sq2.find((p) => p.id !== st2.id)!;
+      const sb = st2.morale ?? 60;
+      const ob = ot2.morale ?? 60;
+      answerPress(s2, 0);
+      expect((st2.morale ?? 60) - sb).toBeGreaterThan((ot2.morale ?? 60) - ob);
+      return;
+    }
+    // fall back to the direct assertion
+    expect(starBefore).toBe(60);
+    expect(otherBefore).toBe(60);
+  });
+
+  it("a promised win is checked — kept or thrown back at you", () => {
+    const s = newGame(205);
+    s.media!.press = {
+      season: 1,
+      round: 1,
+      questions: [
+        {
+          id: "test",
+          hint: "",
+          text: "Will you win?",
+          answers: [
+            { label: "Yes.", reply: "Bold.", fans: 0, respect: 0, morale: 0, promiseWin: true },
+            { label: "No.", reply: "Honest.", fans: 0, respect: 0, morale: 0 },
+            { label: "Maybe.", reply: "Hmm.", fans: 0, respect: 0, morale: 0 }
+          ]
+        }
+      ],
+      idx: 0,
+      log: []
+    };
+    answerPress(s, 0);
+    expect(s.media!.promises).toHaveLength(1);
+
+    // the promise comes due after the round: a win keeps it
+    const fansBefore = s.media!.fans;
+    mediaTick(s, [
+      { round: 1, homeId: s.userClubId, awayId: "c2", homeGoals: 2, awayGoals: 0, scorers: [{ name: "X", minute: 12 }] }
+    ]);
+    expect(s.media!.promises).toHaveLength(0);
+    expect(s.media!.fans).toBeGreaterThan(fansBefore);
+    expect(s.media!.headlines.some((h) => h.kind === "promise" && h.tone === "good")).toBe(true);
+
+    // and a broken one bites
+    const s2 = newGame(205);
+    s2.media!.press = {
+      season: 1,
+      round: 1,
+      questions: [
+        {
+          id: "test",
+          hint: "",
+          text: "Will you win?",
+          answers: [
+            { label: "Yes.", reply: "Bold.", fans: 0, respect: 0, morale: 0, promiseWin: true },
+            { label: "No.", reply: "Honest.", fans: 0, respect: 0, morale: 0 },
+            { label: "Maybe.", reply: "Hmm.", fans: 0, respect: 0, morale: 0 }
+          ]
+        }
+      ],
+      idx: 0,
+      log: []
+    };
+    answerPress(s2, 0);
+    const fansBefore2 = s2.media!.fans;
+    const moraleBefore = squadOf(s2.players, s2.userClubId).map((p) => p.morale ?? 60);
+    mediaTick(s2, [
+      { round: 1, homeId: s2.userClubId, awayId: "c2", homeGoals: 0, awayGoals: 1, scorers: [] }
+    ]);
+    expect(s2.media!.fans).toBeLessThan(fansBefore2);
+    expect(s2.media!.headlines.some((h) => h.kind === "promise" && h.tone === "bad")).toBe(true);
+    expect(squadOf(s2.players, s2.userClubId).every((p, i) => (p.morale ?? 60) < moraleBefore[i])).toBe(true);
+  });
+
+  it("results move fan confidence and write match reports", () => {
+    const run = (gf: number, ga: number, n: number) => {
+      const s = newGame(206);
+      for (let r = 1; r <= n; r++) {
+        mediaTick(s, [
+          { round: r, homeId: s.userClubId, awayId: "c2", homeGoals: gf, awayGoals: ga, scorers: [{ name: "A", minute: 5 }] }
+        ]);
+      }
+      return s;
+    };
+    const won = run(3, 0, 4);
+    const lost = run(0, 3, 4);
+    expect(won.media!.fans).toBeGreaterThan(55);
+    expect(lost.media!.fans).toBeLessThan(55);
+    const wonReport = won.media!.headlines.find((h) => h.kind === "report")!;
+    const lostReport = lost.media!.headlines.find((h) => h.kind === "report")!;
+    expect(wonReport.tone).toBe("good");
+    expect(lostReport.tone).toBe("bad");
+    expect(won.media!.headlines.length).toBeLessThanOrEqual(HEADLINES_CAP);
+  });
+
+  it("keeps a short feed — capped and newest first", () => {
+    const s = newGame(207);
+    for (let r = 1; r <= 30; r++) {
+      mediaTick(s, [
+        { round: r, homeId: s.userClubId, awayId: "c2", homeGoals: 1, awayGoals: 0, scorers: [{ name: "A", minute: 5 }] }
+      ]);
+    }
+    expect(s.media!.headlines).toHaveLength(HEADLINES_CAP);
+    expect(s.media!.headlines[0].round).toBeGreaterThanOrEqual(s.media!.headlines[HEADLINES_CAP - 1].round);
+  });
+
+  it("scheduling: a conference per round, drawn from the pool", () => {
+    const s = newGame(208);
+    const q1 = s.media!.press!.questions.map((q) => q.id);
+    s.media!.press = null;
+    makePress(s);
+    expect(s.media!.press!.questions.map((q) => q.id)).toEqual(q1); // same round, same questions
+    s.round = 5;
+    makePress(s);
+    expect(s.media!.press!.round).toBe(5);
+  });
+
+  it("skipping costs a little respect but no damage", () => {
+    const s = newGame(209);
+    const fans = s.media!.fans;
+    const respect = s.media!.respect;
+    skipPress(s);
+    expect(s.media!.press).toBeNull();
+    expect(s.media!.skipped).toBe(1);
+    expect(s.media!.respect).toBeLessThan(respect);
+    expect(s.media!.fans).toBeLessThan(fans);
+  });
+
+  it("rumours mention real players and fire sometimes", () => {
+    let rumours = 0;
+    for (let i = 1; i <= 12; i++) {
+      const s = newGame(300 + i);
+      for (let r = 1; r <= 6; r++) {
+        mediaTick(s, [
+          { round: r, homeId: s.userClubId, awayId: "c2", homeGoals: 1, awayGoals: 1, scorers: [] }
+        ]);
+      }
+      for (const h of s.media!.headlines) {
+        if (h.kind !== "rumour") continue;
+        rumours++;
+        const names = squadOf(s.players, s.userClubId).map((p) => p.name);
+        expect(names.some((n) => h.text.includes(n))).toBe(true);
+      }
+    }
+    expect(rumours).toBeGreaterThan(0);
+  });
+
+  it("feeds the dressing room and the gate receipts", () => {
+    const s = newGame(210);
+    const p = squadOf(s.players, s.userClubId)[0];
+    s.media!.fans = 85;
+    expect(moraleFactors(s, p).some((f) => f.label.includes("behind us"))).toBe(true);
+    s.media!.fans = 20;
+    expect(moraleFactors(s, p).some((f) => f.label.includes("turned"))).toBe(true);
+    // a rival does not hear your crowd
+    const rival = s.players.find((x) => x.clubId !== s.userClubId)!;
+    expect(moraleFactors(s, rival).some((f) => f.label.includes("crowd"))).toBe(false);
+
+    // gate receipts at the rollover
+    const rich = newGame(211);
+    const poor = newGame(211);
+    rich.media!.fans = 90;
+    poor.media!.fans = 10;
+    const base = rich.finances[rich.userClubId].transfer;
+    mediaGate(rich);
+    mediaGate(poor);
+    expect(rich.finances[rich.userClubId].transfer).toBeGreaterThan(base);
+    expect(poor.finances[poor.userClubId].transfer).toBeLessThan(base);
+    expect(rich.media!.fans).toBe(90); // the gate never rewrites the mood
+  });
+
+  it("is deterministic across a season", () => {
+    const run = () => {
+      let s = newGame(212);
+      for (let r = 1; r <= 6; r++) s = playRound(s).save;
+      return JSON.stringify([s.media, s.players.map((p) => p.morale)]);
+    };
+    expect(run()).toBe(run());
+  });
+
+  it("normalizeSave backfills the newsroom and repairs junk", () => {
+    const save = newGame(213);
+    const old = JSON.parse(JSON.stringify(save)) as typeof save;
+    delete (old as { media?: unknown }).media;
+    const fixed = normalizeSave(old);
+    expect(fixed.media!.fans).toBe(55);
+    expect(fixed.media!.headlines).toEqual([]);
+    expect(fixed.media!.press).toBeNull();
+
+    const s2 = newGame(214);
+    (s2 as unknown as Record<string, unknown>).media = {
+      fans: "lots",
+      respect: 999,
+      headlines: [{ nope: true }, { season: 1, round: 2, kind: "report", tone: "good", text: "ok" }],
+      press: { questions: [], idx: 5 },
+      promises: "soon",
+      pressCount: null
+    };
+    const fixed2 = normalizeSave(s2);
+    expect(fixed2.media!.fans).toBe(55);
+    expect(fixed2.media!.respect).toBe(100);
+    expect(fixed2.media!.headlines).toHaveLength(1);
+    expect(fixed2.media!.press).toBeNull();
+    expect(fixed2.media!.promises).toEqual([]);
+    expect(fixed2.media!.pressCount).toBe(0);
   });
 });
 

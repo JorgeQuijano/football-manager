@@ -44,15 +44,17 @@ import type { AttrKey, CornerRoutine, FreeKickRoutine, TrainingPlan } from "@/en
 import { cleanSetPieces } from "@/engine";
 import {
   addFocus as addFocusEngine,
+  answerPress as answerPressEngine,
   cancelRequest as cancelRequestEngine,
   dismissScout as dismissScoutEngine,
   hireScout as hireScoutEngine,
   scoutPlayer as scoutPlayerEngine,
+  skipPress as skipPressEngine,
   talkToPlayer as talkToPlayerEngine,
   toggleShortlist as toggleShortlistEngine,
   topUpScouting as topUpScoutingEngine
 } from "@/engine";
-import type { Position } from "@/engine";
+import type { PressOutcome, Position } from "@/engine";
 import { loadSave, persistSave } from "./save";
 
 export type Screen =
@@ -119,6 +121,10 @@ interface AppState {
   topUpScouting: (amount: number) => string | null;
   /** praise or warn a player; returns an error string or the reaction */
   talk: (playerId: string, kind: "praise" | "warn") => string | { message: string; delta: number };
+  /** answer the current press question; returns the outcome or an error */
+  answerPress: (index: number) => PressOutcome | { error: string };
+  /** send the assistant to the press conference */
+  skipPress: () => void;
   resetGame: () => void;
   importSave: (save: SaveGame) => void;
 }
@@ -664,6 +670,26 @@ export const useGame = create<AppState>()((set, get) => ({
     set({ game: save });
     schedulePersist(save);
     return { message: res.message, delta: res.delta };
+  },
+
+  answerPress: (index) => {
+    const { game } = get();
+    if (!game) return { error: "No game loaded." };
+    const save = structuredClone(game);
+    const res = answerPressEngine(save, index);
+    if ("error" in res) return res;
+    set({ game: save });
+    schedulePersist(save);
+    return res;
+  },
+
+  skipPress: () => {
+    const { game } = get();
+    if (!game) return;
+    const save = structuredClone(game);
+    skipPressEngine(save);
+    set({ game: save });
+    schedulePersist(save);
   },
 
   resetGame: () => {

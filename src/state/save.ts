@@ -9,7 +9,11 @@ import {
   ensureDev,
   emptyAwards,
   emptyHistory,
+  emptyMedia,
+  FANS_START,
+  HEADLINES_CAP,
   MORALE_START,
+  RESPECT_START,
   freshFinances,
   hashSeed,
   initScouting,
@@ -121,6 +125,34 @@ export function normalizeSave(save: SaveGame): SaveGame {
   save.recentResults = save.recentResults
     .filter((r) => r && typeof r.round === "number" && typeof r.oppId === "string")
     .slice(0, 8);
+  // media & press (v0.20): backfill the newsroom, repair a half-written state
+  if (!save.media || typeof save.media !== "object") {
+    save.media = emptyMedia();
+  } else {
+    const m = save.media;
+    if (typeof m.fans !== "number" || !Number.isFinite(m.fans)) m.fans = FANS_START;
+    if (typeof m.respect !== "number" || !Number.isFinite(m.respect)) m.respect = RESPECT_START;
+    m.fans = Math.max(0, Math.min(100, m.fans));
+    m.respect = Math.max(0, Math.min(100, m.respect));
+    if (!Array.isArray(m.headlines)) m.headlines = [];
+    m.headlines = m.headlines
+      .filter((h) => h && typeof h.text === "string" && typeof h.round === "number")
+      .slice(0, HEADLINES_CAP);
+    if (!Array.isArray(m.promises)) m.promises = [];
+    m.promises = m.promises.filter((p) => p && typeof p.round === "number");
+    if (typeof m.pressCount !== "number" || !Number.isFinite(m.pressCount)) m.pressCount = 0;
+    if (typeof m.skipped !== "number" || !Number.isFinite(m.skipped)) m.skipped = 0;
+    const press = m.press as { questions?: unknown; idx?: unknown } | null | undefined;
+    if (
+      !press ||
+      typeof press !== "object" ||
+      !Array.isArray(press.questions) ||
+      typeof press.idx !== "number" ||
+      press.idx >= press.questions.length
+    ) {
+      m.press = null;
+    }
+  }
   if (!Array.isArray(save.offers)) save.offers = [];
   save.offers = save.offers.filter(
     (o) =>

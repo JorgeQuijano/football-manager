@@ -14,6 +14,7 @@ import { scoutingBudgetFor, scoutingTick } from "./scouting";
 import { payPrize, recordSeason, roundAwards } from "./history";
 import { moraleTick, MORALE_START } from "./morale";
 import { conditionsFor } from "./conditions";
+import { mediaGate, mediaTick, makePress } from "./media";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -218,6 +219,8 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
   // Transfer activity for this round while a window is open (AI churn + bids for you).
   const withTransfers = windowTick(withDev);
   withTransfers.round = round + 1;
+  // media: results move the fans, promises come due, the next conference is booked
+  mediaTick(withTransfers, withTransfers.lastResults);
   return withTransfers;
 }
 
@@ -292,6 +295,8 @@ export function nextSeason(input: SaveGame): SaveGame {
   save.finances = freshFinances(save);
   // prize money for last season's finish lands with the new budgets
   payPrize(save);
+  // fan mood pays at the gate
+  mediaGate(save);
   // fresh scouting budget for the season
   save.scouting.budget = scoutingBudgetFor(save.finances[save.userClubId]?.transfer ?? 1_000_000);
   const def =
@@ -301,5 +306,6 @@ export function nextSeason(input: SaveGame): SaveGame {
   });
   save.lastResults = [];
   save.lastUserMatch = undefined;
+  makePress(save); // a new season, a fresh round of questions
   return save;
 }
