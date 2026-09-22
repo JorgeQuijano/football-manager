@@ -26,8 +26,21 @@ import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
 import { ScoutingView, Stars } from "@/ui/Scouting";
 import { PlayerDetailSheet } from "@/ui/sheets";
+import {
+  ContractDepth,
+  DealStructure,
+  LoanTargets,
+  LoansCard,
+  MarketActions,
+  MarketBar,
+  PreContractTargets
+} from "@/ui/Market";
+import { canPreContract, offerPreContract } from "@/engine";
+import type { ContractTerms, DealTerms } from "@/engine";
 
-type DealKind = "buy" | "renew" | "free";
+type DealKind = "buy" | "renew" | "free" | "loan" | "pre";
+type Structure = { instalments: number; addonApps: number; addonAmount: number; sellOn: number };
+type Depth = { years: number; signingBonus: number; perApp: number; perGoal: number; releaseClause: number; extensionYears: number };
 type Deal = {
   kind: DealKind;
   player: Player;
@@ -38,7 +51,30 @@ type Deal = {
   tone: "ok" | "warn" | "err";
   counterFee?: number;
   counterWage?: number;
+  structure: Structure;
+  depth: Depth;
+  loan: { share: number; fee: number; optionFee: number; obligation: boolean };
 };
+
+const freshStructure = (): Structure => ({ instalments: 1, addonApps: 0, addonAmount: 0, sellOn: 0 });
+const freshDepth = (years = 3): Depth => ({ years, signingBonus: 0, perApp: 0, perGoal: 0, releaseClause: 0, extensionYears: 0 });
+const asTerms = (d: Deal): DealTerms => ({
+  fee: d.fee,
+  instalments: d.structure.instalments,
+  ...(d.structure.addonApps > 0 && d.structure.addonAmount > 0
+    ? { addon: { apps: d.structure.addonApps, amount: d.structure.addonAmount } }
+    : {}),
+  ...(d.structure.sellOn > 0 ? { sellOn: d.structure.sellOn } : {})
+});
+const asContract = (d: Deal): ContractTerms => ({
+  wage: d.wage,
+  years: d.depth.years,
+  ...(d.depth.signingBonus > 0 ? { signingBonus: d.depth.signingBonus } : {}),
+  ...(d.depth.perApp > 0 ? { perApp: d.depth.perApp } : {}),
+  ...(d.depth.perGoal > 0 ? { perGoal: d.depth.perGoal } : {}),
+  ...(d.depth.releaseClause > 0 ? { releaseClause: d.depth.releaseClause } : {}),
+  ...(d.depth.extensionYears > 0 ? { extensionYears: d.depth.extensionYears } : {})
+});
 
 const cLabel = (until: number, season: number) =>
   until <= season ? "Expires this season" : `Until end of S${until}`;
@@ -54,6 +90,8 @@ export function Transfers() {
   const acceptIncoming = useGame((s) => s.acceptIncoming);
   const rejectIncoming = useGame((s) => s.rejectIncoming);
   const cancelDeal = useGame((s) => s.cancelDeal);
+  const loanIn = useGame((s) => s.loanIn);
+  const triggerExtension = useGame((s) => s.triggerExtension);
 
   const squad = squadOf(game.players, game.userClubId);
   const win = transferWindow(game);
@@ -89,8 +127,13 @@ export function Transfers() {
   const meetTerms = () => {
     if (!deal || deal.counterWage === undefined) return;
     const w = deal.counterWage;
+    const withWage: Deal = { ...deal, wage: w };
     const resp =
-      deal.kind === "buy" ? signTerms(deal.player.id, w) : deal.kind === "renew" ? renew(deal.player.id, w) : signFree(deal.player.id, w);
+      deal.kind === "buy" || deal.kind === "pre"
+        ? signTerms(deal.player.id, asContract(withWage))
+        : deal.kind === "renew"
+          ? renew(deal.player.id, asContract(withWage))
+          : signFree(deal.player.id, asContract(withWage));
     if (!resp) return;
     setDeal({
       ...deal,
@@ -117,6 +160,9 @@ export function Transfers() {
       step: "fee",
       fee: v,
       wage: fogWage(p),
+      structure: freshStructure(),
+      depth: freshDepth(),
+      loan: { share: 0.8, fee: 0, optionFee: 0, obligation: false },
       msg:
         est.tier === "extensive"
           ? `${p.name} is valued around ${money(v)}.`
@@ -134,6 +180,9 @@ export function Transfers() {
       step: "terms",
       fee: 0,
       wage: p.contract.wage,
+      structure: freshStructure(),
+      depth: freshDepth(3),
+      loan: { share: 0.8, fee: 0, optionFee: 0, obligation: false },
       msg: `Currently on ${money(p.contract.wage)}/wk. ${cLabel(p.contract.until, game.season)}.`,
       tone: "ok"
     });
@@ -145,13 +194,16 @@ export function Transfers() {
       step: "terms",
       fee: 0,
       wage: fogWage(p),
+      structure: freshStructure(),
+      depth: freshDepth(),
+      loan: { share: 0.8, fee: 0, optionFee: 0, obligation: false },
       msg: `Free agent. Your read: around ${money(fogWage(p))}/wk keeps him happy.`,
       tone: "ok"
     });
 
   const doBid = (fee: number) => {
     if (!deal) return;
-    const resp = bidFor(deal.player.id, fee);
+    const resp = bidFor(deal.player.id, asTerms({ ...deal, fee }));
     if (!resp) return;
     if (resp.kind === "accepted") {
       setDeal({
@@ -170,9 +222,66 @@ export function Transfers() {
     }
   };
 
+  const doLoan = () => {
+    if (!deal) return;
+    const resp = loanIn(deal.player.id, {
+      wageShare: deal.loan.share,
+      fee: deal.loan.fee,
+      ...(deal.loan.optionFee > 0 ? { optionFee: deal.loan.optionFee } : {}),
+      ...(deal.loan.obligation ? { obligation: true } : {})
+    });
+    if (!resp) return;
+    setDeal({
+      ...deal,
+      step: resp.kind === "accepted" ? "done" : "fee",
+      msg: resp.message,
+      tone: resp.kind === "accepted" ? "ok" : resp.kind === "counter" ? "warn" : "err",
+      ...(resp.kind === "counter" && resp.fee ? { loan: { ...deal.loan, fee: resp.fee, share: resp.share ?? deal.loan.share } } : {})
+    });
+  };
+
+  const doPre = () => {
+    if (!deal) return;
+    const err = offerPreContract(game, deal.player.id, deal.wage, deal.depth.years);
+    if (err.resp.ok) {
+      useGame.setState({ game: err.save });
+      setDeal({ ...deal, step: "done", msg: `Agreed — he joins for free at the end of the season on ${money(deal.wage)}/wk.`, tone: "ok" });
+    } else {
+      setDeal({ ...deal, msg: err.resp.message, tone: "err" });
+    }
+  };
+
+  const openPre = (p: Player) =>
+    setDeal({
+      kind: "pre",
+      player: p,
+      step: "terms",
+      fee: 0,
+      wage: Math.round((wageDemand(p) * 1.15) / 100) * 100,
+      msg: `${p.name} is out of contract in the summer — agree terms now and he's yours for nothing.`,
+      tone: "ok",
+      structure: freshStructure(),
+      depth: freshDepth(),
+      loan: { share: 0.8, fee: 0, optionFee: 0, obligation: false }
+    });
+
+  const openLoan = (p: Player) =>
+    setDeal({
+      kind: "loan",
+      player: p,
+      step: "fee",
+      fee: 0,
+      wage: p.contract.wage,
+      msg: `Borrow ${p.name} for the season — agree a loan fee and how much of his ${money(p.contract.wage)}/wk you cover.`,
+      tone: "ok",
+      structure: freshStructure(),
+      depth: freshDepth(),
+      loan: { share: 0.8, fee: 250_000, optionFee: 0, obligation: false }
+    });
+
   const doTerms = () => {
     if (!deal) return;
-    const resp = signTerms(deal.player.id, deal.wage);
+    const resp = signTerms(deal.player.id, asContract(deal));
     if (!resp) return;
     if (resp.kind === "accepted") {
       setDeal({ ...deal, step: "done", msg: resp.message, tone: "ok" });
@@ -185,7 +294,7 @@ export function Transfers() {
 
   const doRenew = () => {
     if (!deal) return;
-    const resp = renew(deal.player.id, deal.wage);
+    const resp = renew(deal.player.id, asContract(deal));
     if (!resp) return;
     if (resp.kind === "accepted") {
       setDeal({ ...deal, step: "done", msg: resp.message, tone: "ok" });
@@ -198,7 +307,7 @@ export function Transfers() {
 
   const doFree = () => {
     if (!deal) return;
-    const resp = signFree(deal.player.id, deal.wage);
+    const resp = signFree(deal.player.id, asContract(deal));
     if (!resp) return;
     if (resp.kind === "accepted") {
       setDeal({ ...deal, step: "done", msg: resp.message, tone: "ok" });
@@ -253,32 +362,9 @@ export function Transfers() {
         <ScoutingView onOpenPlayer={setDetailId} />
       ) : (
         <>
-      <div className="rounded-xl border border-border bg-card p-3" data-testid="budget-card">
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <div className="text-[11px] font-semibold text-muted-foreground">Transfer budget</div>
-            <div className="text-lg font-extrabold tnum" data-testid="transfer-budget">
-              {moneyK(fin.transfer)}
-            </div>
-          </div>
-          <div>
-            <div className="text-[11px] font-semibold text-muted-foreground">Wages / week</div>
-            <div className="text-lg font-extrabold tnum" data-testid="wage-metric">
-              {money(bill)}
-              <span className="text-xs font-semibold text-muted-foreground">
-                {" "}
-                / {money(fin.wageBudget)}
-              </span>
-            </div>
-          </div>
-        </div>
-        <div className="mt-2 flex items-center justify-between text-[11px] font-semibold">
-          <span className={headroom >= 0 ? "text-muted-foreground" : "text-[#FF6B6B]"}>
-            Wage headroom {money(headroom)}/wk
-          </span>
-          <span className="text-muted-foreground">{win.label}</span>
-        </div>
-      </div>
+      <MarketBar />
+      <LoansCard />
+      <PreContractTargets onPick={openPre} />
 
       {game.pending && !deal && (
         <div className="flex items-center justify-between gap-2 rounded-xl border border-primary/40 bg-card p-3 text-sm">
@@ -314,7 +400,10 @@ export function Transfers() {
                     {p.name} <span className="text-muted-foreground">→ {from.short}</span>
                   </div>
                   <div className="text-[11px] text-muted-foreground">
-                    {p.pos} · OVR {overallFor(p)} · bid {money(o.fee)} · valued {money(marketValue(p))}
+                    {p.pos} · OVR {overallFor(p)} ·{" "}
+                    {o.kind === "loan"
+                      ? `loan · ${money(o.fee)} fee · they cover ${Math.round((o.loan?.wageShare ?? 0) * 100)}% of his wages`
+                      : `bid ${money(o.fee)}${o.clause ? " (release clause)" : ""} · valued ${money(marketValue(p))}`}
                   </div>
                 </div>
                 <div className="flex shrink-0 gap-2">
@@ -393,6 +482,7 @@ export function Transfers() {
             The window is shut — offers can be made when it reopens.
           </p>
         )}
+        <LoanTargets clubId={browseId} onLoan={openLoan} />
         <div className="space-y-1.5">
           {browse.map((p) => {
             const est = estimateFor(game, p);
@@ -513,17 +603,36 @@ export function Transfers() {
             <>
               <SheetHeader>
                 <SheetTitle>
-                  {deal.kind === "buy" ? "Sign " : deal.kind === "renew" ? "New deal — " : "Free agent — "}
+                  {deal.kind === "buy"
+                    ? "Sign "
+                    : deal.kind === "renew"
+                      ? "New deal — "
+                      : deal.kind === "loan"
+                        ? "Loan — "
+                        : deal.kind === "pre"
+                          ? "Pre-contract — "
+                          : "Free agent — "}
                   {deal.player.name}
                 </SheetTitle>
                 <SheetDescription>
-                  {deal.player.pos} · age {deal.player.age} · OVR {overallFor(deal.player)} ·{" "}
-                  {deal.player.clubId === ""
-                    ? "free agent"
-                    : (game.clubs.find((c) => c.id === deal.player.clubId)?.name ?? "")}
+                  {(() => {
+                    const est = estimateFor(game, deal.player);
+                    const ovr =
+                      est.exactOvr !== null
+                        ? `OVR ${est.exactOvr}`
+                        : est.ovrRange
+                          ? `OVR ~${est.ovrRange[0]}–${est.ovrRange[1]}`
+                          : "no report";
+                    return `${deal.player.pos} · age ${deal.player.age} · ${ovr} · ${
+                      deal.player.clubId === ""
+                        ? "free agent"
+                        : (game.clubs.find((c) => c.id === deal.player.clubId)?.name ?? "")
+                    }`;
+                  })()}
                 </SheetDescription>
               </SheetHeader>
               <div className="space-y-4 px-4 pb-8" data-testid="deal-sheet">
+                <MarketActions player={deal.player} />
                 {deal.step === "fee" && (
                   <>
                     <div className="space-y-2">
@@ -583,12 +692,110 @@ export function Transfers() {
                         ))}
                       </div>
                     </div>
+                    {deal.kind === "buy" && (
+                      <DealStructure
+                        player={deal.player}
+                        fee={deal.fee}
+                        structure={deal.structure}
+                        setStructure={(structure) => setDeal({ ...deal, structure })}
+                      />
+                    )}
+                    {deal.kind === "loan" && (
+                      <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-2" data-testid="loan-structure">
+                        <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                          Loan terms
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {[0.5, 0.7, 0.85, 1].map((share) => (
+                            <button
+                              key={share}
+                              data-testid={`loan-share-${Math.round(share * 100)}`}
+                              onClick={() => setDeal({ ...deal, loan: { ...deal.loan, share } })}
+                              className={`h-11 flex-1 rounded-lg text-[11px] font-bold ${
+                                deal.loan.share === share
+                                  ? "bg-primary text-primary-foreground"
+                                  : "border border-border bg-card text-muted-foreground"
+                              }`}
+                            >
+                              {Math.round(share * 100)}% wages
+                            </button>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="space-y-1">
+                            <span className="text-[10px] font-semibold text-muted-foreground">Loan fee</span>
+                            <input
+                              data-testid="loan-fee"
+                              type="number"
+                              inputMode="numeric"
+                              step={50_000}
+                              value={deal.loan.fee}
+                              onChange={(e) =>
+                                setDeal({ ...deal, loan: { ...deal.loan, fee: Math.max(0, Number(e.target.value) || 0) } })
+                              }
+                              className="h-11 w-full rounded-lg border border-border bg-card px-3 text-sm font-bold tnum"
+                            />
+                          </label>
+                          <label className="space-y-1">
+                            <span className="text-[10px] font-semibold text-muted-foreground">Option to buy</span>
+                            <input
+                              data-testid="loan-option-fee"
+                              type="number"
+                              inputMode="numeric"
+                              step={500_000}
+                              value={deal.loan.optionFee}
+                              onChange={(e) =>
+                                setDeal({
+                                  ...deal,
+                                  loan: { ...deal.loan, optionFee: Math.max(0, Number(e.target.value) || 0) }
+                                })
+                              }
+                              className="h-11 w-full rounded-lg border border-border bg-card px-3 text-sm font-bold tnum"
+                            />
+                          </label>
+                        </div>
+                        <button
+                          data-testid="loan-obligation"
+                          onClick={() => setDeal({ ...deal, loan: { ...deal.loan, obligation: !deal.loan.obligation } })}
+                          className={`h-11 w-full rounded-lg text-xs font-bold ${
+                            deal.loan.obligation
+                              ? "bg-primary text-primary-foreground"
+                              : "border border-border bg-card text-muted-foreground"
+                          }`}
+                        >
+                          {deal.loan.obligation ? "Obligation to buy (they'll like this)" : "Make it an obligation to buy"}
+                        </button>
+                        <p className="text-[10px] text-muted-foreground">
+                          {deal.player.name} keeps his wages at{" "}
+                          {money(deal.player.contract.wage)}/wk — you pay the share you offer.
+                        </p>
+                      </div>
+                    )}
+                    {deal.kind !== "loan" && (
+                      <Button
+                        variant="ghost"
+                        className="h-11 w-full text-xs"
+                        data-testid="deal-switch-loan"
+                        onClick={() => setDeal({ ...deal, kind: "loan", loan: { ...deal.loan, fee: deal.loan.fee || 250_000 } })}
+                      >
+                        Or borrow him for the season instead
+                      </Button>
+                    )}
+                    {deal.kind === "loan" && (
+                      <Button
+                        variant="ghost"
+                        className="h-11 w-full text-xs"
+                        onClick={() => setDeal({ ...deal, kind: "buy" })}
+                      >
+                        Back to a permanent deal
+                      </Button>
+                    )}
                     {deal.counterFee !== undefined && (
                       <Button
                         variant="secondary"
                         className="h-11 w-full"
                         data-testid="deal-counter-accept"
-                        onClick={() => doBid(deal.counterFee!)}
+                        onClick={() => (deal.kind === "loan" ? doLoan() : doBid(deal.counterFee!))}
                       >
                         Accept their counter — {money(deal.counterFee)}
                       </Button>
@@ -596,10 +803,18 @@ export function Transfers() {
                     <Button
                       className="h-11 w-full"
                       data-testid="deal-bid"
-                      disabled={!win.open || deal.fee <= 0}
-                      onClick={() => doBid(deal.fee)}
+                      disabled={!win.open}
+                      onClick={() => (deal.kind === "loan" ? doLoan() : doBid(deal.fee))}
                     >
-                      {!win.open ? "Window closed" : deal.fee <= 0 ? "Enter a fee" : `Bid ${money(deal.fee)}`}
+                      {!win.open
+                        ? "Window closed"
+                        : deal.kind === "loan"
+                          ? deal.loan.fee <= 0
+                            ? "Set a loan fee"
+                            : `Ask to borrow — ${money(deal.loan.fee)} + ${Math.round(deal.loan.share * 100)}% wages`
+                          : deal.fee <= 0
+                            ? "Enter a fee"
+                            : `Bid ${money(deal.fee)}`}
                     </Button>
                   </>
                 )}
@@ -611,6 +826,11 @@ export function Transfers() {
                         Fee agreed: {money(deal.fee)}
                       </div>
                     )}
+                    <ContractDepth
+                      player={deal.player}
+                      contract={deal.depth}
+                      setContract={(depth) => setDeal({ ...deal, depth })}
+                    />
                     <div className="space-y-2">
                       <div className="flex items-center justify-between text-xs font-semibold">
                         <span className="text-muted-foreground">Wages offered / week</span>
@@ -657,13 +877,19 @@ export function Transfers() {
                     <Button
                       className="h-11 w-full"
                       data-testid="deal-submit"
-                      onClick={deal.kind === "buy" ? doTerms : deal.kind === "renew" ? doRenew : doFree}
+                      onClick={
+                        deal.kind === "buy"
+                          ? doTerms
+                          : deal.kind === "renew"
+                            ? doRenew
+                            : deal.kind === "pre"
+                              ? doPre
+                              : doFree
+                      }
                     >
-                      {deal.kind === "renew"
+                      {deal.kind === "renew" || deal.kind === "free" || deal.kind === "pre"
                         ? `Offer ${money(deal.wage)}/wk`
-                        : deal.kind === "free"
-                          ? `Offer ${money(deal.wage)}/wk`
-                          : `Offer terms — ${money(deal.wage)}/wk`}
+                        : `Offer terms — ${money(deal.wage)}/wk`}
                     </Button>
                   </>
                 )}
@@ -672,6 +898,19 @@ export function Transfers() {
                   {deal.msg}
                 </p>
 
+                {deal.step === "done" && deal.kind === "renew" && deal.depth.extensionYears > 0 && (
+                  <Button
+                    variant="secondary"
+                    className="h-11 w-full"
+                    data-testid="trigger-extension"
+                    onClick={() => {
+                      const err = triggerExtension(deal.player.id);
+                      setDeal({ ...deal, msg: err ?? "Option triggered.", tone: err ? "err" : "ok" });
+                    }}
+                  >
+                    Trigger the club option now
+                  </Button>
+                )}
                 {deal.step === "done" ? (
                   <Button className="h-11 w-full" data-testid="deal-done" onClick={() => setDeal(null)}>
                     Done

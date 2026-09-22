@@ -11,6 +11,7 @@ import {
   emptyHistory,
   emptyMedia,
   FANS_START,
+  policyFor,
   HEADLINES_CAP,
   MORALE_START,
   RESPECT_START,
@@ -120,6 +121,20 @@ export function normalizeSave(save: SaveGame): SaveGame {
     if (p.transferRequest !== true) delete p.transferRequest;
     if (typeof p.lastTalk !== "number" || !Number.isFinite(p.lastTalk)) delete p.lastTalk;
     if (p.talkKind !== "praise" && p.talkKind !== "warn") delete p.talkKind;
+  }
+  // market & contracts (v0.24): debts, the board's policy, pre-contracts, loan sanity
+  if (!Array.isArray(save.debts)) save.debts = [];
+  save.debts = save.debts.filter((d) => d && typeof d.amount === "number" && typeof d.clubId === "string");
+  if (!Array.isArray(save.preContracts)) save.preContracts = [];
+  save.preContracts = save.preContracts.filter((pc) => pc && typeof pc.playerId === "string" && typeof pc.wage === "number");
+  if (!save.policy || typeof save.policy !== "object" || typeof save.policy.label !== "string") {
+    save.policy = policyFor(save, save.season);
+  }
+  for (const p of save.players) {
+    const c = p.contract;
+    if (c && c.signingBonus !== undefined && (typeof c.signingBonus !== "number" || c.signingBonus < 0)) delete c.signingBonus;
+    // a loan record must agree with where the player actually is
+    if (p.loan && p.loan.toClubId !== p.clubId && p.loan.fromClubId !== p.clubId) p.loan = undefined;
   }
   if (!Array.isArray(save.recentResults)) save.recentResults = [];
   save.recentResults = save.recentResults

@@ -45,6 +45,14 @@ import { cleanSetPieces } from "@/engine";
 import {
   applyTeamTalk,
   addFocus as addFocusEngine,
+  askAgent as askAgentEngine,
+  bidForLoan,
+  cancelPreContract as cancelPreContractEngine,
+  exerciseLoanOption,
+  offerPreContract,
+  reallocate as reallocateEngine,
+  setListed as setListedEngine,
+  triggerExtension as triggerExtensionEngine,
   answerPress as answerPressEngine,
   cancelRequest as cancelRequestEngine,
   dismissScout as dismissScoutEngine,
@@ -57,6 +65,9 @@ import {
   leaders as leadersOf
 } from "@/engine";
 import type {
+  AgentInterest,
+  ContractTerms,
+  DealTerms,
   OppInstruction,
   PlayerInstruction,
   PressOutcome,
@@ -119,13 +130,28 @@ interface AppState {
   setBuilderFor: (id: string | null) => void;
   saveCustomFormation: (def: FormationDef) => void;
   deleteCustomFormation: (id: string) => void;
-  bidFor: (playerId: string, fee: number) => BidResponse | null;
-  signTerms: (playerId: string, wage: number) => BidResponse | null;
-  renew: (playerId: string, wage: number) => BidResponse | null;
-  signFree: (playerId: string, wage: number) => BidResponse | null;
+  bidFor: (playerId: string, terms: number | DealTerms) => BidResponse | null;
+  signTerms: (playerId: string, terms: number | ContractTerms) => BidResponse | null;
+  renew: (playerId: string, terms: number | ContractTerms) => BidResponse | null;
+  signFree: (playerId: string, terms: number | ContractTerms) => BidResponse | null;
   acceptIncoming: (offerId: string) => BidResponse | null;
   rejectIncoming: (offerId: string) => void;
   cancelDeal: () => void;
+  /** borrow a player for the season */
+  loanIn: (playerId: string, offer: { wageShare: number; fee: number; optionFee?: number; obligation?: boolean }) => BidResponse | null;
+  /** make a loanee permanent */
+  loanOption: (playerId: string) => string | null;
+  /** put a player on the market (or take him off it) */
+  setListed: (playerId: string, listed: boolean) => void;
+  /** what his agent reckons the market looks like */
+  askAgent: (playerId: string) => AgentInterest;
+  /** a free transfer agreed for the end of the season */
+  preContract: (playerId: string, wage: number, years: number) => string | null;
+  cancelPreContract: (playerId: string) => void;
+  /** take up a club option in a contract */
+  triggerExtension: (playerId: string) => string | null;
+  /** move money between the transfer budget and the wage ceiling */
+  reallocate: (direction: "toWage" | "toTransfer", weekly: number) => string;
   setTraining: (patch: Partial<TrainingPlan>) => void;
   setFocus: (playerId: string, focus: AttrKey | null) => void;
   setRoutine: (kind: "corner" | "freekick", routine: string) => void;
@@ -566,37 +592,37 @@ export const useGame = create<AppState>()((set, get) => ({
     schedulePersist(save);
   },
 
-  bidFor: (playerId, fee) => {
+  bidFor: (playerId, terms) => {
     const { game } = get();
     if (!game) return null;
-    const r = bidForPlayer(game, playerId, fee);
+    const r = bidForPlayer(game, playerId, terms);
     set({ game: r.save });
     schedulePersist(r.save);
     return r.resp;
   },
 
-  signTerms: (playerId, wage) => {
+  signTerms: (playerId, terms) => {
     const { game } = get();
     if (!game) return null;
-    const r = offerTerms(game, playerId, wage);
+    const r = offerTerms(game, playerId, terms);
     set({ game: r.save });
     schedulePersist(r.save);
     return r.resp;
   },
 
-  renew: (playerId, wage) => {
+  renew: (playerId, terms) => {
     const { game } = get();
     if (!game) return null;
-    const r = renewContract(game, playerId, wage);
+    const r = renewContract(game, playerId, terms);
     set({ game: r.save });
     schedulePersist(r.save);
     return r.resp;
   },
 
-  signFree: (playerId, wage) => {
+  signFree: (playerId, terms) => {
     const { game } = get();
     if (!game) return null;
-    const r = signFreeAgent(game, playerId, wage);
+    const r = signFreeAgent(game, playerId, terms);
     set({ game: r.save });
     schedulePersist(r.save);
     return r.resp;
@@ -625,6 +651,77 @@ export const useGame = create<AppState>()((set, get) => ({
     const save: SaveGame = { ...game, pending: undefined };
     set({ game: save });
     schedulePersist(save);
+  },
+
+  loanIn: (playerId, offer) => {
+    const { game } = get();
+    if (!game) return null;
+    const r = bidForLoan(game, playerId, offer);
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return { kind: r.resp.kind, message: r.resp.message, ...(r.resp.fee ? { fee: r.resp.fee } : {}) } as BidResponse;
+  },
+
+  loanOption: (playerId) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const r = exerciseLoanOption(game, playerId);
+    if (!r.resp.ok) return r.resp.message;
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return null;
+  },
+
+  setListed: (playerId, listed) => {
+    const { game } = get();
+    if (!game) return;
+    const save = setListedEngine(game, playerId, listed);
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  askAgent: (playerId) => {
+    const { game } = get();
+    return game ? askAgentEngine(game, playerId) : { level: "none" as const, clubs: 0, line: "No game loaded." };
+  },
+
+  preContract: (playerId, wage, years) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const r = offerPreContract(game, playerId, wage, years);
+    if (!r.resp.ok) return r.resp.message;
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return null;
+  },
+
+  cancelPreContract: (playerId) => {
+    const { game } = get();
+    if (!game) return;
+    const save = cancelPreContractEngine(game, playerId);
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  triggerExtension: (playerId) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const r = triggerExtensionEngine(game, playerId);
+    if (!r.resp.ok) return r.resp.message;
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return null;
+  },
+
+  reallocate: (direction, weekly) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const r = reallocateEngine(game, direction, weekly);
+    if (r.resp.ok) {
+      set({ game: r.save });
+      schedulePersist(r.save);
+    }
+    return r.resp.message;
   },
 
   setTraining: (patch) => {

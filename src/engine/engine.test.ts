@@ -5,6 +5,27 @@ import { nextSeason, playRound, resolveSide, seasonRounds } from "./advance";
 import { applySubstitution, simulateMatch, staminaAt, staminaDrainPerMinute, staminaStart, startMatch, advanceTo, finalizeMatch } from "./match";
 import { addLiveChange, finalizeLive, matchRoster, matchStats, playersById, resumeSecondHalf, startLive, staminaTint, userFixture } from "./live";
 import { applyTeamTalk, assistantAdvice, halfTimeReport, htTalks, oiEffect, oiLabel, piEffect, piLabel, shoutBy, shoutScale, talkDefFor, talkMoraleDelta } from "./talks";
+import {
+  askAgent,
+  triggerExtension,
+  listedPlayers,
+  payTransferAddons,
+  policyCheck,
+  policyFor,
+  policyPayoff,
+  preContractTargets,
+  isPreContracted,
+  reallocate,
+  setListed,
+  settleDebts,
+  canPreContract,
+  offerPreContract,
+  cancelPreContract,
+  applyPreContracts,
+  poachTick
+} from "./market";
+import { LOAN, bidForLoan, exerciseLoanOption, loanAsk, loanRollover, loanCount, loaneesIn, loaneesOut, sendOnLoan } from "./loans";
+import { dealCost, dealValue, termsDemand } from "./transfers";
 import { staminaFactor } from "./match";
 import { computeTable } from "./league";
 import {
@@ -80,6 +101,7 @@ import {
 } from "./setpieces";
 import {
   acceptOffer,
+  agentFeeFor,
   bidForPlayer,
   freeAgents,
   freshFinances,
@@ -141,7 +163,7 @@ import {
   serial,
   upcoming
 } from "./calendar";
-import type { CornerRoutine, FreeKickRoutine, Intensity, LiveChange, MatchConditions, MatchResult, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit, WeatherId } from "./types";
+import type { BoardPolicy, TransferOffer, CornerRoutine, FreeKickRoutine, Intensity, LiveChange, MatchConditions, MatchResult, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit, WeatherId } from "./types";
 import type { MatchStatCtx } from "./stats";
 
 function playSeason(start: SaveGame): SaveGame {
@@ -1267,7 +1289,7 @@ describe("transfers", () => {
     const p = done.save.players.find((x) => x.id === target.id)!;
     expect(p.clubId).toBe(done.save.userClubId);
     expect(p.contract.until).toBe(done.save.season + 3);
-    expect(done.save.finances[done.save.userClubId].transfer).toBe(budgetBefore - fee);
+    expect(done.save.finances[done.save.userClubId].transfer).toBe(budgetBefore - fee - agentFeeFor(wageDemand(target) * 1.3));
     expect(done.save.finances[seller].transfer).toBeGreaterThan(s.finances[seller].transfer - 1);
     expect(done.save.pending).toBeUndefined();
     expect(done.save.transferLog.length).toBe(1);
@@ -2372,7 +2394,7 @@ describe("history, records & awards", () => {
     for (const p of s2.players) {
       const was = prevTitles.get(p.id);
       if (was === undefined) continue; // new youth / free agents
-      const atChamp = p.clubId === champId && s1.players.find((x) => x.id === p.id)!.clubId === champId;
+      const atChamp = s1.players.find((x) => x.id === p.id)!.clubId === champId;
       expect(p.titles ?? 0).toBe(atChamp ? was + 1 : was);
     }
     expect(s2.history.titles).toBe(champId === s1.userClubId ? 1 : 0);
@@ -3964,6 +3986,441 @@ describe("match-day levers: instructions, talks & shouts", () => {
       return JSON.stringify([state[side].fire, state[side].shouts, state.home.goals, state.away.goals]);
     };
     expect(run()).toBe(run());
+  });
+});
+
+describe("the market, granular: deals, loans, contracts & the board", () => {
+  const rivalSquad = (save: SaveGame) => save.players.filter((p) => p.clubId && p.clubId !== save.userClubId && !p.loan);
+  const aTarget = (save: SaveGame, maxAge = 40) =>
+    rivalSquad(save).filter((p) => p.age <= maxAge).sort((a, b) => marketValue(b) - marketValue(a))[2];
+  const rich = (save: SaveGame): { save: SaveGame; u: string } => {
+    const u = save.userClubId;
+    // a clean board policy, so the tests exercise the market, not the board's rules
+    return {
+      save: { ...save, policy: { label: "test" }, finances: { ...save.finances, [u]: { transfer: 40_000_000, wageBudget: 3_000_000 } } },
+      u
+    };
+  };
+
+  it("values a structured deal: instalments cost more, add-ons and sell-on buy goodwill", () => {
+    const save = newGame(801);
+    const p = aTarget(save)!;
+    const cash = dealValue(p, { fee: 1_000_000 });
+    expect(dealValue(p, { fee: 1_000_000, instalments: 3 })).toBeLessThan(cash);
+    expect(dealValue(p, { fee: 1_000_000, addon: { apps: 10, amount: 400_000 } })).toBeGreaterThan(cash);
+    expect(dealValue(p, { fee: 1_000_000, sellOn: 20 })).toBeGreaterThan(cash);
+    expect(dealCost({ fee: 900_000, instalments: 3 }).now).toBe(300_000);
+    expect(dealCost({ fee: 900_000, instalments: 3, addon: { apps: 10, amount: 100_000 } }).total).toBe(1_000_000);
+  });
+
+  it("a lower fee wins the day when the add-ons are right", () => {
+    const save = newGame(802);
+    const p = aTarget(save)!;
+    const value = marketValue(p);
+    const { save: s } = rich(save);
+    // find the smallest cash offer the seller will take
+    let asked = 0;
+    for (let fee = Math.round(value * 0.8); fee <= value * 3; fee += 20_000) {
+      const res = bidForPlayer(s, p.id, fee);
+      if (res.resp.kind === "accepted") {
+        asked = fee;
+        break;
+      }
+    }
+    expect(asked).toBeGreaterThan(0);
+    // the same money spread over instalments is not enough on its own…
+    const under = Math.round(asked * 0.85);
+    expect(bidForPlayer(s, p.id, under).resp.kind).not.toBe("accepted");
+    // …but the same fee with structured extras is
+    const withStructure = bidForPlayer(s, p.id, {
+      fee: under,
+      addon: { apps: 10, amount: Math.round(asked * 0.35) },
+      sellOn: 20
+    });
+    expect(withStructure.resp.kind).toBe("accepted");
+    expect(withStructure.save.pending?.terms?.addon?.apps).toBe(10);
+    expect(withStructure.save.pending?.terms?.sellOn).toBe(20);
+  });
+
+  it("instalments leave a debt that comes due next season", () => {
+    const save = newGame(803);
+    const p = aTarget(save)!;
+    const { save: s } = rich(save);
+    const value = marketValue(p);
+    let ready = s;
+    for (let fee = Math.round(value * 0.8); fee <= value * 3; fee += 20_000) {
+      const res = bidForPlayer(ready, p.id, { fee, instalments: 3 });
+      if (res.resp.kind === "accepted") {
+        ready = res.save;
+        break;
+      }
+    }
+    const pending = ready.pending!;
+    const before = ready.finances[ready.userClubId].transfer;
+    const done = offerTerms(ready, p.id, { wage: wageDemand(p) * 2, years: 3 });
+    expect(done.resp.kind).toBe("accepted");
+    const first = Math.round(pending.fee / 3);
+    expect(before - done.save.finances[done.save.userClubId].transfer).toBeGreaterThanOrEqual(first);
+    const debts = (done.save.debts ?? []).filter((d) => d.playerId === p.id && !d.addonApps);
+    expect(debts.length).toBe(2);
+    expect(debts.every((d) => d.dueSeason === done.save.season + 1 || d.dueSeason === done.save.season + 2)).toBe(true);
+    // and they get paid at the rollover
+    const next = nextSeason(nextSeason(done.save));
+    expect((next.debts ?? []).filter((d) => d.playerId === p.id)).toHaveLength(0);
+  });
+
+  it("an appearance add-on is paid once he has played the games", () => {
+    const save = newGame(804);
+    const p = aTarget(save)!;
+    const { save: s } = rich(save);
+    const res = bidForPlayer(s, p.id, { fee: marketValue(p) * 2.2, addon: { apps: 10, amount: 300_000 } });
+    expect(res.resp.kind).toBe("accepted");
+    const signed = offerTerms(res.save, p.id, { wage: wageDemand(p) * 2, years: 3 });
+    const owed = (signed.save.debts ?? []).find((d) => d.addonApps === 10)!;
+    expect(owed).toBeTruthy();
+    // he hasn't played them yet
+    payTransferAddons(signed.save);
+    expect((signed.save.debts ?? []).some((d) => d.id === owed.id)).toBe(true);
+    // now he has
+    const pp = signed.save.players.find((x) => x.id === p.id)!;
+    pp.apps = 11;
+    const before = signed.save.finances[signed.save.userClubId].transfer;
+    payTransferAddons(signed.save);
+    expect(signed.save.finances[signed.save.userClubId].transfer).toBe(before - owed.amount);
+    expect((signed.save.debts ?? []).some((d) => d.id === owed.id)).toBe(false);
+  });
+
+  it("contract depth: length, bonuses and clauses all move the wage", () => {
+    const save = newGame(805);
+    const kid = squadOf(save.players, save.userClubId).sort((a, b) => a.age - b.age)[0];
+    const vet = squadOf(save.players, save.userClubId).sort((a, b) => b.age - a.age)[0];
+    const base = 10_000;
+    expect(termsDemand(kid, { wage: base, years: 5 }, base)).toBeLessThan(termsDemand(kid, { wage: base, years: 2 }, base));
+    expect(termsDemand(vet, { wage: base, years: 5 }, base)).toBeGreaterThan(termsDemand(vet, { wage: base, years: 2 }, base));
+    const plain = termsDemand(kid, { wage: base, years: 3 }, base);
+    expect(termsDemand(kid, { wage: base, years: 3, perGoal: 5_000 }, base)).toBeLessThan(plain);
+    expect(termsDemand(kid, { wage: base, years: 3, signingBonus: 500_000 }, base)).toBeLessThan(plain);
+    expect(termsDemand(kid, { wage: base, years: 3, releaseClause: marketValue(kid) }, base)).toBeLessThan(plain);
+    expect(termsDemand(kid, { wage: base, years: 3, extensionYears: 1 }, base)).toBeGreaterThan(plain);
+  });
+
+  it("a renewal with extras charges the bonus and stores the clauses", () => {
+    const save = newGame(806);
+    const p = squadOf(save.players, save.userClubId)[3];
+    const before = save.finances[save.userClubId].transfer;
+    const res = renewContract(save, p.id, {
+      wage: wageDemand(p) * 2.5,
+      years: 4,
+      signingBonus: 200_000,
+      perGoal: 3_000,
+      releaseClause: marketValue(p) * 4,
+      extensionYears: 1
+    });
+    expect(res.resp.kind).toBe("accepted");
+    const pp = res.save.players.find((x) => x.id === p.id)!;
+    expect(pp.contract.until).toBe(res.save.season + 4);
+    expect(pp.contract.perGoal).toBe(3_000);
+    expect(pp.contract.extensionYears).toBe(1);
+    expect(pp.contract.releaseClause).toBe(marketValue(p) * 4);
+    expect(res.save.finances[res.save.userClubId].transfer).toBe(before - 200_000);
+    // the option can be triggered once
+    const ext = triggerExtension(res.save, p.id);
+    expect(ext.resp.ok).toBe(true);
+    expect(ext.save.players.find((x) => x.id === p.id)!.contract.until).toBe(res.save.season + 5);
+    expect(ext.save.players.find((x) => x.id === p.id)!.contract.extensionYears).toBeUndefined();
+    expect(triggerExtension(ext.save, p.id).resp.ok).toBe(false);
+  });
+
+  it("a release clause in a contract lets a rival take him", () => {
+    const save = newGame(807);
+    const p = squadOf(save.players, save.userClubId).sort((a, b) => overallFor(b) - overallFor(a))[0];
+    const players = save.players.map((x) =>
+      x.id === p.id ? { ...x, contract: { ...x.contract, releaseClause: 400_000 } } : x
+    );
+    const s: SaveGame = { ...save, players };
+    let found: TransferOffer | undefined;
+    for (let r = 1; r <= 3 && !found; r++) {
+      const ticked = windowTick({ ...s, round: r });
+      found = ticked.offers.find((o) => o.clause);
+    }
+    expect(found).toBeTruthy();
+    expect(found!.fee).toBe(400_000);
+    const done = acceptOffer({ ...s, round: 1, offers: [found!] }, found!.id);
+    expect(done.resp.kind).toBe("accepted");
+    expect(done.save.players.find((x) => x.id === p.id)!.clubId).not.toBe(save.userClubId);
+  });
+
+  it("a loan brings a player in: fee, wage share, and a hard limit", () => {
+    const save = newGame(808);
+    const { save: s } = rich(save);
+    const kids = rivalSquad(s).filter((p) => p.age <= 21).sort((a, b) => overallFor(b) - overallFor(a));
+    expect(kids.length).toBeGreaterThan(1);
+    const target = kids[0];
+    // stingy terms get nowhere
+    expect(bidForLoan(s, target.id, { wageShare: 0.2, fee: 0 }).resp.kind).not.toBe("accepted");
+    // a fair offer does
+    const ask = loanAsk(target, 2000, 2000);
+    const res = bidForLoan(s, target.id, { wageShare: 1, fee: Math.round(ask.fee * 1.8) });
+    expect(res.resp.kind).toBe("accepted");
+    const save2 = res.save;
+    const mine = save2.players.find((x) => x.id === target.id)!;
+    expect(mine.clubId).toBe(save2.userClubId);
+    expect(mine.loan?.fromClubId).not.toBe(save2.userClubId);
+    expect(loaneesIn(save2).some((x) => x.id === target.id)).toBe(true);
+    const before = wageBill(save2, save2.userClubId);
+    // only our share of his wage counts
+    const shareWage = mine.contract.wage * mine.loan!.wageShare;
+    expect(before).toBeGreaterThan(shareWage);
+    // fill the quota, then the door closes
+    let filled = save2;
+    let n = loanCount(filled, "in");
+    for (const k of kids.slice(1)) {
+      if (n >= LOAN.maxIn) break;
+      const r = bidForLoan(filled, k.id, { wageShare: 1, fee: loanAsk(k, 2000, 2000).fee * 3 });
+      if (r.resp.kind === "accepted") {
+        filled = r.save;
+        n = loanCount(filled, "in");
+      }
+    }
+    expect(n).toBe(LOAN.maxIn);
+    const more = kids.filter((k) => !filled.players.find((x) => x.id === k.id)?.loan);
+    if (more.length) {
+      const blocked = bidForLoan(filled, more[0].id, { wageShare: 1, fee: 5_000_000 });
+      expect(blocked.resp.kind).toBe("rejected");
+      expect(blocked.resp.message).toMatch(/loan/i);
+    }
+  });
+
+  it("a loan option becomes a signing, an obligation lands on its own", () => {
+    const save = newGame(809);
+    const { save: s } = rich(save);
+    const kid = rivalSquad(s).filter((p) => p.age <= 21).sort((a, b) => overallFor(b) - overallFor(a))[0];
+    const ask = loanAsk(kid, 2000, 2000);
+    const res = bidForLoan(s, kid.id, {
+      wageShare: 1,
+      fee: Math.round(ask.fee * 2),
+      optionFee: Math.round(marketValue(kid) * 1.6)
+    });
+    expect(res.resp.kind).toBe("accepted");
+    const withOption = res.save.players.find((x) => x.id === kid.id)!;
+    expect(withOption.loan?.optionFee).toBe(Math.round(marketValue(kid) * 1.6));
+    const budgetBefore = res.save.finances[res.save.userClubId].transfer;
+    const done = exerciseLoanOption(res.save, kid.id);
+    expect(done.resp.ok).toBe(true);
+    const pp = done.save.players.find((x) => x.id === kid.id)!;
+    expect(pp.loan).toBeUndefined();
+    expect(pp.clubId).toBe(done.save.userClubId);
+    expect(pp.contract.until).toBeGreaterThan(done.save.season);
+    expect(done.save.finances[done.save.userClubId].transfer).toBeLessThan(budgetBefore);
+    // an obligation completes by itself when the loan ends
+    const kid2 = rivalSquad(s).filter((p) => p.age <= 21).sort((a, b) => overallFor(b) - overallFor(a))[1];
+    const r2 = bidForLoan(s, kid2.id, {
+      wageShare: 1,
+      fee: Math.round(loanAsk(kid2, 2000, 2000).fee * 2),
+      optionFee: Math.round(marketValue(kid2) * 1.6),
+      obligation: true
+    });
+    expect(r2.resp.kind).toBe("accepted");
+    const after = { ...r2.save, season: r2.save.season + 1 };
+    loanRollover(after);
+    const done2 = after.players.find((x) => x.id === kid2.id)!;
+    expect(done2.loan).toBeUndefined();
+    expect(done2.clubId).toBe(after.userClubId);
+  });
+
+  it("you can't sell a loanee or borrow the same player twice", () => {
+    const save = newGame(810);
+    const { save: s } = rich(save);
+    const kid = rivalSquad(s).filter((p) => p.age <= 21).sort((a, b) => overallFor(b) - overallFor(a))[0];
+    const res = bidForLoan(s, kid.id, { wageShare: 1, fee: Math.round(loanAsk(kid, 2000, 2000).fee * 1.8) });
+    expect(res.resp.kind).toBe("accepted");
+    const offer: TransferOffer = {
+      id: "of-x",
+      playerId: kid.id,
+      fromClubId: save.clubs.find((c) => c.id !== save.userClubId)!.id,
+      fee: 9_000_000,
+      day: "R1 · summer window"
+    };
+    const sale = acceptOffer({ ...res.save, offers: [offer] }, "of-x");
+    expect(sale.resp.kind).toBe("rejected");
+    const again = bidForLoan(res.save, kid.id, { wageShare: 1, fee: 9_000_000 });
+    expect(again.resp.kind).toBe("rejected");
+  });
+
+  it("loans out: he plays elsewhere, you pay the rest, he comes back", () => {
+    const save = newGame(811);
+    const mine = squadOf(save.players, save.userClubId).sort((a, b) => a.age - b.age)[0];
+    const before = wageBill(save, save.userClubId);
+    const loan = { wageShare: 0.7, fee: 120_000 };
+    const s = sendOnLoan(save, mine.id, save.clubs.find((c) => c.id !== save.userClubId)!.id, loan);
+    const pp = s.players.find((x) => x.id === mine.id)!;
+    expect(pp.clubId).not.toBe(save.userClubId);
+    expect(pp.loan?.fromClubId).toBe(save.userClubId);
+    expect(loaneesOut(s).some((x) => x.id === mine.id)).toBe(true);
+    // we still pay the 30% we didn't hand over
+    const after = wageBill(s, save.userClubId);
+    expect(Math.abs(before - after - pp.contract.wage * 0.7)).toBeLessThanOrEqual(1);
+    // …and he's back for pre-season
+    const back = { ...s, season: s.season + 1 };
+    loanRollover(back);
+    expect(back.players.find((x) => x.id === mine.id)!.clubId).toBe(save.userClubId);
+    expect(back.players.find((x) => x.id === mine.id)!.loan).toBeUndefined();
+  });
+
+  it("the board's policy vetoes deals it won't sanction", () => {
+    const save = newGame(812);
+    const { save: s } = rich(save);
+    const old = rivalSquad(s).sort((a, b) => b.age - a.age)[0];
+    expect(old.age).toBeGreaterThanOrEqual(30);
+    const policy: BoardPolicy = { label: "Youth first: nobody over 27.", maxAge: 27 };
+    const blocked = bidForPlayer({ ...s, policy }, old.id, marketValue(old) * 2);
+    expect(blocked.resp.kind).toBe("rejected");
+    expect(blocked.resp.message).toMatch(/board|policy|over 27/i);
+    const kid = rivalSquad(s).filter((p) => p.age <= 21).sort((a, b) => overallFor(b) - overallFor(a))[0];
+    const ok = bidForPlayer({ ...s, policy }, kid.id, marketValue(kid) * 2);
+    expect(ok.resp.kind).toBe("accepted");
+    // a spending cap bites too
+    // money targets are the board's judgement, not a veto…
+    const capped: BoardPolicy = { label: "No deal above £1m.", maxFee: 1_000_000 };
+    expect(policyCheck(capped, kid, { fee: 4_000_000 }).ok).toBe(true);
+    // …and you can always re-sign your own veterans
+    expect(policyCheck(policy, old, {}, "renew").ok).toBe(true);
+    expect(policyCheck(policy, old, {}).ok).toBe(false);
+  });
+
+  it("the board judges the window at the rollover", () => {
+    const save = newGame(813);
+    const policy: BoardPolicy = { label: "Sign under-23s.", preferAge: 23 };
+    const withPolicy: SaveGame = {
+      ...save,
+      policy,
+      windowLog: [
+        { season: save.season, playerId: "a", age: 20, wage: 10_000, fee: 900_000 },
+        { season: save.season, playerId: "b", age: 22, wage: 12_000, fee: 1_100_000 }
+      ]
+    };
+    const good = { ...withPolicy, season: withPolicy.season + 1 };
+    const beforeGood = good.finances[good.userClubId].transfer;
+    policyPayoff(good);
+    expect(good.finances[good.userClubId].transfer).toBe(beforeGood + 900_000);
+    expect(good.devNews.some((n) => /board/i.test(n))).toBe(true);
+    // ignoring it costs you
+    const bad: SaveGame = {
+      ...withPolicy,
+      season: withPolicy.season + 1,
+      windowLog: [{ season: withPolicy.season, playerId: "c", age: 33, wage: 60_000, fee: 6_000_000 }]
+    };
+    const beforeBad = bad.finances[bad.userClubId].transfer;
+    policyPayoff(bad);
+    expect(bad.finances[bad.userClubId].transfer).toBe(beforeBad - 500_000);
+  });
+
+  it("money moves between the transfer budget and the wage ceiling", () => {
+    const save = newGame(814);
+    const u = save.userClubId;
+    const t0 = save.finances[u].transfer;
+    const w0 = save.finances[u].wageBudget;
+    const toWage = reallocate(save, "toWage", 20_000);
+    expect(toWage.resp.ok).toBe(true);
+    expect(toWage.save.finances[u].transfer).toBe(t0 - 20_000 * 52);
+    expect(toWage.save.finances[u].wageBudget).toBe(w0 + 20_000);
+    const back = reallocate(toWage.save, "toTransfer", 10_000);
+    expect(back.resp.ok).toBe(true);
+    expect(back.save.finances[u].wageBudget).toBe(w0 + 10_000);
+    expect(back.save.finances[u].transfer).toBe(t0 - 10_000 * 52);
+    // you can't spend what you haven't got
+    expect(reallocate(save, "toWage", 99_000_000).resp.ok).toBe(false);
+    // and you can't cripple the wage bill either
+    expect(reallocate(save, "toTransfer", 99_000_000).resp.ok).toBe(false);
+  });
+
+  it("listing a player tells the market — and upsets him", () => {
+    const save = newGame(815);
+    const p = squadOf(save.players, save.userClubId)[5];
+    const morale0 = p.morale;
+    const listed = setListed(save, p.id, true);
+    expect(listed.players.find((x) => x.id === p.id)!.transferListed).toBe(true);
+    expect(listed.players.find((x) => x.id === p.id)!.morale!).toBeLessThan(morale0 ?? 0);
+    expect(listedPlayers(listed).some((x) => x.id === p.id)).toBe(true);
+    const unlisted = setListed(listed, p.id, false);
+    expect(unlisted.players.find((x) => x.id === p.id)!.transferListed).toBeFalsy();
+    expect(askAgent(save, p.id).line.length).toBeGreaterThan(3);
+  });
+
+  it("his agent knows who is interested", () => {
+    const save = newGame(816);
+    const star = squadOf(save.players, save.userClubId).sort((a, b) => overallFor(b) - overallFor(a))[0];
+    const kid = squadOf(save.players, save.userClubId).sort((a, b) => a.age - b.age)[0];
+    const a = askAgent(save, star.id);
+    const b = askAgent(save, kid.id);
+    expect(a.clubs).toBeGreaterThanOrEqual(b.clubs);
+    expect(["none", "some", "strong"]).toContain(a.level);
+    expect(b.line).toMatch(/club/i);
+  });
+
+  it("pre-contracts are a winter market", () => {
+    const save = newGame(817);
+    const summer = { ...save, round: 4 };
+    expect(canPreContract(summer)).toBe(false);
+    // a rival whose deal runs out this summer is the classic Bosman
+    const target = rivalSquad(save).sort((a, b) => overallFor(b) - overallFor(a))[4];
+    const expiring: SaveGame = {
+      ...save,
+      players: save.players.map((x) => (x.id === target.id ? { ...x, contract: { ...x.contract, until: save.season } } : x))
+    };
+    const targets = preContractTargets({ ...expiring, round: 9 });
+    expect(targets.length).toBeGreaterThan(0);
+    expect(targets.every((p) => p.contract.until === expiring.season)).toBe(true);
+    // not in the window yet: no deal
+    const early = offerPreContract({ ...expiring, round: 4 }, targets[0].id, 250_000, 3);
+    expect(early.resp.ok).toBe(false);
+    expect(early.resp.message).toMatch(/winter/i);
+    // in it: done
+    const winter = { ...expiring, round: 9 };
+    const deal = offerPreContract(winter, targets[0].id, 250_000, 3);
+    expect(deal.resp.ok).toBe(true);
+    const pc = deal.save.preContracts!.find((x) => x.playerId === targets[0].id)!;
+    expect(pc.wage).toBe(250_000);
+    expect(isPreContracted(deal.save, targets[0].id)).toBe(true);
+    // he arrives for free in pre-season
+    const next = { ...deal.save, season: deal.save.season + 1 };
+    applyPreContracts(next);
+    const pp = next.players.find((x) => x.id === targets[0].id)!;
+    expect(pp.clubId).toBe(next.userClubId);
+    expect(pp.contract.wage).toBe(250_000);
+    expect(next.preContracts!.some((x) => x.playerId === targets[0].id)).toBe(false);
+    // and you can change your mind
+    const cancelled = cancelPreContract(deal.save, targets[0].id);
+    expect(cancelled.preContracts!.length).toBe(deal.save.preContracts!.length - 1);
+  });
+
+  it("rival clubs poach the players you let run down", () => {
+    const save = newGame(818);
+    const p = squadOf(save.players, save.userClubId)[7];
+    const players = save.players.map((x) => (x.id === p.id ? { ...x, contract: { ...x.contract, until: save.season } } : x));
+    let poached: SaveGame | undefined;
+    for (let s = 0; s < 24 && !poached; s++) {
+      const trial: SaveGame = { ...save, players, round: 9, seed: save.seed + s };
+      poachTick(trial);
+      if ((trial.preContracts ?? []).some((pc) => pc.playerId === p.id)) poached = trial;
+    }
+    expect(poached).toBeTruthy();
+    const next = { ...poached!, season: poached!.season + 1 };
+    applyPreContracts(next);
+    const gone = next.players.find((x) => x.id === p.id)!;
+    expect(gone.clubId).not.toBe(next.userClubId);
+  });
+
+  it("stays deterministic with loans, policies and structured deals", () => {
+    const run = (seed: number) => {
+      const save = newGame(seed);
+      const kid = rivalSquad(save).filter((p) => p.age <= 21).sort((a, b) => overallFor(b) - overallFor(a))[0];
+      const r = bidForLoan(save, kid.id, { wageShare: 0.8, fee: 500_000 });
+      const ticked = windowTick({ ...r.save, round: 1 });
+      return JSON.stringify({ offers: ticked.offers, loans: ticked.players.filter((p) => p.loan).map((p) => p.id), policy: ticked.policy });
+    };
+    expect(run(919)).toBe(run(919));
+    expect(run(919)).not.toBe(run(920));
   });
 });
 

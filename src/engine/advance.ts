@@ -15,6 +15,8 @@ import { payPrize, recordSeason, roundAwards } from "./history";
 import { moraleTick, MORALE_START } from "./morale";
 import { conditionsFor } from "./conditions";
 import { mediaGate, mediaTick, makePress } from "./media";
+import { applyPreContracts, payAddons, payTransferAddons, policyFor, settleDebts, policyPayoff } from "./market";
+import { loanRollover } from "./loans";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -284,6 +286,10 @@ export function nextSeason(input: SaveGame): SaveGame {
     p.ratingCount = 0;
     p.form = [];
   }
+  // loans resolve first: everyone goes home, obligations complete
+  loanRollover(save);
+  // …then the free transfers agreed back in the winter window
+  applyPreContracts(save);
   // contracts: expiries leave (AI clubs re-sign most), then a fresh free-agent intake
   rollContracts(save);
   for (let i = 0; i < TF.freeAgentsPerSeason; i++) {
@@ -297,6 +303,13 @@ export function nextSeason(input: SaveGame): SaveGame {
   payPrize(save);
   // fan mood pays at the gate
   mediaGate(save);
+  // instalments, add-ons and bonuses come out of the new budget
+  settleDebts(save);
+  payTransferAddons(save);
+  payAddons(save);
+  // the board's verdict on the window, then next season's policy
+  policyPayoff(save);
+  save.policy = policyFor(save, save.season);
   // fresh scouting budget for the season
   save.scouting.budget = scoutingBudgetFor(save.finances[save.userClubId]?.transfer ?? 1_000_000);
   const def =
