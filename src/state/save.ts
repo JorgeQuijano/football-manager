@@ -169,6 +169,35 @@ export function normalizeSave(save: SaveGame): SaveGame {
     // a loan record must agree with where the player actually is
     if (p.loan && p.loan.toClubId !== p.clubId && p.loan.fromClubId !== p.clubId) p.loan = undefined;
   }
+  // commercial & facilities (v0.30): the campus, the club account, the shirt deal
+  if (!save.facilities || typeof save.facilities !== "object") {
+    save.facilities = {};
+  }
+  for (const c of save.clubs) {
+    const f = save.facilities[c.id];
+    const ok =
+      f &&
+      typeof f.stadium === "number" &&
+      typeof f.training === "number" &&
+      typeof f.youth === "number" &&
+      typeof f.medical === "number";
+    if (!ok) save.facilities[c.id] = { stadium: 2, training: 2, youth: 2, medical: 2 };
+  }
+  if (save.builds && !Array.isArray(save.builds)) save.builds = undefined;
+  save.builds = (save.builds ?? []).filter(
+    (b) => b && typeof b.kind === "string" && typeof b.weeksLeft === "number" && typeof b.to === "number"
+  );
+  if (save.sponsor && (typeof save.sponsor.weekly !== "number" || typeof save.sponsor.until !== "number")) {
+    save.sponsor = undefined;
+  }
+  if (save.sponsorOffers && !Array.isArray(save.sponsorOffers)) save.sponsorOffers = undefined;
+  save.sponsorOffers = (save.sponsorOffers ?? []).filter(
+    (o) => o && typeof o.id === "string" && typeof o.weekly === "number"
+  );
+  for (const id of Object.keys(save.finances ?? {})) {
+    const fin = save.finances[id];
+    if (typeof fin.balance !== "number" || !Number.isFinite(fin.balance)) fin.balance = 4_000_000;
+  }
   if (!Array.isArray(save.recentResults)) save.recentResults = [];
   save.recentResults = save.recentResults
     .filter((r) => r && typeof r.round === "number" && typeof r.oppId === "string")

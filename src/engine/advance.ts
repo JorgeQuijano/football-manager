@@ -10,6 +10,8 @@ import { TF, freshFinances, makeFreeAgent, rollContracts, windowTick } from "./t
 import { INTENSITIES, developRound, learnTraits, resetSeasonDev, youthIntake } from "./training";
 import { growFamiliarity, planForClub } from "./setpieces";
 import { recordMatch } from "./stats";
+import { applyCardPenalties } from "./discipline";
+import { medicalWeeks, rollSponsor, runCommercialRound, tickBuilds } from "./commercial";
 import { scoutingBudgetFor, scoutingTick } from "./scouting";
 import { payPrize, recordSeason, roundAwards } from "./history";
 import { moraleTick, MORALE_START } from "./morale";
@@ -116,8 +118,10 @@ const applyResult = (
     }
     p.goals += u.goals;
     p.assists += u.assists;
-    if (u.red) p.suspension = Math.max(p.suspension, 1);
-    if (u.injuredWeeks > 0) p.injuredWeeks = Math.max(p.injuredWeeks, u.injuredWeeks);
+    const cardsBefore = p.yellows ?? 0;
+    if (u.injuredWeeks > 0) {
+      p.injuredWeeks = Math.max(p.injuredWeeks, medicalWeeks(save, p.clubId, u.injuredWeeks));
+    }
     if (u.conditionLoss > 0) {
       p.condition = Math.max(5, Math.round(p.condition - u.conditionLoss));
     }
@@ -131,6 +135,15 @@ const applyResult = (
       rating: result.ratings[u.playerId],
       userClub: p.clubId === save.userClubId
     });
+    // cards have consequences (engine/discipline.ts): accumulation bans, straight-red bans
+    if (u.yellow > 0 || u.red) {
+      applyCardPenalties(save, p, {
+        before: cardsBefore,
+        after: p.yellows ?? 0,
+        redKind: u.redKind,
+        notify: p.clubId === save.userClubId
+      });
+    }
   }
 };
 
@@ -193,6 +206,12 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
 
   // awards & records for this round: player of the round, biggest win
   roundAwards(save);
+  // the club's week: commercial income, upkeep, and the builders (engine/commercial.ts)
+  // friendlies don't pay: no gate, no upkeep week (they're pre-season admin)
+  if (save.round >= 0) {
+    runCommercialRound(save);
+    tickBuilds(save);
+  }
   // morale: minutes, results, wages, contracts, form → mood (+ transfer requests)
   moraleTick(save, save.lastResults);
   const mine = save.lastResults.find((r) => r.homeId === save.userClubId || r.awayId === save.userClubId);
@@ -290,7 +309,9 @@ export function completeFriendly(input: SaveGame, userResult?: MatchResult): Sav
       const p = save.players.find((pp) => pp.id === u.playerId);
       if (!p) continue;
       if (u.conditionLoss > 0) p.condition = Math.max(5, Math.round(p.condition - u.conditionLoss));
-      if (u.injuredWeeks > 0) p.injuredWeeks = Math.max(p.injuredWeeks, u.injuredWeeks);
+      if (u.injuredWeeks > 0) {
+      p.injuredWeeks = Math.max(p.injuredWeeks, medicalWeeks(save, p.clubId, u.injuredWeeks));
+    }
       const rt = userResult.ratings[u.playerId];
       if (u.minutes > 0 && typeof rt === "number" && Number.isFinite(rt)) recordForm(p, rt);
     }
@@ -412,6 +433,8 @@ export function nextSeason(input: SaveGame): SaveGame {
   payAddons(save);
   // the board's verdict on the window, then next season's policy
   policyPayoff(save);
+  // commercial: the shirt deal may have run out
+  rollSponsor(save);
   save.policy = policyFor(save, save.season);
   // fresh scouting budget for the season
   save.scouting.budget = scoutingBudgetFor(save.finances[save.userClubId]?.transfer ?? 1_000_000);

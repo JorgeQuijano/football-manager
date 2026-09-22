@@ -9,6 +9,7 @@ import type {
   TrainingUnit
 } from "./types";
 import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
+import { facilityModifier, facilitiesOf } from "./commercial";
 import { overallFor, squadOf } from "./ratings";
 import { hasTrait, TRAITS } from "./traits";
 import { pushInbox as inboxPush } from "./inbox";
@@ -229,7 +230,14 @@ const applyDelta = (p: Player, attr: AttrKey, delta: number): void => {
  * One round of development for a single player. Mutates `p` (attrs, dev, devSeason).
  * Deterministic given the rng stream (seeded per player/season/round by the caller).
  */
-export function developPlayer(p: Player, plan: TrainingPlan, minutes: number, rng: Rng): void {
+export function developPlayer(
+  p: Player,
+  plan: TrainingPlan,
+  minutes: number,
+  rng: Rng,
+  /** the training ground's influence on this week's gains (engine/commercial.ts) */
+  facilityMult = 1
+): void {
   ensureDev(p);
   const ag = ageGrowth(p.age);
   const intensity = INTENSITIES[plan.intensity];
@@ -240,7 +248,14 @@ export function developPlayer(p: Player, plan: TrainingPlan, minutes: number, rn
     const taper = Math.min(1, room / 4); // the last couple of points are hard
     const mood = 1 + ((p.morale ?? 60) - 60) * 0.002; // moraleDev (engine/morale.ts) — inline to avoid an import cycle
     const gain =
-      BASE * ag * minutesFactor(minutes) * conditionFactor(p.condition) * intensity.growth * taper * mood;
+      BASE *
+      ag *
+      minutesFactor(minutes) *
+      conditionFactor(p.condition) *
+      intensity.growth *
+      taper *
+      mood *
+      facilityMult;
     const w = { ...UNITS[plan.unit].weights[p.pos] };
     if (p.focus) w[p.focus] = (w[p.focus] ?? 0) + 0.6;
     const nw = normWeights(w);
@@ -292,7 +307,13 @@ export function developRound(input: SaveGame, minutesById: Record<string, number
   for (const p of save.players) {
     const plan = planFor(save, p.clubId);
     const rng = mulberry32(hashSeed(save.seed, "dev", p.id, save.season, save.round));
-    developPlayer(p, plan, minutesById[p.id] ?? 0, rng);
+    developPlayer(
+      p,
+      plan,
+      minutesById[p.id] ?? 0,
+      rng,
+      facilityModifier("training", facilitiesOf(save, p.clubId).training)
+    );
   }
 
   // heavy training weeks occasionally cost you a body
@@ -412,7 +433,12 @@ export function makeYouth(save: SaveGame, clubId: string, idx: number): Player {
     form: [],
     history: []
   };
-  p.peak = Math.min(96, Math.round(overallFor(p) + 22 + Math.floor(rng() * 14)));
+  // a better academy produces better prospects: the ceiling moves with the youth level
+  const youth = facilityModifier("youth", facilitiesOf(save, clubId).youth);
+  p.peak = Math.min(
+    96,
+    Math.round(overallFor(p) + (22 + Math.floor(rng() * 14)) * youth)
+  );
   return p;
 }
 

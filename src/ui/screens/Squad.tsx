@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { SortMode } from "@/engine";
 import {
   FORM_BANDS,
   formBandFor,
@@ -9,7 +8,9 @@ import {
   rating1,
   sortSquad,
   SORT_MODES,
-  squadOf
+  squadOf,
+  yellowsToBan,
+  type SortMode
 } from "@/engine";
 import { useGame } from "@/state/store";
 import { posChip } from "@/ui/format";
@@ -109,6 +110,12 @@ export function Squad() {
                         <span className="text-[#FFB020]"> · injured ({p.injuredWeeks})</span>
                       )}
                       {p.suspension > 0 && <span className="text-[#FF6157]"> · suspended</span>}
+                      {p.suspension === 0 && yellowsToBan(p) === 1 && (
+                        <span className="text-[#FFB020]" data-testid={`tightrope-${p.id}`}>
+                          {" "}
+                          · 1 yellow from a ban
+                        </span>
+                      )}
                       {(p.sharpness ?? 85) < 70 && (
                         <span className="text-[#FFB020]" data-testid={`rusty-${p.id}`}> · rusty</span>
                       )}

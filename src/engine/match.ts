@@ -800,6 +800,7 @@ const processFoul = (
     if (rng() < T.redChancePerFoul * (hasTrait(offender.p, "dives_in") ? 1.5 : 1)) {
       leaveSlot(s, committed, offender.slot, m);
       updOf(s, offender.p.id).red = true;
+      updOf(s, offender.p.id).redKind = "straight";
       s.ratings[offender.p.id] = clamp(s.ratings[offender.p.id] - 0.5, 4, 10);
       s.events.push({
         minute: m,
@@ -814,6 +815,7 @@ const processFoul = (
       if (count >= 2) {
         leaveSlot(s, committed, offender.slot, m);
         updOf(s, offender.p.id).red = true;
+        updOf(s, offender.p.id).redKind = "second";
         s.ratings[offender.p.id] = clamp(s.ratings[offender.p.id] - 0.5, 4, 10);
         s.events.push({
           minute: m,
