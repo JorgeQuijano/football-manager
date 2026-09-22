@@ -46,6 +46,23 @@ export interface PlayerAttrs {
   handling: number;
 }
 
+export type AttrKey = keyof PlayerAttrs;
+
+/** Training units (team focus) and session intensity. */
+export type TrainingUnit =
+  | "balanced"
+  | "attacking"
+  | "defending"
+  | "passing"
+  | "physical"
+  | "setpieces"
+  | "recovery";
+export type Intensity = "light" | "normal" | "heavy";
+export interface TrainingPlan {
+  unit: TrainingUnit;
+  intensity: Intensity;
+}
+
 /** FM-style behavioural traits — see engine/traits.ts */
 export type TraitId =
   | "shoots_on_sight"
@@ -70,6 +87,14 @@ export interface Player {
   traits: TraitId[];
   /** contract state; see engine/transfers.ts */
   contract: Contract;
+  /** potential ceiling for overall ability (v0.12) — room to grow = peak − overall */
+  peak: number;
+  /** fractional development accumulator per attribute (v0.12) */
+  dev: Partial<Record<AttrKey, number>>;
+  /** integer attribute gains/losses this season (display; reset each pre-season) */
+  devSeason: Partial<Record<AttrKey, number>>;
+  /** individual training focus attribute (null = none) */
+  focus: AttrKey | null;
   condition: number; // 0-100
   injuredWeeks: number; // 0 = fit
   suspension: number; // matches left to sit out; 0 = available
@@ -299,4 +324,8 @@ export interface SaveGame {
   pending?: { playerId: string; fee: number; fromClubId: string };
   /** human-readable transfer feed, newest first (capped) */
   transferLog: string[];
+  /** the user club's training plan (engine/training.ts) */
+  training: TrainingPlan;
+  /** training/development news lines (trait learning, academy intake…), newest first */
+  devNews: string[];
 }

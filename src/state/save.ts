@@ -5,6 +5,7 @@ import {
   builtinFormation,
   contractFor,
   defaultRoleFor,
+  ensureDev,
   freshFinances,
   hashSeed,
   mulberry32,
@@ -37,7 +38,13 @@ export function normalizeSave(save: SaveGame): SaveGame {
     if (!p.contract || typeof p.contract.wage !== "number" || typeof p.contract.until !== "number") {
       p.contract = contractFor(p, save.season);
     }
+    // training/development fields (v0.12): peak, dev accumulators, individual focus
+    ensureDev(p);
   }
+  if (!save.training || typeof save.training !== "object") {
+    save.training = { unit: "balanced", intensity: "normal" };
+  }
+  if (!Array.isArray(save.devNews)) save.devNews = [];
   if (!save.finances || typeof save.finances !== "object") save.finances = freshFinances(save);
   if (!Array.isArray(save.offers)) save.offers = [];
   save.offers = save.offers.filter(

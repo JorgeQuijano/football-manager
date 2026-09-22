@@ -33,6 +33,7 @@ src/engine/
   live.ts        Live match: startLive, addLiveChange, resumeSecondHalf, skip helpers, matchStats
   advance.ts     prepareRound(), completeRound(), playRound(), nextSeason() — orchestration
   transfers.ts   Contracts, wages, market values, transfer windows, bids/terms negotiation, AI churn, contract rollover
+  training.ts    Per-round development (age/minutes/focus/intensity), potential peaks, trait learning, academy intake
   index.ts       Barrel export
 ```
 
@@ -266,3 +267,29 @@ The squad-building loop: every player carries a `Contract { wage, until }` (`unt
 **Tuning**: `TF` in `transfers.ts` - `valueBase/Pow/Pivot`, `wagePow/Mult`, `minFee/minWage`, `budgetBase/budgetValueShare/wageBudgetHeadroom`, `renewalProb`, `freeAgentsPerSeason`, `summerRounds`, `winterRounds`, `logCap`.
 
 **Tests** (`describe("transfers")`, 10): value/wage monotonicity + age curve, budget/headroom integrity, window calendar, bid ladder (rejected/counter/accepted + determinism), budget and closed-window guards, full signing (fee charged, contract `season+3`, seller credited, log), accepting an incoming offer, renew/free-agent signing, `windowTick` determinism, rollover (expiry, AI renewal-or-release, budget refresh, free-agent intake).
+
+## 17. Training & player development (`training.ts`)
+
+Every player grows or declines a little **every round** (`developRound`, called from `completeRound` after the recovery loop; minutes come from the round's `MatchResult.updates`).
+
+**Model**
+- `Player.peak` — the overall ceiling, deterministic from the player id (room by age at first sight: 16-18y -> +20-32, 19-21 -> +13-21, 22-23 -> +8-14, 24-26 -> +4-8, 27-29 -> +1-3, 30+ -> 0-1; capped at 96). `ensureDev` backfills it.
+- `Player.dev` — fractional accumulator per attribute: growth/decline is fractional each round; attributes only tick when the accumulator crosses +/-1 (so all existing integer displays and formulas stay clean). `Player.devSeason` records the integer gains/losses for the season (display; reset by `resetSeasonDev` at rollover).
+- `Player.focus` — individual focus attribute (user club only; +0.6 weight on that attribute before normalising).
+- `SaveGame.training` — the user club's plan: `{ unit, intensity }`. `SaveGame.devNews` — the last 12 development news lines (academy, traits, retirements, training knocks).
+
+**Formula** (per player per round, seeded `hashSeed(seed, "dev", id, season, round)`)
+- Growth appetite by age (`ageGrowth`): <=18 -> 1.6, <=21 -> 1.35, <=23 -> 1.1, <=26 -> 0.8, <=29 -> 0.45, <=31 -> 0.1, <=33 -> -0.5, <=35 -> -1.1, 36+ -> -1.5.
+- `gain = BASE (0.16) x ageGrowth x minutesFactor x conditionFactor x intensityGrowth x taper(room/4)`; distributed across the unit's per-position weights (normalised, plus the individual focus).
+- `loss = BASE x |ageGrowth| x DECLINE_SCALE (1.0)`, distributed by `DECLINE_WEIGHTS` (pace-heavy: FW 0.5 pace / 0.3 physical; keepers lose reflexes/handling).
+- Minutes: >=30 -> 1.0, 1-29 -> 0.6, unused -> 0.35. Condition: >=70 -> 1.0, 40-69 -> 0.75, <40 -> 0.5.
+- Intensity: light x0.7 growth but x1.15 condition recovery; normal x1.0/x1.0; heavy x1.35 growth, x0.8 recovery and a 3%/round chance of a 1-match training knock (`devNews`).
+- Attributes clamp to [20, 99]; growth stops once overall >= peak (decline never does).
+
+**Units** (`UNITS`): `balanced`, `attacking`, `defending`, `passing`, `physical`, `setpieces`, `recovery` - each with a one-line blurb and per-position (GK/DF/MF/FW) weight tables. **AI clubs** train a deterministic unit per season (`aiPlan`, seeded by club+season) at normal intensity; **free agents** train `recovery`/light.
+
+**Season end** (`nextSeason`): `learnTraits` first (reads last season's `apps`), then `resetSeasonDev`, ageing, `rollContracts` (38+ retire; expired deals leave), the free-agent intake, then `youthIntake`.
+- `learnTraits`: players aged <=23 with >=12 apps and <2 traits can learn the trait linked to their club's unit (`TRAIN_TRAITS`: attacking -> shoots_on_sight, passing -> killer_balls, defending -> marks_tightly/dives_in, physical -> presses_hard/arrives_in_box, setpieces -> dead_ball, recovery -> leader) when they clear the attribute bar, at 16%/season. News lines only for the user's club.
+- `youthIntake`: each club gets 1-2 academy kids (16-18y, ids `py-<clubId>-<season>-<n>`, cheap 3-season deals, high peak). The user club gets exactly one (news line); AI clubs stay at <=26 by releasing their lowest-peak fringe players to free agency. Idempotent per season.
+
+**Tests** (`describe("training")`, 10): age curves (kids grow, vets decline), minutes/condition/intensity scaling, unit steering, individual focus, ceiling behaviour, determinism, a round across the world, trait learning, academy intake + AI trimming + determinism, AI plan variety.

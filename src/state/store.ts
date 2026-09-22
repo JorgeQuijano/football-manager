@@ -40,6 +40,7 @@ import {
   T
 } from "@/engine";
 import type { BidResponse } from "@/engine";
+import type { AttrKey, TrainingPlan } from "@/engine";
 import { loadSave, persistSave } from "./save";
 
 export type Screen =
@@ -49,6 +50,7 @@ export type Screen =
   | "tactics"
   | "league"
   | "transfers"
+  | "training"
   | "match"
   | "seasonEnd"
   | "builder";
@@ -91,6 +93,8 @@ interface AppState {
   acceptIncoming: (offerId: string) => BidResponse | null;
   rejectIncoming: (offerId: string) => void;
   cancelDeal: () => void;
+  setTraining: (patch: Partial<TrainingPlan>) => void;
+  setFocus: (playerId: string, focus: AttrKey | null) => void;
   resetGame: () => void;
   importSave: (save: SaveGame) => void;
 }
@@ -506,6 +510,25 @@ export const useGame = create<AppState>()((set, get) => ({
     const { game } = get();
     if (!game || !game.pending) return;
     const save: SaveGame = { ...game, pending: undefined };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  setTraining: (patch) => {
+    const { game } = get();
+    if (!game) return;
+    const save: SaveGame = { ...game, training: { ...game.training, ...patch } };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  setFocus: (playerId, focus) => {
+    const { game } = get();
+    if (!game) return;
+    const save: SaveGame = {
+      ...game,
+      players: game.players.map((p) => (p.id === playerId ? { ...p, focus } : p))
+    };
     set({ game: save });
     schedulePersist(save);
   },

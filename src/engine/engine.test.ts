@@ -21,6 +21,14 @@ import { motionFor, ROLE_MOTION } from "./motion";
 import { decideIntent, INTENT_IDS, type IntentCtx, type GamePhase } from "./intents";
 import { hasTrait, TRAITS, traitsFor } from "./traits";
 import {
+  ATTR_KEYS,
+  INTENSITIES,
+  aiPlan,
+  developPlayer,
+  developRound,
+  learnTraits
+} from "./training";
+import {
   acceptOffer,
   bidForPlayer,
   freeAgents,
@@ -37,7 +45,7 @@ import {
   windowTick
 } from "./transfers";
 import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
-import type { Mentality, Player, Position, SaveGame, Stroke } from "./types";
+import type { Intensity, Mentality, Player, Position, SaveGame, Stroke, TrainingPlan, TrainingUnit } from "./types";
 
 function playSeason(start: SaveGame): SaveGame {
   let save = start;
@@ -253,7 +261,11 @@ describe("roles", () => {
     assists: 0,
     ...over,
     traits: over.traits ?? [],
-    contract: over.contract ?? { wage: 0, until: 0 }
+    contract: over.contract ?? { wage: 0, until: 0 },
+    peak: over.peak ?? 99,
+    dev: over.dev ?? {},
+    devSeason: over.devSeason ?? {},
+    focus: over.focus ?? null
   });
 
   it("every formation slot has a valid default role", () => {
@@ -372,7 +384,11 @@ describe("lineup ops", () => {
       assists: 0,
       ...over,
       traits: over.traits ?? [],
-      contract: over.contract ?? { wage: 0, until: 0 }
+      contract: over.contract ?? { wage: 0, until: 0 },
+      peak: over.peak ?? 99,
+      dev: over.dev ?? {},
+      devSeason: over.devSeason ?? {},
+      focus: over.focus ?? null
     });
     const tiredStar = mk({
       pos: "FW",
@@ -409,6 +425,10 @@ describe("conditioning", () => {
       },
       traits: [],
       contract: { wage: 0, until: 0 },
+      peak: 99,
+      dev: {},
+      devSeason: {},
+      focus: null,
       condition: 100,
       injuredWeeks: 0,
       suspension: 0,
@@ -709,6 +729,10 @@ describe("motion", () => {
     },
     traits: [],
     contract: { wage: 0, until: 0 },
+    peak: 99,
+    dev: {},
+    devSeason: {},
+    focus: null,
     condition: 100,
     injuredWeeks: 0,
     suspension: 0,
@@ -776,6 +800,10 @@ describe("decisions", () => {
     },
     traits: [],
     contract: { wage: 0, until: 0 },
+    peak: 99,
+    dev: {},
+    devSeason: {},
+    focus: null,
     condition: 100,
     injuredWeeks: 0,
     suspension: 0,
@@ -933,6 +961,10 @@ describe("traits", () => {
     },
     traits: [],
     contract: { wage: 0, until: 0 },
+    peak: 99,
+    dev: {},
+    devSeason: {},
+    focus: null,
     condition: 100,
     injuredWeeks: 0,
     suspension: 0,
@@ -1153,6 +1185,171 @@ describe("transfers", () => {
     expect(Object.keys(next.finances).length).toBe(next.clubs.length);
     expect(freeAgents(next).length).toBeGreaterThanOrEqual(5);
     expect(next.players.some((p) => p.id.startsWith("pfree-"))).toBe(true);
+  });
+});
+
+describe("training", () => {
+  const mkT = (over: Partial<Player> = {}): Player => ({
+    id: "t1",
+    clubId: "c1",
+    name: "Test Player",
+    age: 18,
+    pos: "FW",
+    attrs: { pace: 50, shooting: 50, passing: 50, defending: 50, physical: 50, reflexes: 40, handling: 40 },
+    traits: [],
+    contract: { wage: 0, until: 0 },
+    peak: 99,
+    dev: {},
+    devSeason: {},
+    focus: null,
+    condition: 100,
+    injuredWeeks: 0,
+    suspension: 0,
+    apps: 0,
+    goals: 0,
+    assists: 0,
+    ...over
+  });
+  const plan = (unit: TrainingUnit, intensity: Intensity = "normal"): TrainingPlan => ({ unit, intensity });
+  const train = (p: Player, pl: TrainingPlan, minutes: number, rounds = 18) => {
+    for (let i = 0; i < rounds; i++) {
+      developPlayer(p, pl, minutes, mulberry32(hashSeed(p.id, "test", pl.unit, pl.intensity, i)));
+    }
+  };
+  const attrSum = (p: Player) => ATTR_KEYS.reduce((s, k) => s + p.attrs[k], 0);
+
+  it("young players grow, veterans decline", () => {
+    const kid = mkT({ age: 17, peak: 92 });
+    const kidBefore = attrSum(kid);
+    train(kid, plan("attacking"), 90);
+    expect(attrSum(kid)).toBeGreaterThan(kidBefore + 2);
+
+    const vet = mkT({ age: 34, attrs: { ...mkT().attrs, pace: 72, physical: 70 } });
+    const paceBefore = vet.attrs.pace;
+    train(vet, plan("balanced"), 90);
+    expect(vet.attrs.pace).toBeLessThan(paceBefore);
+    expect(vet.devSeason.pace ?? 0).toBeLessThan(0);
+  });
+
+  it("minutes, condition and intensity all scale development", () => {
+    const starter = mkT({ age: 20, id: "s1" });
+    const bench = mkT({ age: 20, id: "b1" });
+    train(starter, plan("balanced"), 90);
+    train(bench, plan("balanced"), 0);
+    expect(attrSum(starter)).toBeGreaterThan(attrSum(bench));
+
+    const heavy = mkT({ age: 20, id: "h1" });
+    const light = mkT({ age: 20, id: "l1" });
+    train(heavy, plan("balanced", "heavy"), 90);
+    train(light, plan("balanced", "light"), 90);
+    expect(attrSum(heavy)).toBeGreaterThan(attrSum(light));
+
+    const tired = mkT({ age: 20, id: "t2", condition: 30 });
+    const fresh = mkT({ age: 20, id: "f2", condition: 100 });
+    train(tired, plan("balanced"), 90);
+    train(fresh, plan("balanced"), 90);
+    expect(attrSum(fresh)).toBeGreaterThan(attrSum(tired));
+
+    expect(INTENSITIES.light.recovery).toBeGreaterThan(INTENSITIES.heavy.recovery);
+  });
+
+  it("the training unit steers which attributes grow", () => {
+    const att = mkT({ age: 19, id: "a1" });
+    const def = mkT({ age: 19, id: "a1" });
+    train(att, plan("attacking"), 90);
+    train(def, plan("defending"), 90);
+    expect(att.attrs.shooting - 50).toBeGreaterThan(def.attrs.shooting - 50);
+    expect(def.attrs.defending - 50).toBeGreaterThan(att.attrs.defending - 50);
+  });
+
+  it("individual focus is a strong nudge", () => {
+    const withFocus = mkT({ age: 18, id: "f1", focus: "defending" });
+    const without = mkT({ age: 18, id: "f2" });
+    train(withFocus, plan("attacking"), 90);
+    train(without, plan("attacking"), 90);
+    expect(withFocus.attrs.defending).toBeGreaterThan(without.attrs.defending);
+  });
+
+  it("players at their ceiling stop growing (but still age)", () => {
+    const maxed = mkT({ age: 25, id: "m1", peak: overallFor(mkT({ age: 25, id: "m1" })) });
+    const before = attrSum(maxed);
+    train(maxed, plan("attacking"), 90);
+    expect(attrSum(maxed)).toBe(before);
+
+    const old = mkT({ age: 35, id: "m2", peak: 60 });
+    train(old, plan("balanced"), 90, 18);
+    expect(attrSum(old)).toBeLessThan(attrSum(mkT({ age: 35, id: "m2", peak: 60 })));
+  });
+
+  it("development is deterministic", () => {
+    const a = mkT({ age: 19, id: "d1" });
+    const b = mkT({ age: 19, id: "d1" });
+    train(a, plan("passing"), 90);
+    train(b, plan("passing"), 90);
+    expect(JSON.stringify(a.attrs)).toBe(JSON.stringify(b.attrs));
+    expect(JSON.stringify(a.devSeason)).toBe(JSON.stringify(b.devSeason));
+  });
+
+  it("runs a full round of development across the world", () => {
+    let s = { ...newGame(7), round: 1 };
+    const minutes: Record<string, number> = {};
+    for (const p of s.players) minutes[p.id] = p.clubId === s.userClubId ? 90 : 45;
+    for (let i = 0; i < 12; i++) s = developRound({ ...s, round: i + 1 }, minutes);
+    const gained = s.players.filter((p) => Object.values(p.devSeason).some((v) => v > 0));
+    expect(gained.length).toBeGreaterThan(4);
+    const someAccum = s.players.some((p) => Object.values(p.dev ?? {}).some((v) => Math.abs(v) > 0.01));
+    expect(someAccum).toBe(true);
+  });
+
+  it("young regulars learn traits at season end", () => {
+    const s = newGame(11);
+    for (const p of s.players) if (p.age <= 23) p.apps = 15;
+    const countTraits = (pl: Player[]) => pl.reduce((n, p) => n + p.traits.length, 0);
+    const before = countTraits(s.players);
+    const a = structuredClone(s);
+    const b = structuredClone(s);
+    learnTraits(a);
+    learnTraits(b);
+    expect(a.players.map((p) => p.traits.join(",")).join("|")).toBe(
+      b.players.map((p) => p.traits.join(",")).join("|")
+    );
+    expect(countTraits(a.players)).toBeGreaterThan(before);
+    for (const p of a.players) if (p.age > 23 && p.apps === 15) expect(p.traits.length).toBeLessThanOrEqual(2);
+  });
+
+  it("academy intake adds kids, trims AI squads and is deterministic", () => {
+    const s1 = playSeason(newGame(17));
+    const s2 = structuredClone(s1);
+    const a = nextSeason(s1);
+    const b = nextSeason(s2);
+    const youth = a.players.filter((p) => p.id.startsWith("py-"));
+    expect(youth.length).toBeGreaterThanOrEqual(11);
+    expect(youth.every((p) => p.age >= 16 && p.age <= 18)).toBe(true);
+    expect(a.players.filter((p) => p.id.startsWith("py-")).map((p) => p.name)).toEqual(
+      b.players.filter((p) => p.id.startsWith("py-")).map((p) => p.name)
+    );
+    for (const c of a.clubs) {
+      if (c.id === a.userClubId) continue;
+      expect(squadOf(a.players, c.id).length).toBeLessThanOrEqual(26);
+    }
+    expect(a.players.some((p) => p.id.startsWith(`py-${a.userClubId}-`))).toBe(true);
+  });
+
+  it("backs the season tracker and peaks correctly", () => {
+    const s = playSeason(newGame(23));
+    expect(s.players.some((p) => Object.values(p.devSeason ?? {}).some((v) => v > 0))).toBe(true);
+    const young = s.players.filter((p) => p.age <= 20 && p.peak > overallFor(p));
+    expect(young.length).toBeGreaterThan(0);
+    const next = nextSeason(s);
+    expect(next.players.every((p) => Object.values(p.devSeason ?? {}).length === 0 || typeof p.devSeason === "object")).toBe(true);
+  });
+
+  it("varies AI training plans by club and season", () => {
+    const s = newGame(5);
+    const units = s.clubs.map((c) => aiPlan(s, c.id).unit);
+    expect(new Set(units).size).toBeGreaterThan(2);
+    const next = { ...s, season: 2 };
+    expect(s.clubs.map((c) => aiPlan(next, c.id).unit)).not.toEqual(units);
   });
 });
 

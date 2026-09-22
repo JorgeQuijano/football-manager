@@ -16,6 +16,8 @@ import {
   suitability,
   TRAITS
 } from "@/engine";
+import { ATTR_KEYS, ATTR_LABEL, ATTR_SHORT } from "@/engine";
+import type { AttrKey } from "@/engine";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -193,6 +195,7 @@ export function PlayerDetailSheet({
   onClose: () => void;
 }) {
   const game = useGame((s) => s.game)!;
+  const setFocus = useGame((s) => s.setFocus);
   const p = playerId ? game.players.find((x) => x.id === playerId) : undefined;
 
   return (
@@ -260,6 +263,62 @@ export function PlayerDetailSheet({
                     {p.clubId === "" ? "Free" : p.contract.until <= game.season ? "Expires" : `S${p.contract.until}`}
                   </div>
                 </div>
+              </div>
+
+              <div
+                className="space-y-2 rounded-lg border border-border bg-card p-3"
+                data-testid="player-dev"
+              >
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <span className="text-muted-foreground">Development</span>
+                  <span className="tnum">
+                    POT {p.peak} · +{Math.max(0, p.peak - overallFor(p))} room
+                  </span>
+                </div>
+                {ATTR_KEYS.some((k) => ((p.devSeason ?? {})[k] ?? 0) !== 0) && (
+                  <div className="flex flex-wrap gap-1">
+                    {ATTR_KEYS.filter((k) => ((p.devSeason ?? {})[k] ?? 0) !== 0).map((k) => {
+                      const v = (p.devSeason ?? {})[k] ?? 0;
+                      return (
+                        <span
+                          key={k}
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-bold tnum ${
+                            v > 0 ? "bg-primary/15 text-primary" : "bg-[#FF6B6B]/15 text-[#FF6B6B]"
+                          }`}
+                        >
+                          {v > 0 ? "+" : ""}
+                          {v} {ATTR_SHORT[k]}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {p.clubId === game.userClubId && (
+                  <div>
+                    <label
+                      className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
+                      htmlFor="player-focus"
+                    >
+                      Individual focus
+                    </label>
+                    <select
+                      id="player-focus"
+                      data-testid="player-focus"
+                      value={p.focus ?? ""}
+                      onChange={(e) =>
+                        setFocus(p.id, e.target.value === "" ? null : (e.target.value as AttrKey))
+                      }
+                      className="mt-1 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm font-semibold"
+                    >
+                      <option value="">None — train the team unit</option>
+                      {ATTR_KEYS.map((k) => (
+                        <option key={k} value={k}>
+                          {ATTR_LABEL[k]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               {(p.traits ?? []).length > 0 && (
