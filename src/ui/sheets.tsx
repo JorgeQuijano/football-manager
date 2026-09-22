@@ -95,6 +95,17 @@ export function SettingsSheet({
                 {copied ? "Copied" : String(game.seed)}
               </Button>
             </div>
+            <div className="flex items-center justify-between rounded-xl border border-border p-3">
+              <div>
+                <div className="font-semibold">App version</div>
+                <div className="text-xs text-muted-foreground">
+                  New deploys load automatically when the app regains focus
+                </div>
+              </div>
+              <span className="tnum text-sm font-semibold text-muted-foreground" data-testid="app-version">
+                {__APP_VERSION__}
+              </span>
+            </div>
 
             <Button
               variant="secondary"
