@@ -1,3 +1,7 @@
+> **Prefer pictures?** `docs/ENGINE-FLOW.md` draws this document as Mermaid diagrams (GitHub renders them),
+> and `docs/engine-map.html` is the same map as a clickable page — open it offline, tap any box for the formula.
+> This file remains the long-form reference.
+
 # Touchline — Engine Reference
 
 **Repo-only documentation.** This file is for developers. Nothing here is surfaced in the game UI — the app intentionally ships with zero user-facing docs.
