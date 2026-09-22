@@ -3,6 +3,7 @@ import type { SeasonRecord } from "@/engine";
 import { computeTable, conditionLine, conditionsFor, money, ordinal, rating1, ratingAvg, topScorers, weatherOf } from "@/engine";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DataHub } from "@/ui/DataHub";
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
 import { CalendarView } from "@/ui/Calendar";
@@ -33,11 +34,12 @@ export function LeagueScreen() {
 
       <Tabs value={tab} onValueChange={(v) => setTab(String(v))} className="mt-3">
         <TabsList className="h-11! w-full">
-          <TabsTrigger className="h-11!" value="table">Table</TabsTrigger>
-          <TabsTrigger className="h-11!" value="fixtures">Fixtures</TabsTrigger>
-          <TabsTrigger className="h-11!" value="calendar">Diary</TabsTrigger>
-          <TabsTrigger className="h-11!" value="scorers">Scorers</TabsTrigger>
-          <TabsTrigger className="h-11!" value="history">History</TabsTrigger>
+          <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="table">Table</TabsTrigger>
+          <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="diary">Diary</TabsTrigger>
+          <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="fixtures">Fixtures</TabsTrigger>
+          <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="scorers">Scorers</TabsTrigger>
+          <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="history">History</TabsTrigger>
+          <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="data">Data</TabsTrigger>
         </TabsList>
 
         <TabsContent value="table">
@@ -79,7 +81,7 @@ export function LeagueScreen() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="calendar">
+        <TabsContent value="diary">
           <CalendarView />
         </TabsContent>
 
@@ -182,6 +184,9 @@ export function LeagueScreen() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="data">
+          <DataHub />
+        </TabsContent>
         <TabsContent value="history">
           <div className="space-y-3" data-testid="history-tab">
             <Card>

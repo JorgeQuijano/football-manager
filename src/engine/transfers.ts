@@ -3,6 +3,7 @@ import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
 import { fixLineup, overallFor, squadOf } from "./ratings";
 import { peakFor, pushNews } from "./training";
 import { addDebt, noteSigning, paySellOn, poachTick, policyCheck } from "./market";
+import { pushInbox } from "./inbox";
 import { loanOutTick, sendOnLoan } from "./loans";
 import { builtinFormation, resolveFormation } from "./formations";
 
@@ -624,6 +625,13 @@ export function windowTick(input: SaveGame): SaveGame {
           day: `R${save.round} · ${win.kind} window`
         };
         save.offers.push(offer);
+        pushInbox(save, {
+          kind: "transfer",
+          title: `${bidder.short} bid ${money(offer.fee)} for ${target.name}`,
+          body: "Accept or reject it in the Transfer centre.",
+          playerId: target.id,
+          screen: "transfers"
+        });
       }
     }
   }

@@ -48,6 +48,8 @@ import {
   applyTeamTalk,
   addFocus as addFocusEngine,
   askAgent as askAgentEngine,
+  markAllInboxRead,
+  openInboxItem as openInboxItemEngine,
   applyDiscipline,
   cancelMove as cancelMoveEngine,
   cancelRetrain as cancelRetrainEngine,
@@ -85,7 +87,7 @@ import type {
   TalkKind,
   TalkStage
 } from "@/engine";
-import { loadSave, persistSave } from "./save";
+import { autosave, deleteSlot, listSlots, loadSave, loadSlot, persistSave, saveToSlot, type SlotMeta } from "./save";
 
 export type Screen =
   | "new"
@@ -97,12 +99,16 @@ export type Screen =
   | "training"
   | "setpieces"
   | "match"
+  | "inbox"
+  | "help"
   | "seasonEnd"
   | "builder";
 export type SlotRef = { kind: "xi" | "bench"; index: number };
 
 interface AppState {
   loaded: boolean;
+  /** save slots (v0.26): 0 = autosave, 1..3 = manual */
+  slots: SlotMeta[];
   game: SaveGame | null;
   screen: Screen;
   reveal: MatchResult | null;
@@ -188,15 +194,31 @@ interface AppState {
   /** send the assistant to the press conference */
   skipPress: () => void;
   resetGame: () => void;
+  /** open an inbox item: marks it read and returns the screen to show */
+  openInboxItem: (id: string) => string | undefined;
+  markInboxAllRead: () => void;
+  refreshSlots: () => Promise<void>;
+  saveToSlotNow: (n: number, name?: string) => Promise<string>;
+  loadSlotNow: (n: number) => Promise<string>;
+  deleteSlotNow: (n: number) => Promise<void>;
   importSave: (save: SaveGame) => void;
 }
 
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
 let lastPlayheadPersist = 0;
+let lastAutoKey = "";
 const schedulePersist = (game: SaveGame | null) => {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     void persistSave(game);
+    // a fresh autosave whenever the season or round moves on
+    if (game) {
+      const key = `${game.season}:${game.round}`;
+      if (key !== lastAutoKey) {
+        lastAutoKey = key;
+        void autosave(game);
+      }
+    }
   }, 400);
 };
 
@@ -209,6 +231,7 @@ const matchOver = (live: NonNullable<SaveGame["live"]>): boolean =>
 
 export const useGame = create<AppState>()((set, get) => ({
   loaded: false,
+  slots: [],
   game: null,
   screen: "new",
   reveal: null,
@@ -962,6 +985,49 @@ export const useGame = create<AppState>()((set, get) => ({
     skipPressEngine(save);
     set({ game: save });
     schedulePersist(save);
+  },
+
+  openInboxItem: (id) => {
+    const { game } = useGame.getState();
+    if (!game) return undefined;
+    const r = openInboxItemEngine(game, id);
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return r.screen;
+  },
+
+  markInboxAllRead: () => {
+    const { game } = get();
+    if (!game) return;
+    const save = markAllInboxRead(game);
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  refreshSlots: async () => {
+    set({ slots: await listSlots() });
+  },
+
+  saveToSlotNow: async (n, name) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const meta = await saveToSlot(n, game, name);
+    set({ slots: await listSlots() });
+    return meta ? `Saved to ${meta.name}.` : "Could not write that slot.";
+  },
+
+  loadSlotNow: async (n) => {
+    const save = await loadSlot(n);
+    if (!save) return "That slot is empty.";
+    set({ game: save, screen: "home", reveal: null, builderFor: null });
+    await persistSave(save);
+    set({ slots: await listSlots() });
+    return `Loaded ${save.clubs.find((c) => c.id === save.userClubId)?.name ?? "save"} (season ${save.season}).`;
+  },
+
+  deleteSlotNow: async (n) => {
+    await deleteSlot(n);
+    set({ slots: await listSlots() });
   },
 
   resetGame: () => {

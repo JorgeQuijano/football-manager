@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormationSlot, Player, Position, RoleId } from "@/engine";
 import {
   autoLineup,
@@ -58,6 +58,23 @@ export function SettingsSheet({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const slots = useGame((s) => s.slots);
+  const refreshSlots = useGame((s) => s.refreshSlots);
+  const saveNow = useGame((s) => s.saveToSlotNow);
+  const loadNowSlot = useGame((s) => s.loadSlotNow);
+  const deleteNowSlot = useGame((s) => s.deleteSlotNow);
+  const setScreenTo = useGame((s) => s.setScreen);
+  const [slotNote, setSlotNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) void refreshSlots();
+  }, [open, refreshSlots]);
+
+    const loadNow = loadNowSlot;
+  const deleteNow = async (n: number) => {
+    await deleteNowSlot(n);
+    setSlotNote("Slot cleared.");
+  };
   const fileRef = useRef<HTMLInputElement>(null);
 
   const club = game.clubs.find((c) => c.id === game.userClubId)!;
@@ -119,6 +136,80 @@ export function SettingsSheet({
               </span>
             </div>
 
+            <div className="space-y-2 rounded-xl border border-border p-3" data-testid="slots">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">Save slots</span>
+                <span className="text-xs text-muted-foreground">{slots.length} in use</span>
+              </div>
+              {[0, 1, 2, 3].map((n) => {
+                const meta = slots.find((m) => m.n === n);
+                return (
+                  <div key={n} className="rounded-lg border border-border bg-card p-2" data-testid={`slot-${n}`}>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-[13px] font-bold">
+                        {n === 0 ? "Autosave" : `Slot ${n}`}
+                        {meta && meta.name !== (n === 0 ? "Autosave" : `Slot ${n}`) ? ` · ${meta.name}` : ""}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground tnum">
+                        {meta ? `${meta.clubName} · S${meta.season} R${meta.round}` : "empty"}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex gap-1.5">
+                      {n !== 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-9 flex-1 text-[11px]"
+                          data-testid={`slot-save-${n}`}
+                          onClick={() => {
+                            void saveNow(n, `Slot ${n}`).then((m) => setSlotNote(m));
+                          }}
+                        >
+                          Save here
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-9 flex-1 text-[11px]"
+                        data-testid={`slot-load-${n}`}
+                        disabled={!meta}
+                        onClick={() => {
+                          void loadNow(n).then((m) => setSlotNote(m));
+                        }}
+                      >
+                        Load
+                      </Button>
+                      {n !== 0 && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-9 flex-1 text-[11px] text-muted-foreground"
+                          data-testid={`slot-delete-${n}`}
+                          disabled={!meta}
+                          onClick={() => void deleteNow(n)}
+                        >
+                          Delete
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {slotNote && <p className="text-[11px] font-semibold text-primary" data-testid="slot-note">{slotNote}</p>}
+            </div>
+
+            <Button
+              variant="secondary"
+              className="h-10 w-full"
+              data-testid="help-link"
+              onClick={() => {
+                onOpenChange(false);
+                setScreenTo("help");
+              }}
+            >
+              How to play
+            </Button>
             <Button
               variant="secondary"
               className="h-10 w-full"

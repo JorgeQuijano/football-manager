@@ -46,6 +46,15 @@ import { InstructionsPanel, LeverTabs, Nudges, OppositionPanel, TalkPanel } from
 import { drawFrame, slotScreen, type Frame, type FramePlayer } from "@/ui/matchPitch";
 import { armbandIn } from "@/engine";
 
+/** Respect the accessibility toggle from the Help screen (localStorage "fm-motion"). */
+const reducedMotion = (): boolean => {
+  try {
+    return localStorage.getItem("fm-motion") === "off";
+  } catch {
+    return false;
+  }
+};
+
 /** A little row of dots: filled = used. */
 function Dots({ used, total }: { used: number; total: number }) {
   return (
@@ -623,6 +632,13 @@ function LiveMatchScreen() {
           const prof = profRef.current.map.get(key) ?? DEFAULT_PROFILE;
           const tgt = targetFor(side, i);
           const cur = C.anim.get(key) ?? { x: tgt.x, y: tgt.y };
+          // reduced motion: no sliding — the picture steps to where the shape says
+          if (reducedMotion()) {
+            cur.x = tgt.x;
+            cur.y = tgt.y;
+            C.anim.set(key, cur);
+            continue;
+          }
           const k = Math.min(1, dt * prof.accel);
           let nx = cur.x + (tgt.x - cur.x) * k;
           let ny = cur.y + (tgt.y - cur.y) * k;

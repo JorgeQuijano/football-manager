@@ -211,6 +211,21 @@ export interface Player {
   target?: PlayerTarget;
 }
 
+export type InboxKind = "match" | "transfer" | "press" | "discipline" | "board" | "club";
+
+/** One line in the club inbox — engine/inbox.ts. */
+export interface InboxItem {
+  id: string;
+  season: number;
+  round: number;
+  kind: InboxKind;
+  title: string;
+  body?: string;
+  read: boolean;
+  playerId?: string;
+  screen?: string;
+}
+
 /** An individual target the manager has set for a player this season. */
 export interface PlayerTarget {
   kind: "goals" | "apps" | "rating";
@@ -369,6 +384,21 @@ export interface PlayerUpdate {
   conditionLoss: number;
 }
 
+/** One shot from a finished match — the raw material for the data hub. */
+export interface MatchShot {
+  m: number;
+  /** true when the home side took it */
+  home: boolean;
+  /** shot position in the attacking frame (y 0 = the goal being attacked) */
+  x: number;
+  y: number;
+  /** target x of the strike */
+  t?: number;
+  xg: number;
+  out: StrokeOut;
+  setPiece?: SetPiece | null;
+}
+
 export interface MatchResult {
   fixtureKey: string; // `${round}:${homeId}:${awayId}`
   round: number;
@@ -380,6 +410,8 @@ export interface MatchResult {
   ratings: Record<string, number>;
   updates: PlayerUpdate[];
   scorers: { playerId: string; name: string; clubId: string; minute: number }[];
+  /** every shot of the match, with its xG (data hub) */
+  shots?: MatchShot[];
   /** knockout ties only: decided after extra time */
   aet?: boolean;
   /** knockout ties only: penalty shootout score */
@@ -472,6 +504,8 @@ export interface Stroke {
   tg?: [number, number]; // staged target point in the attacking side's frame (corners / penalties)
   /** VAR outcome tied to this stroke (goals only): the on-field call stood, was overturned, or was restored */
   vr?: "stands" | "overturned" | "restored";
+  /** shots only: the chance's expected goals (the model's own probability) */
+  xg?: number;
 }
 
 // --- match-day levers (v0.23): opposition instructions, player instructions, talks, shouts ----
@@ -565,6 +599,8 @@ export interface MatchState {
   exitMinute: Record<string, number>;
   played: string[];
   scorers: { playerId: string; name: string; clubId: string; minute: number }[];
+  /** every shot of the match, with its xG (data hub) */
+  shots?: MatchShot[];
   /** per player: which side (0 home / 1 away) and natural position — for post-match ratings */
   pin: Record<string, { s: 0 | 1; pos: Position }>;
 }
@@ -789,6 +825,9 @@ export interface SaveGame {
   policy?: BoardPolicy;
   /** free transfers agreed for the end of the season */
   preContracts?: PreContract[];
+  /** the club inbox, newest first (engine/inbox.ts) */
+  inbox?: InboxItem[];
+  inboxSeq?: number;
   /** the armband — engine/individual.ts */
   captain?: string;
   vice?: string;

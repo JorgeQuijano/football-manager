@@ -1,5 +1,5 @@
 import type {
-  Club,
+  MatchShot,  Club,
   MatchConditions,
   MatchResult,
   MatchSideState,
@@ -744,6 +744,7 @@ const resolveChance = (
     t,
     b,
     r: s.events.length > evBefore ? s.events.length - 1 : undefined,
+    xg: Math.round(pGoal * 1000) / 1000,
     ...(out === "goal" && typeof vr !== "undefined" ? { vr } : {})
   });
 
@@ -946,7 +947,8 @@ const resolvePenalty = (
     b: gk?.slot,
     r: s.events.length > evBefore ? s.events.length - 1 : undefined,
     sp: "penalty",
-    tg: [50, 12]
+    tg: [50, 12],
+    xg: Math.round(pGoal * 1000) / 1000
   });
 };
 
@@ -1087,6 +1089,7 @@ const resolveFreeKick = (
     r: s.events.length > evBefore ? s.events.length - 1 : undefined,
     sp: "freekick",
     spr: routine,
+    xg: Math.round(pGoal * 1000) / 1000,
     tg: [50, 24]
   });
 };
@@ -1226,7 +1229,8 @@ const resolveCorner = (
     r: s.events.length > evBefore ? s.events.length - 1 : undefined,
     sp: "corner",
     spr: routine,
-    tg: [flagX, 2]
+    tg: [flagX, 2],
+    xg: Math.round(pGoal * 1000) / 1000
   });
 };
 
@@ -1482,6 +1486,25 @@ export function finalizeMatch(state: MatchState, outcome?: KnockoutOutcome): Mat
     }
   }
 
+  // data hub: every shot of the match with its xG, in the attacking frame
+  const shots: MatchShot[] = [];
+  for (const st of s.timeline) {
+    if (st.xg === undefined) continue;
+    const side = st.h === 1 ? s.home : s.away;
+    const slot = st.p.length ? st.p[st.p.length - 1] : undefined;
+    const at = slot !== undefined ? side.coords[slot] : undefined;
+    shots.push({
+      m: st.m,
+      home: st.h === 1,
+      x: at ? Math.round(at[0]) : 50,
+      y: at ? Math.round(at[1]) : 20,
+      t: st.t,
+      xg: st.xg,
+      out: st.o,
+      ...(st.sp ? { setPiece: st.sp } : {})
+    });
+  }
+
   return {
     fixtureKey: `${s.round}:${s.homeId}:${s.awayId}`,
     round: s.round,
@@ -1493,6 +1516,7 @@ export function finalizeMatch(state: MatchState, outcome?: KnockoutOutcome): Mat
     ratings: rounded,
     updates: finalUpdates,
     scorers: s.scorers,
+    shots,
     ...(outcome && outcome.aet ? { aet: true } : {}),
     ...(outcome?.pens ? { pens: outcome.pens } : {})
   };

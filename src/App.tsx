@@ -3,6 +3,8 @@ import { useGame } from "@/state/store";
 import { BottomNav } from "@/ui/BottomNav";
 import { Builder } from "@/ui/screens/Builder";
 import { Home } from "@/ui/screens/Home";
+import { Help } from "@/ui/screens/Help";
+import { Inbox } from "@/ui/screens/Inbox";
 import { LeagueScreen } from "@/ui/screens/LeagueScreen";
 import { MatchScreen } from "@/ui/screens/MatchScreen";
 import { NewGame } from "@/ui/screens/NewGame";
@@ -35,6 +37,8 @@ export default function App() {
   if (screen === "match") return <MatchScreen />;
   if (screen === "seasonEnd") return <SeasonEnd />;
   if (screen === "builder") return <Builder />;
+  if (screen === "inbox") return <main className="mx-auto w-full max-w-lg px-4 pb-24 pt-4"><Inbox /></main>;
+  if (screen === "help") return <main className="mx-auto w-full max-w-lg px-4 pb-24 pt-4"><Help /></main>;
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col">

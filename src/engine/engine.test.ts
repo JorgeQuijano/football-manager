@@ -26,6 +26,8 @@ import {
 } from "./market";
 import { LOAN, bidForLoan, exerciseLoanOption, loanAsk, loanRollover, loanCount, loaneesIn, loaneesOut, sendOnLoan } from "./loans";
 import { dealCost, dealValue, termsDemand } from "./transfers";
+import { INBOX_CAP, inboxFor, inboxUnread, markAllInboxRead, openInboxItem, pushInbox } from "./inbox";
+import { pushNews } from "./training";
 import {
   INTL_ROUNDS,
   internationalTick,
@@ -4788,6 +4790,123 @@ describe("individual players: bodies, targets, retraining, moves, discipline & t
         save.players.map((p) => [p.id, p.sharpness, p.jaded, p.caps]),
         save.players.filter((p) => p.retrain).map((p) => [p.id, Math.round(p.retrain!.progress)]),
         save.players.filter((p) => p.moveProgress).map((p) => [p.id, Math.round(p.moveProgress!.progress)])
+      ]);
+    };
+    expect(run()).toBe(run());
+  }, 30_000);
+});
+
+describe("quality of life: the inbox, the data hub's shots and save slots", () => {
+  const fresh = () => newGame(950);
+
+  it("the inbox collects everything the club has to say, newest first", () => {
+    const save = fresh();
+    const before = (save.inbox ?? []).length;
+    pushNews(save, "Academy: a kid steps up.");
+    expect((save.inbox ?? []).length).toBe(before + 1);
+    const top = save.inbox![0];
+    expect(top.title).toMatch(/Academy/);
+    expect(top.read).toBe(false);
+    expect(top.kind).toBe("club");
+    expect(top.season).toBe(save.season);
+    const ids = new Set(save.inbox!.map((i) => i.id));
+    expect(ids.size).toBe(save.inbox!.length);
+  });
+
+  it("a match report lands in the inbox and the unread count follows", () => {
+    const out = playRound(fresh());
+    const save = out.save;
+    const match = (save.inbox ?? []).find((i) => i.kind === "match");
+    expect(match).toBeTruthy();
+    expect(match!.title).toMatch(/(Win|Draw|Defeat) \d+–\d+/);
+    const unread = inboxUnread(save);
+    expect(unread).toBeGreaterThan(0);
+    const one = openInboxItem(save, match!.id);
+    expect(inboxUnread(one.save)).toBe(unread - 1);
+    expect(one.save.inbox!.find((i) => i.id === match!.id)!.read).toBe(true);
+    expect(one.screen).toBe("league");
+    const all = markAllInboxRead(one.save);
+    expect(inboxUnread(all)).toBe(0);
+  });
+
+  it("the inbox stays capped and filters by kind", () => {
+    const save = fresh();
+    for (let i = 0; i < 80; i++) pushInbox(save, { kind: "transfer", title: `rumour ${i}` });
+    expect((save.inbox ?? []).length).toBeLessThanOrEqual(INBOX_CAP);
+    const transfers = inboxFor(save, "transfer");
+    expect(transfers.length).toBeGreaterThan(0);
+    expect(transfers.every((i) => i.kind === "transfer")).toBe(true);
+    expect(inboxFor(save, "board").length).toBe(0);
+  });
+
+  it("old saves get an inbox and the sequence repaired", () => {
+    const save = fresh();
+    const broken: SaveGame = { ...save, inbox: undefined as never, inboxSeq: undefined as never };
+    const fixed = normalizeSave(broken);
+    expect(Array.isArray(fixed.inbox)).toBe(true);
+    expect(typeof fixed.inboxSeq).toBe("number");
+    const withJunk: SaveGame = { ...save, inbox: [{ nope: true } as never, { id: "in-1", title: "kept", kind: "club", season: 1, round: 1, read: false }] };
+    expect(normalizeSave(withJunk).inbox).toHaveLength(1);
+  });
+
+  it("a finished match keeps its shots, with xG that adds up", () => {
+    const out = playRound(fresh());
+    const result = out.userMatch!;
+    const shots = result.shots ?? [];
+    expect(shots.length).toBeGreaterThan(0);
+    for (const s of shots) {
+      expect(s.xg).toBeGreaterThan(0);
+      expect(s.xg).toBeLessThanOrEqual(1);
+      expect(typeof s.home).toBe("boolean");
+      expect(s.x).toBeGreaterThanOrEqual(0);
+      expect(s.x).toBeLessThanOrEqual(100);
+    }
+    // every goal is a shot that went in
+    const goals = (result.homeId === out.save.userClubId ? result.homeGoals : result.awayGoals);
+    const goalShots = shots.filter((s) => s.home === (result.homeId === out.save.userClubId) && s.out === "goal");
+    expect(goalShots.length).toBe(goals);
+    // and the two sides' shots cover the match
+    const bySide = shots.filter((s) => s.home).length;
+    expect(bySide).toBeGreaterThan(0);
+    expect(bySide).toBeLessThan(shots.length);
+  });
+
+  it("the xG total tracks the scoreline over a run of matches", () => {
+    let save = fresh();
+    let goals = 0;
+    let xg = 0;
+    for (let r = 0; r < 8; r++) {
+      const out = playRound(save);
+      save = out.save;
+      const mine = out.userMatch!;
+      const home = mine.homeId === save.userClubId;
+      goals += home ? mine.homeGoals : mine.awayGoals;
+      xg += (mine.shots ?? []).filter((s) => s.home === home).reduce((a, s) => a + s.xg, 0);
+    }
+    expect(xg).toBeGreaterThan(0);
+    // a season of shots should be in the same postcode as the goals scored
+    expect(goals).toBeGreaterThan(0);
+    expect(xg / goals).toBeGreaterThan(0.4);
+    expect(xg / goals).toBeLessThan(3);
+  }, 30_000);
+
+  it("a mid-season save round-trips through a slot unchanged", async () => {
+    // the storage layer is IndexedDB, which vitest doesn't provide — the pure shape is
+    // what matters here: a JSON round trip must survive with the new fields intact
+    const save = playRound(fresh()).save;
+    const copy = normalizeSave(JSON.parse(JSON.stringify(save)) as SaveGame);
+    expect(copy.inbox?.length).toBe(save.inbox?.length);
+    expect(copy.lastUserMatch?.shots?.length).toBe(save.lastUserMatch?.shots?.length);
+    expect(copy.inboxSeq).toBe(save.inboxSeq);
+  });
+
+  it("stays deterministic with the inbox and shot data in place", () => {
+    const run = () => {
+      let save = newGame(951);
+      for (let r = 0; r < 5; r++) save = playRound(save).save;
+      return JSON.stringify([
+        save.inbox?.slice(0, 5).map((i) => [i.id, i.kind, i.title]),
+        save.lastUserMatch?.shots
       ]);
     };
     expect(run()).toBe(run());
