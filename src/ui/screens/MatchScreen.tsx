@@ -29,6 +29,11 @@ const eventClass: Record<string, string> = {
 
 type Side = "home" | "away";
 
+type Phase =
+  | { k: "player"; opp: boolean; slot: number; dur: number }
+  | { k: "point"; x: number; y: number; dur: number }
+  | { k: "hold"; dur: number };
+
 export function MatchScreen() {
   const game = useGame((s) => s.game)!;
   const setScreen = useGame((s) => s.setScreen);
@@ -78,16 +83,18 @@ function LiveMatchScreen() {
 
   const clock = useRef({
     si: 0,
-    pp: 0,
+    pi: 0,
     t: 0,
     ballX: 50,
     ballY: 50,
+    originX: 50,
+    originY: 50,
+    time: 0,
     minute: 0,
     playing: true,
     speed: 2,
     poss: null as null | Side,
-    pts: [] as { x: number; y: number }[],
-    durs: [] as number[],
+    phases: null as null | Phase[],
     anim: new Map<string, { x: number; y: number }>(),
     flashT: 0,
     uiT: 0,
@@ -114,10 +121,11 @@ function LiveMatchScreen() {
     const s = stateRef.current;
     const idx = s.timeline.findIndex((x) => x.m > minute);
     c.si = idx < 0 ? s.timeline.length : idx;
-    c.pp = 0;
+    c.pi = 0;
     c.t = 0;
-    c.pts = [];
-    c.durs = [];
+    c.phases = null;
+    c.originX = c.ballX;
+    c.originY = c.ballY;
     c.minute = Math.max(0, Math.min(minute, s.total));
   };
 
@@ -140,81 +148,107 @@ function LiveMatchScreen() {
       side === "home" ? stateRef.current.home : stateRef.current.away;
     const sideMirror = (side: Side) => (side === "home" ? mirrors().home : mirrors().away);
     const attacksUp = (side: Side) => !sideMirror(side);
-    const shiftedPos = (side: Side, slot: number) => {
-      const p = slotScreen(sideOf(side), slot, sideMirror(side));
-      const poss = C.poss;
-      if (!poss) return p;
-      const d = attacksUp(side) ? -1 : 1;
-      const dy = side === poss ? 7 * d : -4 * d;
-      return { x: p.x, y: Math.max(1, Math.min(99, p.y + dy)) };
+    const clampPos = (v: number) => Math.max(3, Math.min(97, v));
+    /**
+     * Live position target for a slot: team shapes slide with the ball, nearby
+     * players gather around the carrier, the closest defenders press, attackers
+     * run beyond their base as play advances, and the receiving player bursts to
+     * meet the pass.
+     */
+    const targetFor = (side: Side, slot: number) => {
+      const sd = sideOf(side);
+      const base = slotScreen(sd, slot, sideMirror(side));
+      const up = attacksUp(side);
+      const dir = up ? -1 : 1;
+      const gk = sd.poss[slot] === "GK";
+      const bx = C.ballX;
+      const by = C.ballY;
+      const prog = (up ? 100 - by : by) / 100; // 0 = deep in own half → 1 = opponent box
+      let x = base.x;
+      let y = base.y + dir * (prog - 0.5) * (gk ? 8 : 30);
+      // team compaction: slide toward the ball's side of the pitch
+      x += (bx - x) * (gk ? 0.05 : 0.24);
+      const d = Math.hypot(x - bx, y - by);
+      const pushing = C.poss === side;
+      let pull = pushing
+        ? 0.55 * Math.max(0, 1 - d / 40)
+        : 0.8 * Math.pow(Math.max(0, 1 - d / 34), 1.35);
+      const ph = C.phases?.[C.pi];
+      if (ph && ph.k === "player" && ph.slot === slot) {
+        const onThisSide = ph.opp ? side !== C.poss : side === C.poss;
+        if (onThisSide) pull = Math.max(pull, 0.45);
+      }
+      x += (bx - x) * pull;
+      y += (by - y) * pull;
+      // attackers run into space as play advances
+      if (pushing && !gk && base.y < 42) {
+        y += dir * Math.max(0, (prog - 0.35) / 0.65) * 13;
+      }
+      // organic drift so nobody stands perfectly still
+      const j = Math.sin(C.time / 0.7 + slot * 1.7 + (side === "home" ? 0 : 2.3)) * 0.6;
+      return { x: clampPos(x + j), y: clampPos(y + j * 0.7) };
     };
 
     const enterStroke = () => {
       const st2 = stateRef.current;
       const s = st2.timeline[C.si];
-      C.pts = [];
-      C.durs = [];
+      C.phases = [];
+      C.pi = 0;
+      C.t = 0;
+      C.originX = C.ballX;
+      C.originY = C.ballY;
       if (!s) return;
       C.poss = s.h ? "home" : "away";
-      const pts = [{ x: C.ballX, y: C.ballY }];
-      const durs: number[] = [];
-      const first = s.p.length ? shiftedPos(C.poss, s.p[0]) : null;
-      if (first) {
-        pts.push(first);
-        durs.push(0.16);
-      }
+      const phases: Phase[] = [];
+      if (s.p.length) phases.push({ k: "player", opp: false, slot: s.p[0], dur: 0.16 });
       for (let i = 0; i + 1 < s.p.length; i++) {
-        pts.push(shiftedPos(C.poss, s.p[i + 1]));
-        durs.push(0.3);
+        phases.push({ k: "player", opp: false, slot: s.p[i + 1], dur: 0.3 });
       }
-      const lastPt = pts[pts.length - 1];
-      const other: Side = C.poss === "home" ? "away" : "home";
       const up = attacksUp(C.poss);
       const mirror = sideMirror(C.poss);
       const mouthX = s.t !== undefined ? (mirror ? 100 - s.t : s.t) : 50;
       const goalY = up ? 1.5 : 98.5;
-      let end: { x: number; y: number } | null = null;
-      let dur = 0.35;
       switch (s.o) {
         case "turnover":
-          if (s.b !== undefined) {
-            end = shiftedPos(other, s.b);
-            dur = 0.4;
-          }
+          phases.push(
+            s.b !== undefined
+              ? { k: "player", opp: true, slot: s.b, dur: 0.4 }
+              : { k: "hold", dur: 0.4 }
+          );
           break;
         case "out":
-          end = { x: s.t !== undefined ? (mirror ? 100 - s.t : s.t) : 4, y: lastPt.y };
-          dur = 0.35;
+          phases.push({
+            k: "point",
+            x: s.t !== undefined ? (mirror ? 100 - s.t : s.t) : 4,
+            y: up ? 25 : 75,
+            dur: 0.35
+          });
           break;
         case "foul":
-          end = { ...lastPt };
-          dur = 0.65;
+          phases.push({ k: "hold", dur: 0.65 });
           break;
         case "goal":
-          end = { x: mouthX, y: goalY };
-          dur = 0.5;
+          phases.push({ k: "point", x: mouthX, y: goalY, dur: 0.5 });
           break;
         case "save":
-          end = s.b !== undefined ? shiftedPos(other, s.b) : { x: mouthX, y: goalY };
-          dur = 0.55;
+          phases.push(
+            s.b !== undefined
+              ? { k: "player", opp: true, slot: s.b, dur: 0.55 }
+              : { k: "point", x: mouthX, y: goalY, dur: 0.55 }
+          );
           break;
         case "block":
-          end = s.b !== undefined ? shiftedPos(other, s.b) : lastPt;
-          dur = 0.45;
+          phases.push(
+            s.b !== undefined
+              ? { k: "player", opp: true, slot: s.b, dur: 0.45 }
+              : { k: "hold", dur: 0.45 }
+          );
           break;
         case "miss":
-          end = { x: mouthX, y: up ? -4 : 104 };
-          dur = 0.5;
+          phases.push({ k: "point", x: mouthX, y: up ? -4 : 104, dur: 0.5 });
           break;
       }
-      if (end) {
-        pts.push(end);
-        durs.push(dur);
-      }
-      C.pts = pts;
-      C.durs = durs;
-      C.pp = 0;
-      C.t = 0;
+      C.phases = phases;
     };
 
     const tick = (dt: number) => {
@@ -223,31 +257,50 @@ function LiveMatchScreen() {
       const tl = st2.timeline;
       if (C.flashT > 0) C.flashT = Math.max(0, C.flashT - dt);
 
+      C.time += dt;
       for (const side of ["home", "away"] as const) {
         for (let i = 0; i < 11; i++) {
           const key = side + ":" + i;
-          const tgt = shiftedPos(side, i);
+          const tgt = targetFor(side, i);
           const cur = C.anim.get(key) ?? { x: tgt.x, y: tgt.y };
-          const k = Math.min(1, dt * 4.5);
-          cur.x += (tgt.x - cur.x) * k;
-          cur.y += (tgt.y - cur.y) * k;
+          const k = Math.min(1, dt * 7);
+          let nx = cur.x + (tgt.x - cur.x) * k;
+          let ny = cur.y + (tgt.y - cur.y) * k;
+          const cap = (sideOf(side).poss[i] === "GK" ? 9 : 14) * dt;
+          const dx = nx - cur.x;
+          const dy = ny - cur.y;
+          const len = Math.hypot(dx, dy);
+          if (len > cap && len > 0) {
+            nx = cur.x + (dx / len) * cap;
+            ny = cur.y + (dy / len) * cap;
+          }
+          cur.x = nx;
+          cur.y = ny;
           C.anim.set(key, cur);
         }
       }
 
       if (C.playing && C.si < tl.length) {
-        if (!C.pts.length) enterStroke();
+        if (!C.phases) enterStroke();
         C.t += dt * C.speed;
-        while (C.durs.length && C.t >= C.durs[C.pp]) {
-          C.t -= C.durs[C.pp];
-          C.pp++;
-          if (C.pp >= C.durs.length) {
+        let guard = 0;
+        while (
+          C.phases &&
+          C.pi < C.phases.length &&
+          C.t >= C.phases[C.pi].dur &&
+          guard++ < 40
+        ) {
+          const ph = C.phases[C.pi];
+          C.t -= ph.dur;
+          C.pi++;
+          C.originX = C.ballX;
+          C.originY = C.ballY;
+          if (C.pi >= C.phases.length) {
             const done = tl[C.si];
             C.si++;
-            C.pp = 0;
+            C.pi = 0;
             C.t = 0;
-            C.pts = [];
-            C.durs = [];
+            C.phases = null;
             if (done) {
               C.minute = done.m;
               if (done.o === "goal") {
@@ -261,15 +314,21 @@ function LiveMatchScreen() {
             break;
           }
         }
-        if (C.pts.length && C.durs.length) {
-          const ai = Math.min(C.pp, C.pts.length - 1);
-          const a = C.pts[ai];
-          const b = C.pts[Math.min(ai + 1, C.pts.length - 1)];
-          const dd = C.durs[Math.min(C.pp, C.durs.length - 1)] || 1;
-          const q = Math.min(1, C.t / dd);
-          const e = q * q * (3 - 2 * q);
-          C.ballX = a.x + (b.x - a.x) * e;
-          C.ballY = a.y + (b.y - a.y) * e;
+        const ph = C.phases?.[C.pi];
+        if (ph) {
+          let to: { x: number; y: number } | null = null;
+          if (ph.k === "player") {
+            const other: Side = C.poss === "home" ? "away" : "home";
+            to = targetFor(ph.opp ? other : (C.poss ?? "home"), ph.slot);
+          } else if (ph.k === "point") {
+            to = { x: ph.x, y: ph.y };
+          }
+          if (to) {
+            const q = Math.min(1, ph.dur ? C.t / ph.dur : 0);
+            const e = q * q * (3 - 2 * q);
+            C.ballX = C.originX + (to.x - C.originX) * e;
+            C.ballY = C.originY + (to.y - C.originY) * e;
+          }
           const cur = tl[C.si];
           if (cur) C.minute = cur.m;
         }
@@ -295,11 +354,22 @@ function LiveMatchScreen() {
         for (let i = 0; i <= C.si && i < tl.length; i++) {
           const s = tl[i];
           if (s.o !== "goal") continue;
-          const counted = i < C.si || C.pp >= Math.max(0, C.durs.length - 1);
+          const counted = i < C.si || C.pi >= Math.max(0, (C.phases?.length ?? 1) - 1);
           if (counted) {
             if (s.h) gh++;
             else ga++;
           }
+        }
+        if ((window as unknown as { __fmDebugOn?: boolean }).__fmDebugOn) {
+          const pos: Record<string, { x: number; y: number }> = {};
+          for (const [k, v] of C.anim) {
+            pos[k] = { x: Math.round(v.x * 10) / 10, y: Math.round(v.y * 10) / 10 };
+          }
+          (window as unknown as { __fmPos?: unknown }).__fmPos = {
+            minute: Math.round(C.minute * 10) / 10,
+            ball: { x: Math.round(C.ballX * 10) / 10, y: Math.round(C.ballY * 10) / 10 },
+            pos
+          };
         }
         cbRef.current.onUi(C.minute, C.si, gh, ga);
       }
@@ -312,10 +382,24 @@ function LiveMatchScreen() {
 
     const buildFrame = (): Frame => {
       const players: FramePlayer[] = [];
+      let ringKey: string | null = null;
+      if (C.poss) {
+        let best = 16;
+        for (let i = 0; i < 11; i++) {
+          const cur = C.anim.get(C.poss + ":" + i);
+          if (!cur) continue;
+          const d = Math.hypot(cur.x - C.ballX, cur.y - C.ballY);
+          if (d < best) {
+            best = d;
+            ringKey = C.poss + ":" + i;
+          }
+        }
+      }
       for (const side of ["home", "away"] as const) {
         for (let i = 0; i < 11; i++) {
-          const cur = C.anim.get(side + ":" + i);
-          if (cur) players.push({ x: cur.x, y: cur.y, num: i + 1, side });
+          const key = side + ":" + i;
+          const cur = C.anim.get(key);
+          if (cur) players.push({ x: cur.x, y: cur.y, num: i + 1, side, ring: key === ringKey });
         }
       }
       return {

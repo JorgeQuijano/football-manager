@@ -5,6 +5,7 @@ export interface FramePlayer {
   y: number;
   num: number;
   side: "home" | "away";
+  ring?: boolean;
 }
 
 export interface Frame {
@@ -97,6 +98,13 @@ export function drawFrame(
     const col = p.side === "home" ? homeColor : awayColor;
     const px = X(p.x);
     const py = Y(p.y);
+    if (p.ring) {
+      ctx.beginPath();
+      ctx.arc(px, py, R + 3, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255,255,255,0.8)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
     ctx.beginPath();
     ctx.arc(px, py, R, 0, Math.PI * 2);
     ctx.fillStyle = col;
