@@ -41,7 +41,7 @@ import {
   startLive,
   T, playRound } from "@/engine";
 import type { BidResponse } from "@/engine";
-import type { AttrKey, CornerRoutine, FreeKickRoutine, TrainingPlan } from "@/engine";
+import type { AttrKey, CornerRoutine, FacilityKind, FreeKickRoutine, TrainingPlan } from "@/engine";
 import { cleanSetPieces } from "@/engine";
 import {
   applyTeamTalk,
@@ -75,7 +75,10 @@ import {
   skipPress as skipPressEngine,
   toggleShortlist as toggleShortlistEngine,
   topUpScouting as topUpScoutingEngine,
-  leaders as leadersOf
+  leaders as leadersOf,
+  bankToTransfer as bankToTransferEngine,
+  startBuild as startBuildEngine,
+  signSponsor as signSponsorEngine
 } from "@/engine";
 import type {
   AgentInterest,
@@ -101,6 +104,7 @@ export type Screen =
   | "transfers"
   | "training"
   | "setpieces"
+  | "club"
   | "match"
   | "inbox"
   | "help"
@@ -196,6 +200,12 @@ interface AppState {
   pledge: (playerId: string) => string | null;
   /** call a team meeting (v0.28) */
   teamMeeting: (themeId: string) => MeetingOutcome | null;
+  /** sign a shirt sponsor (v0.30) */
+  signSponsor: (offerId: string) => { ok: boolean; message: string } | null;
+  /** commission a facility upgrade (v0.30) */
+  startBuild: (kind: FacilityKind) => { ok: boolean; message: string } | null;
+  /** move club money into the transfer kitty (v0.30) */
+  bankToTransfer: (amount: number) => { ok: boolean; message: string } | null;
   /** answer the current press question; returns the outcome or an error */
   answerPress: (index: number) => PressOutcome | { error: string };
   /** send the assistant to the press conference */
@@ -987,7 +997,43 @@ export const useGame = create<AppState>()((set, get) => ({
     return { ok: r.resp.ok, message: r.resp.message };
   },
 
-  pledge: (playerId: string) => {
+  signSponsor: (offerId) => {
+    const { game } = get();
+    if (!game) return null;
+    const clone = structuredClone(game);
+    const res = signSponsorEngine(clone, offerId);
+    if (res.ok) {
+      set({ game: clone });
+      schedulePersist(clone);
+    }
+    return res;
+  },
+
+  startBuild: (kind) => {
+    const { game } = get();
+    if (!game) return null;
+    const clone = structuredClone(game);
+    const res = startBuildEngine(clone, kind);
+    if (res.ok) {
+      set({ game: clone });
+      schedulePersist(clone);
+    }
+    return res;
+  },
+
+  bankToTransfer: (amount) => {
+    const { game } = get();
+    if (!game) return null;
+    const clone = structuredClone(game);
+    const res = bankToTransferEngine(clone, amount);
+    if (res.ok) {
+      set({ game: clone });
+      schedulePersist(clone);
+    }
+    return res;
+  },
+
+  pledge: (playerId) => {
     const { game } = get();
     if (!game) return "No game loaded.";
     const r = pledgeMinutes(game, playerId);

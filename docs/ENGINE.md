@@ -648,3 +648,26 @@ Cards now have consequences beyond the sending-off.
 **Serving** — the existing rule does the rest: a suspended player can't be picked — each match he doesn't play burns one week off the ban (`Player.suspension`). Only **your** players generate inbox items; the rest of the division collects its bans quietly.
 
 **Reading it in the app** — squad list: `· suspended` / `· 1 yellow from a ban`; player sheet: the Cards stat, the ban line and the remaining matches out.
+
+## 35. Commercial & facilities: the club's own money (`commercial.ts`)
+
+Until now the club only had a transfer budget and a wage ceiling — both handed down by the board. **v0.30.0 gives the club an account of its own**, and something to spend it on.
+
+**The account (`Finances.balance`).** Money in: the **shirt sponsor** (weekly), **commercial & merchandise** (a slice of how the crowd feels: `(fans − 35) × £2.8k/wk`, capped), and the **gate** — home matchdays only, `capacity × £30 × how full the ground is` (attendance tracks fan confidence, floor 55%). Money out: **facility upkeep** (`level × £4k/wk` across the four facilities). League and broadcast money is assumed to cover the wage bill — the account is the investment pot, so a mid club is cash-generative (+£8–16m/season) but never silly. **The board quietly covers any shortfall** over £50k with a warning in the inbox: the balance never goes negative. `bankToTransfer` moves £500k+ chunks of it into the transfer kitty, which is how the two economies touch.
+
+**Sponsorship.** A new club starts with the shirt on the market: `makeSponsorOffers` produces **three offers** whose value tracks stature (`squadValue × 0.0022 + £40k`, +£60k while you're champions) — a two-season front-of-shirt, a richer **three-season** deal, and a cheap **one-season** deal for flexibility. Signing pays a signing bonus into the account immediately; when a deal expires (season rollover) the market reopens. `rollSponsor` handles both.
+
+**Facilities (1–5, four of them).** Each one multiplies a system that is already in the engine — none of them are cosmetic:
+
+| Facility | Effect | Where it lands |
+|---|---|---|
+| Training ground | `0.88 + 0.06 × level` on weekly gains (level 2 = neutral, level 5 = +18%) | `developPlayer(…, facilityMult)` |
+| Academy | `0.85 + 0.07 × level` on a youth player's **ceiling** | `makeYouth` |
+| Medical centre | `1.20 − 0.07 × level` on weeks out (level 5 ≈ −15%) | `medicalWeeks` at every injury site |
+| Stadium | 8k/12k/16k/20k/24k seats by level | `gateReceipts` |
+
+**Building.** `startBuild` charges `FACILITY_COST` (stadium £3.0m / training £1.5m / academy £1.0m / medical £0.8m) from the account and sets a `Build` with `FACILITY_WEEKS` to run (10/5/5/4). One site at a time; `tickBuilds` runs with each league round and raises the level when the last week falls, with a news + inbox line. Refusals are explicit: maxed, already building, or not enough in the account.
+
+**Reading it in the app.** A new **Club** tab (the seventh nav item) shows the account breakdown, the shirt (current deal or the three offers with a sign button), and the four facilities with level pips, their effect line, and an upgrade button priced at the next level. Wages and the gate are shown in k-per-week so the weekly rhythm is legible on a phone.
+
+**Determinism.** Sponsor offers are seeded off `season + clubId`; build ticks and account movements are pure functions of the save, so the same seed replays identically. New saves seed a campus per club (`makeFacilities`): bigger clubs have better everything, with a seeded spread at the smaller ones.

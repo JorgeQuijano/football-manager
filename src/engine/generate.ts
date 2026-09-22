@@ -1,4 +1,4 @@
-import type { Club, FormationId, Lineup, Player, Position, SaveGame } from "./types";
+import type { Club, Facilities, FormationId, Lineup, Player, Position, SaveGame } from "./types";
 import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
 import { traitsFor } from "./traits";
 import { FORMATIONS, T } from "./tuning";
@@ -8,6 +8,7 @@ import { buildFixtures } from "./league";
 import { makeFriendlies } from "./preseason";
 import { contractFor, freshFinances } from "./transfers";
 import { peakFor } from "./training";
+import { FACILITY_MAX, makeSponsorOffers } from "./commercial";
 import { defaultSetPieces } from "./setpieces";
 import { initScouting } from "./scouting";
 import { emptyAwards, emptyHistory } from "./history";
@@ -131,6 +132,24 @@ function makePlayer(
   return player;
 }
 
+/** A campus per club: bigger clubs have better everything, with a little spread. */
+function makeFacilities(clubs: Club[]): Record<string, Facilities> {
+  const out: Record<string, Facilities> = {};
+  clubs.forEach((c, i) => {
+    const rng = mulberry32(hashSeed(`fac-${c.id}-${i}`));
+    const big = i < 3 ? 1 : 0;
+    const lvl = (spread: number) =>
+      Math.max(1, Math.min(FACILITY_MAX, 2 + big + (rng() < spread ? -1 : rng() < 0.3 ? 1 : 0)));
+    out[c.id] = {
+      stadium: Math.max(1, Math.min(FACILITY_MAX, 2 + (i < 2 ? 2 : i < 5 ? 1 : 0))),
+      training: lvl(0.4),
+      youth: lvl(0.4),
+      medical: lvl(0.4)
+    };
+  });
+  return out;
+}
+
 export function newGame(seed: number, userClubId?: string): SaveGame {
   const rng = mulberry32(hashSeed(seed, "world"));
 
@@ -166,6 +185,8 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
   );
 
   const finances = freshFinances({ clubs, players });
+  // a brand-new club has no shirt deal: the market is open from day one
+
 
   const save: SaveGame = {
     saveVersion: 1,
@@ -175,6 +196,7 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     phase: "pre",
     userClubId: chosen,
     clubs,
+    facilities: makeFacilities(clubs),
     players,
     fixtures,
     lineup,
@@ -197,5 +219,7 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
   makePress(save); // the press want a word before the opener
   // …and it belongs to the league opener, not the friendly weeks
   if (save.media?.press) save.media.press.round = 1;
+  // the shirt is on the market from day one
+  save.sponsorOffers = makeSponsorOffers(save);
   return save;
 }

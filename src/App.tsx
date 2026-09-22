@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useGame } from "@/state/store";
 import { BottomNav } from "@/ui/BottomNav";
 import { Builder } from "@/ui/screens/Builder";
+import { Club } from "@/ui/screens/Club";
 import { Home } from "@/ui/screens/Home";
 import { Help } from "@/ui/screens/Help";
 import { Inbox } from "@/ui/screens/Inbox";
@@ -50,6 +51,7 @@ export default function App() {
         {screen === "training" && <Training />}
         {screen === "setpieces" && <SetPieces />}
         {screen === "league" && <LeagueScreen />}
+        {screen === "club" && <Club />}
       </main>
       <BottomNav />
     </div>

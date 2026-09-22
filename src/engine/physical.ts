@@ -1,5 +1,6 @@
 import type { Player, SaveGame } from "./types";
 import { hashSeed, mulberry32 } from "./rng";
+import { medicalWeeks } from "./commercial";
 import { pushNews } from "./training";
 
 // --- match sharpness ------------------------------------------------------------------
@@ -126,7 +127,10 @@ export function internationalTick(save: SaveGame): string[] {
       called.push(p.id);
       // the odd knock on international duty
       if (rng() < 0.02 * pronenessOf(p)) {
-        p.injuredWeeks = Math.max(p.injuredWeeks, 1 + Math.floor(rng() * 3));
+        p.injuredWeeks = Math.max(
+          p.injuredWeeks,
+          medicalWeeks(save, p.clubId ?? "", 1 + Math.floor(rng() * 3))
+        );
       }
     }
   }

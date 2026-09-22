@@ -29,7 +29,24 @@ import { dealCost, dealValue, termsDemand } from "./transfers";
 import { INBOX_CAP, inboxFor, inboxUnread, markAllInboxRead, openInboxItem, pushInbox } from "./inbox";
 import { PRE_ROUNDS, makeFriendlies, preseasonState } from "./preseason";
 import { fmtShort as fmtShortCal, friendlyDate } from "./calendar";
+import type { Facilities } from "./types";
+import { makeYouth } from "./training";
 import { formFactor, formFreshnessTick } from "./stats";
+import {
+  FACILITY_COST,
+  FACILITY_WEEKS,
+  bankToTransfer,
+  capacityOf,
+  facilitiesOf,
+  gateReceipts,
+  makeSponsorOffers,
+  medicalWeeks,
+  rollSponsor,
+  runCommercialRound,
+  signSponsor,
+  startBuild,
+  tickBuilds
+} from "./commercial";
 import {
   applyCardPenalties,
   banForCrossing,
@@ -4074,7 +4091,7 @@ describe("the market, granular: deals, loans, contracts & the board", () => {
     const u = save.userClubId;
     // a clean board policy, so the tests exercise the market, not the board's rules
     return {
-      save: { ...save, policy: { label: "test" }, finances: { ...save.finances, [u]: { transfer: 40_000_000, wageBudget: 3_000_000 } } },
+      save: { ...save, policy: { label: "test" }, finances: { ...save.finances, [u]: { transfer: 40_000_000, wageBudget: 3_000_000, balance: 12_000_000 } } },
       u
     };
   };
@@ -5452,6 +5469,177 @@ describe("discipline: the fifth booking and the straight red", () => {
     // and the accumulators are exactly the ones walking the tightrope or banned
     const edge = onTheEdge(save.players, save.userClubId);
     expect(edge.every((p) => (p.suspension ?? 0) === 0)).toBe(true);
+  }, 30_000);
+});
+
+describe("the club: sponsorship, the account and the campus", () => {
+  const fresh = () => newGame(995);
+  const withFac = (save: SaveGame, over: Partial<Facilities>): SaveGame => ({
+    ...save,
+    facilities: { ...save.facilities, [save.userClubId]: { ...save.facilities[save.userClubId], ...over } }
+  });
+
+  it("the shirt is worth more to a bigger club, and the long deal pays more", () => {
+    const save = fresh();
+    const offers = makeSponsorOffers(save);
+    expect(offers.length).toBe(3);
+    expect(offers[1].weekly).toBeGreaterThan(offers[0].weekly); // three seasons costs more
+    expect(offers[2].weekly).toBeLessThan(offers[0].weekly); // one season pays less
+    expect(offers.every((o) => o.until === save.season + o.seasons)).toBe(true);
+    // a smaller club is worth less to a sponsor
+    const small = { ...save, userClubId: save.clubs[9].id };
+    expect(makeSponsorOffers(small)[1].weekly).toBeLessThan(offers[1].weekly);
+    // offers are seeded: same save, same table
+    expect(makeSponsorOffers(save)[1].weekly).toBe(offers[1].weekly);
+  });
+
+  it("signing puts the money on the shirt and the bonus in the bank", () => {
+    const save = fresh();
+    save.sponsorOffers = makeSponsorOffers(save);
+    const offer = save.sponsorOffers[1];
+    const before = save.finances[save.userClubId].balance;
+    const res = signSponsor(save, offer.id);
+    expect(res.ok).toBe(true);
+    expect(save.sponsor?.name).toBe(offer.name);
+    expect(save.sponsor?.weekly).toBe(offer.weekly);
+    expect(save.sponsorOffers).toEqual([]);
+    expect(save.finances[save.userClubId].balance).toBe(before + offer.bonus);
+  });
+
+  it("a home week fills the account and an away week does not", () => {
+    const save = toLeague(fresh());
+    save.sponsor = { name: "Test Co", weekly: 200_000, seasons: 2, until: save.season + 2, bonus: 0 };
+    const capped = withFac(save, { stadium: 4 }); // 20,000 seats, so the gate is worth having
+    const start = capped.finances[capped.userClubId].balance;
+    // play a round until it is a home one
+    let s = capped;
+    let home = false;
+    for (let i = 0; i < 4 && !home; i++) {
+      const fx = s.fixtures.find((f) => f.round === s.round && !f.played && (f.homeId === s.userClubId || f.awayId === s.userClubId));
+      home = !!fx && fx.homeId === s.userClubId;
+      if (home) break;
+      s = playRound(s).save;
+    }
+    expect(home).toBe(true);
+    const before = s.finances[s.userClubId].balance;
+    const after = playRound(s).save.finances[s.userClubId].balance;
+    const gate = gateReceipts(s);
+    expect(gate).toBeGreaterThan(200_000);
+    // income minus upkeep: the gate is the lion's share of the week
+    expect(after - before).toBeGreaterThan(gate * 0.9);
+  });
+
+  it("the board quietly covers a shortfall rather than let the lights go out", () => {
+    const save = toLeague(fresh());
+    save.sponsor = undefined;
+    // no shirt money, a full campus to run, and a crowd that isn't buying anything
+    save.facilities[save.userClubId] = { stadium: 5, training: 5, youth: 5, medical: 5 };
+    save.media = { ...save.media!, fans: 30 };
+    save.finances[save.userClubId].balance = 1_000;
+    // put the round on an away day: no gate to soften the blow
+    const away = save.fixtures.find(
+      (f) => !f.played && f.round >= 1 && (f.homeId === save.userClubId || f.awayId === save.userClubId) && f.awayId === save.userClubId
+    );
+    save.round = away?.round ?? save.round;
+    const lines = runCommercialRound(save);
+    expect(save.finances[save.userClubId].balance).toBeGreaterThanOrEqual(0);
+    expect(lines).toContain("board top-up");
+    expect((save.inbox ?? []).some((i) => /shortfall/i.test(i.title))).toBe(true);
+  });
+
+  it("builds take money now, weeks to finish, and land in the save", () => {
+    const save = toLeague(fresh());
+    save.facilities[save.userClubId] = { stadium: 2, training: 2, youth: 2, medical: 2 };
+    const fin = save.finances[save.userClubId];
+    fin.balance = 9_000_000;
+    const res = startBuild(save, "medical");
+    expect(res.ok).toBe(true);
+    expect(fin.balance).toBe(9_000_000 - FACILITY_COST.medical);
+    expect(save.builds?.[0].weeksLeft).toBe(FACILITY_WEEKS.medical);
+    // no double builds on the same site
+    expect(startBuild(save, "medical").ok).toBe(false);
+    // tick down to completion
+    for (let i = 0; i < FACILITY_WEEKS.medical - 1; i++) expect(tickBuilds(save)).toEqual([]);
+    const done = tickBuilds(save);
+    expect(done.length).toBe(1);
+    expect(facilitiesOf(save, save.userClubId).medical).toBe(3);
+    expect(save.builds).toEqual([]);
+    // and you can't build what you can't afford
+    fin.balance = 10_000;
+    expect(startBuild(save, "stadium").ok).toBe(false);
+  });
+
+  it("the training ground, the clinic, the academy and the stands each do something", () => {
+    const base = toLeague(fresh());
+    // training: same player, same seed, better ground
+    const p = squadOf(base.players, base.userClubId)[5];
+    const growAt = (level: number) => {
+      const s = withFac(base, { training: level });
+      const clone = structuredClone(s);
+      const target = clone.players.find((x) => x.id === p.id)!;
+      const before = target.attrs.shooting + target.attrs.passing + target.attrs.pace;
+      developRound(clone, { [p.id]: 90 });
+      const after = clone.players.find((x) => x.id === p.id)!;
+      return after.attrs.shooting + after.attrs.passing + after.attrs.pace - before;
+    };
+    expect(growAt(5)).toBeGreaterThanOrEqual(growAt(1));
+    // medical: injuries heal to a shorter number at a better centre
+    expect(medicalWeeks(withFac(base, { medical: 5 }), base.userClubId, 4)).toBeLessThan(
+      medicalWeeks(withFac(base, { medical: 1 }), base.userClubId, 4)
+    );
+    // academy: a better youth setup produces a better ceiling
+    const peakAt = (level: number) => {
+      const s = withFac(base, { youth: level });
+      return makeYouth(s, s.userClubId, 0).peak;
+    };
+    expect(peakAt(5)).toBeGreaterThan(peakAt(1));
+    // stadium: more seats, more at the gate
+    expect(gateReceipts(withFac(base, { stadium: 5 }))).toBeGreaterThan(
+      gateReceipts(withFac(base, { stadium: 1 }))
+    );
+    expect(capacityOf({ stadium: 1 })).toBe(8_000);
+    expect(capacityOf({ stadium: 5 })).toBe(24_000);
+  });
+
+  it("moves club money into the transfer kitty, in millions", () => {
+    const save = toLeague(fresh());
+    const fin = save.finances[save.userClubId];
+    fin.balance = 2_400_000;
+    const t0 = fin.transfer;
+    expect(bankToTransfer(save, 1_000_000).ok).toBe(true);
+    expect(fin.transfer).toBe(t0 + 1_000_000);
+    expect(fin.balance).toBe(1_400_000);
+    fin.balance = 100_000;
+    const refused = bankToTransfer(save, 1_000_000);
+    expect(refused.ok).toBe(false);
+    expect(refused.message).toMatch(/500k/);
+  });
+
+  it("the shirt market reopens when a deal runs out", () => {
+    const save = toLeague(fresh());
+    save.sponsor = { name: "Old Co", weekly: 100_000, seasons: 1, until: save.season, bonus: 0 };
+    save.sponsorOffers = [];
+    rollSponsor(save);
+    expect(save.sponsor).toBeUndefined();
+    expect((save.sponsorOffers ?? []).length).toBe(3);
+    expect((save.inbox ?? []).some((i) => /sponsorship/i.test(i.title))).toBe(true);
+    // a live deal is left alone
+    const live = toLeague(fresh());
+    live.sponsor = { name: "Steady Co", weekly: 120_000, seasons: 3, until: live.season + 2, bonus: 0 };
+    live.sponsorOffers = [];
+    rollSponsor(live);
+    expect(live.sponsor?.name).toBe("Steady Co");
+    expect(live.sponsorOffers).toEqual([]);
+  });
+
+  it("a full season pays the gate, the sponsor and the upkeep without drama", () => {
+    let save = toLeague(fresh());
+    save.sponsor = { name: "Season Co", weekly: 180_000, seasons: 2, until: save.season + 2, bonus: 0 };
+    const start = save.finances[save.userClubId].balance;
+    for (let i = 0; i < 18; i++) save = playRound(save).save;
+    const end = save.finances[save.userClubId].balance;
+    expect(end).toBeGreaterThan(start); // a mid club is cash-generative on this model
+    expect(end).toBeLessThan(start + 40_000_000); // …but not silly
   }, 30_000);
 });
 

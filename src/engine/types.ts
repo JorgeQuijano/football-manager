@@ -318,6 +318,39 @@ export interface PreContract {
 export interface Finances {
   transfer: number; // available transfer budget
   wageBudget: number; // weekly wage ceiling
+  /** the club's own money: commercial income in, facility spending out (engine/commercial.ts) */
+  balance: number;
+}
+
+/** The campus: each 1..5 (training/academy neutral at level 2, medical at level 2 too). */
+export interface Facilities {
+  stadium: number;
+  training: number;
+  youth: number;
+  medical: number;
+}
+
+/** A main-shirt sponsorship, in weekly money until the end of `until`. */
+export interface SponsorDeal {
+  name: string;
+  weekly: number;
+  seasons: number;
+  until: number;
+  bonus: number;
+}
+
+/** One offer on the shirt, waiting for an answer. */
+export interface SponsorOffer extends SponsorDeal {
+  id: string;
+  tagline: string;
+}
+
+/** Work in progress on a facility (user club only). */
+export interface Build {
+  kind: "stadium" | "training" | "youth" | "medical";
+  to: number;
+  weeksLeft: number;
+  cost: number;
 }
 
 /** An offer for one of the user's players, waiting for accept / reject. */
@@ -826,6 +859,14 @@ export interface SaveGame {
   live?: LiveMatch;
   /** per-club money for the current season (engine/transfers.ts) */
   finances: Record<string, Finances>;
+  /** the campus, per club (engine/commercial.ts) */
+  facilities: Record<string, Facilities>;
+  /** work under way on your facilities */
+  builds?: Build[];
+  /** your main-shirt deal */
+  sponsor?: SponsorDeal;
+  /** offers on the shirt waiting for an answer */
+  sponsorOffers?: SponsorOffer[];
   /** incoming offers for the user's players, pending a decision */
   offers: TransferOffer[];
   /** a fee already agreed with a club, awaiting personal terms (single-deal workflow) */

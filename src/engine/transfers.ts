@@ -129,7 +129,9 @@ export function freshFinances(save: Pick<SaveGame, "clubs" | "players">): Record
     const bill = wageBill(stub, c.id);
     out[c.id] = {
       transfer: Math.max(500_000, roundTo(value * TF.budgetValueShare + TF.budgetBase, 100_000)),
-      wageBudget: Math.max(5_000, roundTo(bill * TF.wageBudgetMult, 1_000))
+      wageBudget: Math.max(5_000, roundTo(bill * TF.wageBudgetMult, 1_000)),
+      // the club account carries over; a fresh one starts at roughly half a season's upkeep
+      balance: 4_000_000
     };
   }
   return out;
