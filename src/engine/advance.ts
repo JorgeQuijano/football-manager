@@ -9,6 +9,7 @@ import { weeklyRecovery } from "./tuning";
 import { TF, freshFinances, makeFreeAgent, rollContracts, windowTick } from "./transfers";
 import { INTENSITIES, developRound, learnTraits, resetSeasonDev, youthIntake } from "./training";
 import { growFamiliarity, planForClub } from "./setpieces";
+import { recordMatch } from "./stats";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -88,6 +89,8 @@ const applyResult = (
   result: MatchResult,
   playedIds: Set<string>
 ): void => {
+  const home = save.clubs.find((c) => c.id === result.homeId);
+  const away = save.clubs.find((c) => c.id === result.awayId);
   for (const u of result.updates) {
     const p = save.players.find((pp) => pp.id === u.playerId);
     if (!p) continue;
@@ -102,6 +105,16 @@ const applyResult = (
     if (u.conditionLoss > 0) {
       p.condition = Math.max(5, Math.round(p.condition - u.conditionLoss));
     }
+    // stats: minutes, cards, rating → form, and the match log for your own players
+    const isHome = p.clubId === result.homeId;
+    recordMatch(p, u, {
+      season: save.season,
+      round: result.round,
+      opp: (isHome ? away : home)?.short ?? "?",
+      home: isHome,
+      rating: result.ratings[u.playerId],
+      userClub: p.clubId === save.userClubId
+    });
   }
 };
 
@@ -227,6 +240,13 @@ export function nextSeason(input: SaveGame): SaveGame {
     p.apps = 0;
     p.goals = 0;
     p.assists = 0;
+    // season stats reset (the recent-match log survives across seasons)
+    p.mins = 0;
+    p.yellows = 0;
+    p.reds = 0;
+    p.ratingSum = 0;
+    p.ratingCount = 0;
+    p.form = [];
   }
   // contracts: expiries leave (AI clubs re-sign most), then a fresh free-agent intake
   rollContracts(save);

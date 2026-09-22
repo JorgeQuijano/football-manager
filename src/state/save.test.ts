@@ -48,6 +48,22 @@ describe("normalizeSave", () => {
     expect(fixed.players.every((p) => p.assists === 0)).toBe(true);
   });
 
+  it("backfills match stats for players from older saves", () => {
+    const save = newGame(51);
+    const old = JSON.parse(JSON.stringify(save)) as typeof save;
+    for (const p of old.players) {
+      for (const k of ["mins", "yellows", "reds", "ratingSum", "ratingCount", "form", "history"]) {
+        delete (p as unknown as Record<string, unknown>)[k];
+      }
+    }
+    const fixed = normalizeSave(old);
+    expect(
+      fixed.players.every(
+        (p) => p.mins === 0 && p.yellows === 0 && p.ratingCount === 0 && p.form.length === 0 && p.history.length === 0
+      )
+    ).toBe(true);
+  });
+
   it("clamps the live-match playhead and drops a stale live match", () => {
     const save = newGame(41);
     const live = startLive(save)!;

@@ -63,6 +63,18 @@ export interface TrainingPlan {
   intensity: Intensity;
 }
 
+/** One line of a player's recent-match log (user club only). */
+export interface PlayerMatch {
+  se: number; // season
+  r: number; // round
+  opp: string; // opponent short name
+  h: boolean; // home
+  rt: number; // match rating
+  m: number; // minutes
+  g: number; // goals
+  a: number; // assists
+}
+
 /** FM-style behavioural traits — see engine/traits.ts */
 export type TraitId =
   | "shoots_on_sight"
@@ -101,6 +113,18 @@ export interface Player {
   apps: number;
   goals: number;
   assists: number;
+  /** season minutes played (reset each pre-season) */
+  mins: number;
+  /** season cards */
+  yellows: number;
+  reds: number;
+  /** season rating accumulator (4.0-10.0 per match) */
+  ratingSum: number;
+  ratingCount: number;
+  /** last up to 6 match ratings, newest first — the form guide */
+  form: number[];
+  /** recent matches for the user's players, newest first (capped) */
+  history: PlayerMatch[];
 }
 
 /** A player's deal: weekly wage and the last season it covers. */

@@ -41,6 +41,14 @@ export function normalizeSave(save: SaveGame): SaveGame {
     }
     // training/development fields (v0.12): peak, dev accumulators, individual focus
     ensureDev(p);
+    // match stats (v0.15): season accumulators, form guide, recent-match log
+    if (typeof p.mins !== "number") p.mins = 0;
+    if (typeof p.yellows !== "number") p.yellows = 0;
+    if (typeof p.reds !== "number") p.reds = 0;
+    if (typeof p.ratingSum !== "number") p.ratingSum = 0;
+    if (typeof p.ratingCount !== "number") p.ratingCount = 0;
+    if (!Array.isArray(p.form)) p.form = [];
+    if (!Array.isArray(p.history)) p.history = [];
   }
   if (!save.training || typeof save.training !== "object") {
     save.training = { unit: "balanced", intensity: "normal" };

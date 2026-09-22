@@ -36,6 +36,7 @@ src/engine/
   training.ts    Per-round development (age/minutes/focus/intensity), potential peaks, trait learning, academy intake
   planner.ts     Squad planner: career stages, contract states, per-line depth levels, next-season projection
   setpieces.ts   Set-piece routines, nominated takers, familiarity growth, per-club plans (AI + user)
+  stats.ts       Per-match records: season accumulators, form guide (last 6 ratings), recent-match log, squad sorting
   index.ts       Barrel export
 ```
 
@@ -330,3 +331,20 @@ Every routine scales by `familiarityFactor(fam)` = 0.9 + 0.1 x fam/100 (never tr
 **UI** — `src/ui/screens/SetPieces.tsx` (screen `setpieces`, opened from the Set-pieces card on Tactics, `setpieces-link`): routine radio rows with blurbs and familiarity bars (`sp-corner-*`, `sp-fk-*`), three taker selects (`sp-taker-*`, options sorted by Dead-Ball Specialist then ability, star-marked), and a familiarity explainer.
 
 **Tests** (`describe("set piece creator")`, 10): metadata/defaults, familiarity growth + per-routine memory, nominated taker used when playing, fallback when benched, corner routine goal-rate and second-phase ordering, FK crossed > short, `spr` tags in strokes, plan determinism, AI routine variety, plan normalisation.
+
+## 20. Player stats, form & match log (`stats.ts`)
+
+Every match result now leaves a record. `applyResult` (advance.ts) folds each `PlayerUpdate` + the match rating into the player via `recordMatch(p, u, ctx)`:
+
+- **Season accumulators** (reset every pre-season in `nextSeason`, like apps/goals/assists): `mins`, `yellows`, `reds`, `ratingSum`, `ratingCount`.
+- **Form**: `p.form` keeps the last **6** match ratings, newest first. `formOf(p)` = their average (null when he has not played); `formBandFor(f)` → brilliant (>=7.5) / good (>=6.7) / average (>=5.9) / poor, each with a tint in `FORM_BANDS`. `ratingAvg(p)` = season average.
+- **Match log**: `p.history` (last 10) with `{ se, r, opp, h, rt, m, g, a }` — stored for the **user's club only** (AI players still get minutes/cards/ratings/form, no log line), so saves stay small.
+- Ratings come from `MatchResult.ratings` (the engine's 4.0-10.0 per-player marks); players who did not play get no form entry.
+
+**Sorting** (`sortSquad(players, mode, overall)`): position / form / average rating / goals / assists / minutes — missing form or ratings always sink to the bottom, ties break on overall. `SORT_MODES` drives the Squad UI's sort select.
+
+**Determinism**: stats are pure accumulations of the deterministic sim — identical saves produce identical stats (test-enforced).
+
+**UI**: player sheet "This season" grid (apps, minutes, goals, assists, cards, rating) + form chips + recent-match log (`player-stats`); squad roster rows carry a `★rating` chip tinted by band and a sort select (`squad-sort`); the tactics picker shows the same chip (`pick-<id>`) so selection decisions can weigh form.
+
+**Tests** (`describe("player stats & form")`, 7 + a normalizeSave backfill case): folding a match, six-rating form window + bands, log scope/cap, AI stats without logs, rollover reset (log survives), all sort modes, determinism, save backfill.
