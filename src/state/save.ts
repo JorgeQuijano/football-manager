@@ -122,6 +122,29 @@ export function normalizeSave(save: SaveGame): SaveGame {
     if (typeof p.lastTalk !== "number" || !Number.isFinite(p.lastTalk)) delete p.lastTalk;
     if (p.talkKind !== "praise" && p.talkKind !== "warn") delete p.talkKind;
   }
+  // player detail (v0.25): match sharpness, wear, caps, retraining, moves, targets, armband
+  if (!Array.isArray(save.discipline)) save.discipline = [];
+  if (save.captain && !save.players.some((x) => x.id === save.captain && x.clubId === save.userClubId)) save.captain = undefined;
+  if (save.vice && !save.players.some((x) => x.id === save.vice && x.clubId === save.userClubId)) save.vice = undefined;
+  for (const p of save.players) {
+    if (typeof p.sharpness !== "number" || p.sharpness < 0 || p.sharpness > 100) p.sharpness = 85;
+    if (typeof p.jaded !== "number" || p.jaded < 0 || p.jaded > 100) p.jaded = 0;
+    if (typeof p.caps !== "number" || p.caps < 0) p.caps = 0;
+    if (p.altPos && !Array.isArray(p.altPos)) p.altPos = undefined;
+    if (p.altPos) p.altPos = p.altPos.filter((x) => ["GK", "DF", "MF", "FW"].includes(x));
+    if (p.retrain && (!["GK", "DF", "MF", "FW"].includes(p.retrain.pos) || typeof p.retrain.progress !== "number")) {
+      p.retrain = undefined;
+    }
+    if (p.moveProgress && (typeof p.moveProgress.trait !== "string" || typeof p.moveProgress.progress !== "number")) {
+      p.moveProgress = undefined;
+    }
+    if (p.traits && p.traits.length >= 2) {
+      // someone who has his two traits isn't learning a third
+      p.moveProgress = undefined;
+    }
+    if (p.target && !["goals", "apps", "rating"].includes(p.target.kind)) p.target = undefined;
+    if (p.target && typeof p.target.value !== "number") p.target = undefined;
+  }
   // market & contracts (v0.24): debts, the board's policy, pre-contracts, loan sanity
   if (!Array.isArray(save.debts)) save.debts = [];
   save.debts = save.debts.filter((d) => d && typeof d.amount === "number" && typeof d.clubId === "string");

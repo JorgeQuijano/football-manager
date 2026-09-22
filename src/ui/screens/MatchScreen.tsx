@@ -44,6 +44,7 @@ import { useGame } from "@/state/store";
 import { posChip } from "@/ui/format";
 import { InstructionsPanel, LeverTabs, Nudges, OppositionPanel, TalkPanel } from "@/ui/MatchLevers";
 import { drawFrame, slotScreen, type Frame, type FramePlayer } from "@/ui/matchPitch";
+import { armbandIn } from "@/engine";
 
 /** A little row of dots: filled = used. */
 function Dots({ used, total }: { used: number; total: number }) {
@@ -769,13 +770,18 @@ function LiveMatchScreen() {
           if (cur) {
             const pid = stateRef.current[side].slots[i];
             const legs = pid ? staminaAt(stateRef.current, pid, C.minute) : undefined;
+            const cap =
+              !!pid &&
+              side === (game.userClubId === stateRef.current.home.clubId ? "home" : "away") &&
+              armbandIn(game, stateRef.current[side].slots.filter(Boolean) as string[]) === pid;
             players.push({
               x: cur.x,
               y: cur.y,
               num: i + 1,
               side,
               ring: key === ringKey,
-              legs
+              legs,
+              cap
             });
           }
         }
@@ -1396,7 +1402,9 @@ function LiveMatchScreen() {
                             {p.pos}
                           </span>
                           <span className="flex-1 truncate font-semibold">{p.name}</span>
-                          <span className="tnum text-[10px] text-muted-foreground">Cond {p.condition}%</span>
+                          <span className="tnum text-[10px] text-muted-foreground">
+                            Cond {p.condition}%{(p.sharpness ?? 85) < 70 ? ` · Sh ${p.sharpness}` : ""}
+                          </span>
                         </button>
                       );
                     })}

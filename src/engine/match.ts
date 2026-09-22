@@ -29,6 +29,7 @@ import {
 } from "./ratings";
 import { defaultRoleFor, roleFinish, ROLE_DEFS } from "./roles";
 import { DEFAULT_CONDITIONS, conditionEffects, refOf, weatherOf } from "./conditions";
+import { jadedFactor, jadedOf, pronenessOf, sharpnessFactor } from "./physical";
 
 /**
  * Morale edge (engine/morale.ts, inlined here to keep match.ts free of the
@@ -65,14 +66,22 @@ export function staminaAt(s: MatchState, id: string, minute: number): number {
 const sideOfPlayer = (s: MatchState, p: Player): MatchSideState =>
   s.pin[p.id]?.s === 1 ? s.away : s.home;
 
+/** Morale, legs, match sharpness, wear and the words from the bench. */
+const bodyEdge = (p: Player): number => sharpnessFactor(p) * jadedFactor(p);
+
 /** Morale, legs and the words from the bench — what a player brings going forward. */
 const attEdge = (s: MatchState, p: Player): number =>
-  moraleEdge(p) * staminaFactor(s.stamina[p.id] ?? 100) * (1 + (sideOfPlayer(s, p).fire ?? 0));
+  moraleEdge(p) * staminaFactor(s.stamina[p.id] ?? 100) * bodyEdge(p) * (1 + (sideOfPlayer(s, p).fire ?? 0));
 
 /** …and what he brings when his side hasn't got the ball. */
 const defEdge = (s: MatchState, p: Player): number => {
   const side = sideOfPlayer(s, p);
-  return moraleEdge(p) * staminaFactor(s.stamina[p.id] ?? 100) * (1 + (side.shape ?? 0) + (side.fire ?? 0) * 0.4);
+  return (
+    moraleEdge(p) *
+    staminaFactor(s.stamina[p.id] ?? 100) *
+    bodyEdge(p) *
+    (1 + (side.shape ?? 0) + (side.fire ?? 0) * 0.4)
+  );
 };
 
 /** Opposition instructions on him × his own instructions — read straight off the state. */
@@ -1230,8 +1239,8 @@ const processInjury = (
 ) => {
   const on = proto(side, players);
   if (!on.length) return;
-  const victim = pickWeighted(rng, on, (x) => 1 + Math.max(0, 80 - x.p.condition) / 50);
-  const weeks = randInt(rng, T.injuryWeeks[0], T.injuryWeeks[1]);
+  const victim = pickWeighted(rng, on, (x) => (1 + Math.max(0, 80 - x.p.condition) / 50) * pronenessOf(x.p));
+  const weeks = randInt(rng, T.injuryWeeks[0], T.injuryWeeks[1]) + (jadedOf(victim.p) > 60 ? 1 : 0);
   leaveSlot(s, side, victim.slot, m);
   updOf(s, victim.p.id).injuredWeeks = weeks;
   s.events.push({
