@@ -23,6 +23,7 @@ src/engine/
   rng.ts         mulberry32 PRNG, FNV-1a hashSeed(), randInt/pick/pickWeighted
   tuning.ts      All balance constants (T), built-in FORMATIONS + FORMATION_COORDS, weeklyRecovery()
   roles.ts       26 roles: weight vectors + shot/finish/assist biases + lane, role groups
+  motion.ts      Per-role movement instructions (ROLE_MOTION) + motionFor(player, role, slot)
   formations.ts  builtinFormation(), resolveFormation(), validateFormation(), scratchSlots(), roleTemplate(), SLOT_ZONES/clampToZone()
   ratings.ts     Scores (overall/attack/defense), team strengths, suitability, auto/fix/remap/validate lineup
   league.ts      Fixtures (double round-robin), league table, form guide
@@ -141,6 +142,8 @@ The timeline: each minute emits possession phases as `Stroke`s — `{ m, h (home
 Manager changes replay deterministically: `LiveMatch` keeps `base` (the snapshot at the start of the current half) + a journal of `LiveChange`s (sub / mentality / role, each stamped with its application minute). Any change re-simulates from `base` with the journal replayed — the tail changes, everything before the change stays byte-identical. `playhead` (playback minute) is persisted with the match, so reloads resume where you were; `normalizeSave` drops the live match if the round moved on.
 
 **Substitution rules (Premier League): max 5 subs; 3 in-match windows; half-time substitutions are free** (`state.minute === 45`); a player who leaves the pitch cannot return. Enforced by `substitutionError` in `match.ts`; the UI shows its messages verbatim.
+
+**Movement model (`motion.ts`).** The 2D view is rendered from engine-owned movement instructions, not from a shared animation: `ROLE_MOTION` gives each of the 26 roles its press / support / push / drop / width / roam / recovery / break values, and `motionFor(player, role, slot)` folds in the actual player — **pace sets top speed** (8.5 + pace×0.095 u/s; keepers capped at 6.5 + pace×0.035), pace + physical set acceleration, physical sets stamina (roaming and push scale with it), slot geometry scales the width bias (wide slots keep it, central slots damp it) and a per-player hash gives every dot its own drift phase so no two move in lockstep. Behaviour is selected by **phase**: in possession roles push up, offer for the ball and hold or leave their width; out of possession they drop into shape and the most eager roles (BWM, Pressing Forward) close down; the 2.5 s after a turnover is a transition — the winner breaks and the loser recovers at sprint pace (both phases +20% speed). Measured on the live build: players run at 5.5–16 u/s, all four phases occur, and on-screen speed correlates with pace at r ≈ 0.8.
 
 ## 9. Conditioning
 

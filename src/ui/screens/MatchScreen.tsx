@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MatchState, RoleId, Mentality } from "@/engine";
-import { T, finalizeLive, laneFits, matchStats, ROLE_DEFS, ROLE_GROUPS } from "@/engine";
+import type { MatchState, Mentality, MotionProfile, RoleId } from "@/engine";
+import { motionFor, T, finalizeLive, laneFits, matchStats, ROLE_DEFS, ROLE_GROUPS } from "@/engine";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -81,6 +81,29 @@ function LiveMatchScreen() {
   const colorsRef = useRef({ home: homeClub.color, away: awayClub.color });
   colorsRef.current = { home: homeClub.color, away: awayClub.color };
 
+  // Engine-owned movement profiles: role instructions scaled by each player's
+  // pace/physical and slot geometry (see engine/motion.ts).
+  const profiles = useMemo(() => {
+    const byId = new Map(game.players.map((p) => [p.id, p] as const));
+    const map = new Map<string, MotionProfile>();
+    for (const s of ["home", "away"] as const) {
+      const sd = st[s];
+      for (let i = 0; i < 11; i++) {
+        const id = sd.slots[i];
+        const p = id ? byId.get(id) : undefined;
+        if (p) {
+          map.set(
+            s + ":" + i,
+            motionFor(p, sd.roles[i], { x: sd.coords[i][0], y: sd.coords[i][1], pos: sd.poss[i] })
+          );
+        }
+      }
+    }
+    return map;
+  }, [game.players, st]);
+  const profRef = useRef(profiles);
+  profRef.current = profiles;
+
   const clock = useRef({
     si: 0,
     pi: 0,
@@ -94,6 +117,8 @@ function LiveMatchScreen() {
     playing: true,
     speed: 2,
     poss: null as null | Side,
+    transT: 0,
+    transSide: null as null | Side,
     phases: null as null | Phase[],
     anim: new Map<string, { x: number; y: number }>(),
     flashT: 0,
@@ -149,30 +174,69 @@ function LiveMatchScreen() {
     const sideMirror = (side: Side) => (side === "home" ? mirrors().home : mirrors().away);
     const attacksUp = (side: Side) => !sideMirror(side);
     const clampPos = (v: number) => Math.max(3, Math.min(97, v));
+    const DEFAULT_PROFILE: MotionProfile = {
+      speed: 12,
+      accel: 6,
+      gk: false,
+      roam: 6,
+      press: 0.5,
+      support: 0.6,
+      push: 8,
+      drop: 6,
+      width: 0,
+      recovery: 0.7,
+      break: 0.5,
+      seed: 0.5
+    };
+
+    /** in possession · out of possession · the 2.5 s after a turnover */
+    const phaseOf = (side: Side): "in" | "out" | "break" | "recover" => {
+      if (C.transT > 0 && C.transSide) return side === C.transSide ? "break" : "recover";
+      return C.poss === side ? "in" : "out";
+    };
+
     /**
-     * Live position target for a slot: team shapes slide with the ball, nearby
-     * players gather around the carrier, the closest defenders press, attackers
-     * run beyond their base as play advances, and the receiving player bursts to
-     * meet the pass.
+     * Live position target for a slot. Engine-owned per-role instructions
+     * (`motionFor`: press/support/push/drop/width/roam per role, scaled by pace
+     * and physical) select behaviour by phase — in possession roles push up,
+     * offer for the ball and hold or leave their width; out of possession they
+     * drop into shape and the most eager roles press; during transition the
+     * turnover winner breaks and the loser recovers at sprint pace.
      */
     const targetFor = (side: Side, slot: number) => {
       const sd = sideOf(side);
+      const prof = profRef.current.get(side + ":" + slot) ?? DEFAULT_PROFILE;
       const base = slotScreen(sd, slot, sideMirror(side));
       const up = attacksUp(side);
       const dir = up ? -1 : 1;
-      const gk = sd.poss[slot] === "GK";
       const bx = C.ballX;
       const by = C.ballY;
       const prog = (up ? 100 - by : by) / 100; // 0 = deep in own half → 1 = opponent box
+      const phase = phaseOf(side);
       let x = base.x;
-      let y = base.y + dir * (prog - 0.5) * (gk ? 8 : 30);
-      // team compaction: slide toward the ball's side of the pitch
-      x += (bx - x) * (gk ? 0.05 : 0.24);
+      let y = base.y + dir * (prog - 0.5) * (prof.gk ? 10 : 30);
+      // role depth for the phase (positive = toward the opponent goal)
+      let depth: number;
+      if (phase === "break") depth = prof.push * 0.7 + prof.break * 9;
+      else if (phase === "in") depth = prof.push * (0.5 + 0.5 * prog);
+      else if (phase === "recover") depth = -prof.drop - prof.recovery * 9;
+      else depth = -prof.drop * (0.5 + 0.5 * (1 - prog));
+      y += dir * depth * (prof.gk ? 0.25 : 1);
+      // role width: hold the line or come inside
+      const sideSign = base.x >= 50 ? 1 : -1;
+      x += sideSign * prof.width * 11 * (phase === "in" || phase === "break" ? 1 : 0.5);
+      // stay compact with the ball's side of the pitch
+      x += (bx - x) * (prof.gk ? 0.05 : 0.18);
+      // gather round the ball (in possession) / press it (out) / recover shape
       const d = Math.hypot(x - bx, y - by);
-      const pushing = C.poss === side;
-      let pull = pushing
-        ? 0.55 * Math.max(0, 1 - d / 40)
-        : 0.8 * Math.pow(Math.max(0, 1 - d / 34), 1.35);
+      let pull: number;
+      if (phase === "in" || phase === "break") {
+        pull = prof.support * 0.6 * Math.max(0, 1 - d / 40);
+      } else if (phase === "out") {
+        pull = prof.press * 0.85 * Math.pow(Math.max(0, 1 - d / 34), 1.35);
+      } else {
+        pull = prof.press * 0.45 * Math.pow(Math.max(0, 1 - d / 34), 1.5);
+      }
       const ph = C.phases?.[C.pi];
       if (ph && ph.k === "player" && ph.slot === slot) {
         const onThisSide = ph.opp ? side !== C.poss : side === C.poss;
@@ -180,13 +244,12 @@ function LiveMatchScreen() {
       }
       x += (bx - x) * pull;
       y += (by - y) * pull;
-      // attackers run into space as play advances
-      if (pushing && !gk && base.y < 42) {
-        y += dir * Math.max(0, (prog - 0.35) / 0.65) * 13;
-      }
-      // organic drift so nobody stands perfectly still
-      const j = Math.sin(C.time / 0.7 + slot * 1.7 + (side === "home" ? 0 : 2.3)) * 0.6;
-      return { x: clampPos(x + j), y: clampPos(y + j * 0.7) };
+      // individual wandering — sized by the role's roaming and the player's
+      // stamina, offset per player so no two move in lockstep
+      const w1 = Math.sin(C.time * 0.35 + prof.seed * 6.283) * prof.roam * 0.35;
+      const w2 = Math.cos(C.time * 0.27 + prof.seed * 4.712) * prof.roam * 0.25;
+      const j = Math.sin(C.time * 1.4 + prof.seed * 9.42) * 0.3;
+      return { x: clampPos(x + w1 + j), y: clampPos(y + w2 + j * 0.7) };
     };
 
     const enterStroke = () => {
@@ -198,7 +261,12 @@ function LiveMatchScreen() {
       C.originX = C.ballX;
       C.originY = C.ballY;
       if (!s) return;
-      C.poss = s.h ? "home" : "away";
+      const newPoss: Side = s.h ? "home" : "away";
+      if (C.poss && C.poss !== newPoss) {
+        C.transT = 2.5;
+        C.transSide = newPoss;
+      }
+      C.poss = newPoss;
       const phases: Phase[] = [];
       if (s.p.length) phases.push({ k: "player", opp: false, slot: s.p[0], dur: 0.16 });
       for (let i = 0; i + 1 < s.p.length; i++) {
@@ -258,15 +326,19 @@ function LiveMatchScreen() {
       if (C.flashT > 0) C.flashT = Math.max(0, C.flashT - dt);
 
       C.time += dt;
+      if (C.transT > 0) C.transT = Math.max(0, C.transT - dt * C.speed);
       for (const side of ["home", "away"] as const) {
+        const phase = phaseOf(side);
+        const hurry = phase === "break" || phase === "recover" ? 1.2 : 1;
         for (let i = 0; i < 11; i++) {
           const key = side + ":" + i;
+          const prof = profRef.current.get(key) ?? DEFAULT_PROFILE;
           const tgt = targetFor(side, i);
           const cur = C.anim.get(key) ?? { x: tgt.x, y: tgt.y };
-          const k = Math.min(1, dt * 7);
+          const k = Math.min(1, dt * prof.accel);
           let nx = cur.x + (tgt.x - cur.x) * k;
           let ny = cur.y + (tgt.y - cur.y) * k;
-          const cap = (sideOf(side).poss[i] === "GK" ? 9 : 14) * dt;
+          const cap = prof.speed * hurry * dt;
           const dx = nx - cur.x;
           const dy = ny - cur.y;
           const len = Math.hypot(dx, dy);
@@ -368,6 +440,7 @@ function LiveMatchScreen() {
           (window as unknown as { __fmPos?: unknown }).__fmPos = {
             minute: Math.round(C.minute * 10) / 10,
             ball: { x: Math.round(C.ballX * 10) / 10, y: Math.round(C.ballY * 10) / 10 },
+            phase: { home: phaseOf("home"), away: phaseOf("away") },
             pos
           };
         }

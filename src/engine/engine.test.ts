@@ -16,8 +16,9 @@ import {
 } from "./ratings";
 import { builtinFormation, clampToZone, resolveFormation, roleTemplate, scratchSlots, SLOT_ZONES, validateFormation, validateTemplate } from "./formations";
 import { defaultRoleFor, laneFits, roleFinish, ROLE_DEFS, ROLE_GROUPS } from "./roles";
+import { motionFor, ROLE_MOTION } from "./motion";
 import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
-import type { Player, SaveGame } from "./types";
+import type { Player, Position, SaveGame } from "./types";
 
 function playSeason(start: SaveGame): SaveGame {
   let save = start;
@@ -662,6 +663,71 @@ describe("live match", () => {
     expect(second.state.timeline.some((s) => s.m > 45)).toBe(true);
     const again = resumeSecondHalf(live, players);
     expect(JSON.stringify(again.state.timeline)).toBe(JSON.stringify(second.state.timeline));
+  });
+});
+
+describe("motion", () => {
+  const mkPlayer = (pos: Position, pace: number, physical = 60): Player => ({
+    id: `m-${pos}-${pace}-${physical}`,
+    clubId: "c1",
+    name: "M",
+    age: 24,
+    pos,
+    attrs: {
+      pace,
+      shooting: 60,
+      passing: 60,
+      defending: 60,
+      physical,
+      reflexes: 50,
+      handling: 50
+    },
+    condition: 100,
+    injuredWeeks: 0,
+    suspension: 0,
+    apps: 0,
+    goals: 0,
+    assists: 0
+  });
+
+  it("every role has a motion profile and roles differ by design", () => {
+    for (const group of Object.values(ROLE_GROUPS)) {
+      for (const r of group) expect(ROLE_MOTION[r]).toBeDefined();
+    }
+    expect(ROLE_MOTION.presser.press).toBeGreaterThan(ROLE_MOTION.poacher.press);
+    expect(ROLE_MOTION.bwm.press).toBeGreaterThan(ROLE_MOTION.playmaker.press);
+    expect(ROLE_MOTION.wb.push).toBeGreaterThan(ROLE_MOTION.fb.push);
+    expect(ROLE_MOTION.w.width).toBeGreaterThan(0.5);
+    expect(ROLE_MOTION.inside.width).toBeLessThan(0);
+    expect(ROLE_MOTION.anc.drop).toBeGreaterThan(ROLE_MOTION.poacher.drop);
+    expect(ROLE_MOTION.b2b.roam).toBeGreaterThan(ROLE_MOTION.anc.roam);
+    expect(ROLE_MOTION.poacher.push).toBeGreaterThan(ROLE_MOTION.ncb.push);
+  });
+
+  it("attributes drive the motion profile", () => {
+    const fast = mkPlayer("MF", 85, 70);
+    const slow = mkPlayer("MF", 45, 70);
+    const slot = { x: 30, y: 50, pos: "MF" as const };
+    const pf = motionFor(fast, "cm", slot);
+    const ps = motionFor(slow, "cm", slot);
+    expect(pf.speed).toBeGreaterThan(ps.speed);
+    expect(pf.accel).toBeGreaterThan(ps.accel);
+    const weak = mkPlayer("MF", 60, 45);
+    expect(motionFor(fast, "cm", slot).roam).toBeGreaterThan(motionFor(weak, "cm", slot).roam);
+    const gk = motionFor(mkPlayer("GK", 85, 70), "keeper", { x: 50, y: 91, pos: "GK" });
+    expect(gk.gk).toBe(true);
+    expect(gk.speed).toBeLessThan(pf.speed);
+    expect(gk.roam).toBeLessThan(pf.roam);
+  });
+
+  it("slot geometry modulates the width bias", () => {
+    const p = mkPlayer("MF", 60, 60);
+    const wide = motionFor(p, "w", { x: 14, y: 48, pos: "MF" });
+    const central = motionFor(p, "w", { x: 50, y: 48, pos: "MF" });
+    expect(Math.abs(wide.width)).toBeGreaterThan(Math.abs(central.width));
+    expect(motionFor(p, "w", { x: 14, y: 48, pos: "MF" }).seed).toBe(
+      motionFor(p, "w", { x: 50, y: 48, pos: "MF" }).seed
+    );
   });
 });
 
