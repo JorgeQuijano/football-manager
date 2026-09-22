@@ -671,3 +671,25 @@ Until now the club only had a transfer budget and a wage ceiling — both handed
 **Reading it in the app.** A new **Club** tab (the seventh nav item) shows the account breakdown, the shirt (current deal or the three offers with a sign button), and the four facilities with level pips, their effect line, and an upgrade button priced at the next level. Wages and the gate are shown in k-per-week so the weekly rhythm is legible on a phone.
 
 **Determinism.** Sponsor offers are seeded off `season + clubId`; build ticks and account movements are pure functions of the save, so the same seed replays identically. New saves seed a campus per club (`makeFacilities`): bigger clubs have better everything, with a seeded spread at the smaller ones.
+
+## 36. Match feel: how the twenty-two travel (`src/ui/motion.ts`)
+
+The simulation was never the problem — the *picture* was. Players were drawn as plain circles that glided to a computed shape position with an exponential lerp at one speed band, with a slow ±2-unit sway. Nothing accelerated, nothing turned, nobody faced anywhere, and off the ball the whole block moved as one.
+
+**The motion layer (v0.31.0) is presentation only.** It never writes back into the timeline, so results, ratings and determinism are untouched (the golden test still passes byte-for-byte).
+
+**Bodies with physics.** Every player is a point with velocity, an acceleration budget and a **turn rate** (`stepPlayer`). He picks a gait from a real band structure — walk 1.7, jog 3.6, run 6.4, sprint 8.8 units/s — eases in and out instead of snapping, and **cannot change direction faster than his turn rate**, so at speed he takes corners wide (13 rad/s standing, ~6 at a full sprint, and 14 more when he is close to the ball and pivoting on it). A sharp change of direction *costs him speed*, the way a real player chops his feet. An arrival curve brings him down over the last couple of units and plants his feet instead of letting him buzz around the target.
+
+**Anticipation.** The layer tracks ball velocity and sends the presser to where the ball **is going** (`ball + v·lead`, lead 0.28–0.6 s by match speed) rather than where it has been. The man in possession is steered onto the ball itself.
+
+**Football behaviour, per player.** The nearest defender **always hunts the ball** (within 26 units), the second man covers (18), and everyone else reads the game with effort scaled by how close the action is — nobody sprints from forty yards. A defender within 4.5 units of the carrier **jockeys**: he holds a 0.95–1.65-unit gap and faces his man rather than climbing into his shirt. The carrier is held to a dribbling pace (~72% of his gait).
+
+**Facing and body language (drawn in `matchPitch.ts`).** Each token now has a heading: feet in stride (the footfall phase advances by *distance travelled*, so the gait always matches the speed), a forward lean proportional to effort, and a nose showing which way the shoulders point. Players face the ball when it is near or when they are standing still, and face their direction of travel otherwise. The armband stays upright; the legs gauge and selection ring are unchanged.
+
+**Crowding.** `separate()` relaxes overlapping bodies (three passes, min 1.05 units) so nobody stands inside anybody.
+
+**Urgency is per player, not per team** — the old team-wide `hurry` multiplier is gone. Tired legs matter: a player on 10% legs runs at 86% of his top speed and visibly lags late on.
+
+**Measured on a live match (320px viewport, 1× speed, 3 s of play):** five distinct gait bands (stand 4% · walk 14% · jog 24% · run 36% · sprint 23%), 254 distinct headings across 22 bodies, minimum body separation 1.4 units, the nearest defender closing to **1.6 units** of the ball, and a steady **60 fps** (worst frame 18.7 ms).
+
+**Tests:** eight pure-function tests in `src/ui/motion.test.ts` pin the physics — easing in, the speed caps, arc turns, arrival, the jockey stand-off, separation, ball-facing, and the gait bands.

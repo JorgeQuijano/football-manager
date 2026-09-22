@@ -10,6 +10,12 @@ export interface FramePlayer {
   legs?: number;
   /** the armband: a small "C" badge on his shoulder */
   cap?: boolean;
+  /** facing, radians (0 = to the right); drives the body orientation (v0.31) */
+  heading?: number;
+  /** 0..1 — how hard he is running: lean and stride (v0.31) */
+  effort?: number;
+  /** footfall phase, advanced by distance travelled (v0.31) */
+  step?: number;
 }
 
 export interface Frame {
@@ -134,18 +140,46 @@ export function drawFrame(
       ctx.textBaseline = "middle";
       ctx.fillText("C", bx, by + 0.5);
     }
+    // the body: a token that faces where he is looking, with feet in stride
+    // (the armband badge is drawn after the body so it stays upright)
+    const hd = p.heading ?? Math.PI / 2;
+    const eff = Math.min(1, Math.max(0, p.effort ?? 0));
+    const stride = (p.step ?? 0) * 2;
+    const bob = Math.sin(stride) * R * 0.09 * (0.35 + eff);
+    ctx.save();
+    ctx.translate(px, py + bob);
+    ctx.rotate(hd + Math.PI / 2);
+    // feet: two boots that alternate with the footfall phase
+    const foot = Math.sin(stride) * R * 0.34 * (0.3 + eff);
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.beginPath();
-    ctx.arc(px, py, R, 0, Math.PI * 2);
+    ctx.ellipse(-R * 0.34, foot, R * 0.26, R * 0.4, 0, 0, Math.PI * 2);
+    ctx.ellipse(R * 0.34, -foot, R * 0.26, R * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // forward lean as he accelerates
+    const lean = R * 0.16 * eff;
+    // shoulders (the body itself)
+    ctx.beginPath();
+    ctx.ellipse(0, -lean, R * 0.98, R * 0.9, 0, 0, Math.PI * 2);
     ctx.fillStyle = col;
     ctx.fill();
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = "rgba(0,0,0,0.45)";
     ctx.stroke();
+    // a nose: which way the shoulders are pointing
+    ctx.beginPath();
+    ctx.moveTo(0, -R * 0.82 - lean);
+    ctx.lineTo(-R * 0.3, -R * 0.42 - lean);
+    ctx.lineTo(R * 0.3, -R * 0.42 - lean);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    ctx.fill();
     ctx.fillStyle = luminance(col) > 0.55 ? "#0B1B12" : "#F5FFF8";
     ctx.font = `700 ${Math.round(R * 1.02)}px system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(String(p.num), px, py + 0.5);
+    ctx.fillText(String(p.num), 0, 0.5 - lean * 0.4);
+    ctx.restore();
   }
 
   // ball

@@ -44,6 +44,7 @@ import { useGame } from "@/state/store";
 import { posChip } from "@/ui/format";
 import { InstructionsPanel, LeverTabs, Nudges, OppositionPanel, TalkPanel } from "@/ui/MatchLevers";
 import { drawFrame, slotScreen, type Frame, type FramePlayer } from "@/ui/matchPitch";
+import { jockeyDistance, newMotion, separate, stepPlayer, type Motion } from "@/ui/motion";
 import { armbandIn } from "@/engine";
 
 /** Respect the accessibility toggle from the Help screen (localStorage "fm-motion"). */
@@ -207,7 +208,13 @@ function LiveMatchScreen() {
     intents: new Map<string, { pick: IntentPick; phase: GamePhase; until: number }>(),
     intentRngs: new Map<string, Rng>(),
     phases: null as null | Phase[],
-    anim: new Map<string, { x: number; y: number }>(),
+    anim: new Map<string, Motion>(),
+    prevBallX: 50,
+    prevBallY: 50,
+    ballVx: 0,
+    ballVy: 0,
+    legs: new Map<string, number>(),
+    carrier: null as null | string,
     flashT: 0,
     uiT: 0,
     persistT: 0,
@@ -621,40 +628,93 @@ function LiveMatchScreen() {
       if (C.transT > 0) C.transT = Math.max(0, C.transT - dt * C.speed);
       for (const side of ["home", "away"] as const) {
         const phase = phaseOf(side);
-        const hurry =
-          (phase === "break" || phase === "recover" ? 1.2 : 1) * (C.stage ? 1.5 : 1);
         for (let i = 0; i < 11; i++) {
           const ent = C.intents.get(side + ":" + i);
           if (!ent || ent.until <= C.time || ent.phase !== phase) decideFor(side, i, phase);
         }
+        // who is on the ball for this side, and who is closing it down
+        const toBall: number[] = [];
+        for (let i = 0; i < 11; i++) {
+          const m = C.anim.get(side + ":" + i);
+          toBall[i] = m ? Math.hypot(m.x - C.ballX, m.y - C.ballY) : 999;
+        }
+        let nearestSlot = -1;
+        let nearestD = 1e9;
+        let secondSlot = -1;
+        let secondD = 1e9;
+        for (let i = 0; i < 11; i++) {
+          const d = toBall[i];
+          if (d < nearestD) {
+            secondD = nearestD;
+            secondSlot = nearestSlot;
+            nearestD = d;
+            nearestSlot = i;
+          } else if (d < secondD) {
+            secondD = d;
+            secondSlot = i;
+          }
+        }
+        const sideHasBall = C.poss === side;
+        const lead = Math.min(0.6, 0.28 + C.speed * 0.1);
+        const targetX = C.ballX + C.ballVx * lead;
+        const targetY = C.ballY + C.ballVy * lead;
         for (let i = 0; i < 11; i++) {
           const key = side + ":" + i;
           const prof = profRef.current.map.get(key) ?? DEFAULT_PROFILE;
-          const tgt = targetFor(side, i);
-          const cur = C.anim.get(key) ?? { x: tgt.x, y: tgt.y };
+          const pid = st2[side].slots[i];
+          const legs = pid ? staminaAt(st2, pid, C.minute) : 80;
+          C.legs.set(key, legs);
+          const isCarrier = sideHasBall && i === nearestSlot && nearestD < 3.2;
+          // someone always closes the ball down: the nearest man hunts it,
+          // the second man covers, and only then does the block read the game
+          const isPresser = !sideHasBall && i === nearestSlot && nearestD < 26;
+          const isSecondMan = !sideHasBall && i === secondSlot && nearestD < 18;
+          let tgt = targetFor(side, i);
+          // the man on the ball goes to the ball; the presser goes where it is going
+          if (isCarrier) tgt = { x: tgt.x * 0.25 + C.ballX * 0.75, y: tgt.y * 0.25 + C.ballY * 0.75 };
+          else if (isPresser) tgt = { x: tgt.x * 0.2 + targetX * 0.8, y: tgt.y * 0.2 + targetY * 0.8 };
+          const cur = C.anim.get(key) ?? newMotion(tgt.x, tgt.y, prof.gk ? 0 : Math.PI / 2);
           // reduced motion: no sliding — the picture steps to where the shape says
           if (reducedMotion()) {
             cur.x = tgt.x;
             cur.y = tgt.y;
+            cur.vx = 0;
+            cur.vy = 0;
             C.anim.set(key, cur);
             continue;
           }
-          const k = Math.min(1, dt * prof.accel);
-          let nx = cur.x + (tgt.x - cur.x) * k;
-          let ny = cur.y + (tgt.y - cur.y) * k;
-          const cap = prof.speed * hurry * dt;
-          const dx = nx - cur.x;
-          const dy = ny - cur.y;
-          const len = Math.hypot(dx, dy);
-          if (len > cap && len > 0) {
-            nx = cur.x + (dx / len) * cap;
-            ny = cur.y + (dy / len) * cap;
-          }
-          cur.x = nx;
-          cur.y = ny;
+          stepPlayer(cur, tgt.x, tgt.y, {
+            dt,
+            // role pace, held to a sane spread; urgency replaces the old team-wide hurry
+            pace: Math.max(0.78, Math.min(1.12, prof.speed / 12 + (prof.gk ? -0.05 : 0))),
+            stamina: legs,
+            // nobody sprints from forty yards: effort tracks how close the action is
+            urgency:
+              (sideHasBall ? 0.84 + prof.push * 0.01 : 0.92 + prof.press * 0.08) *
+              (phase === "break" ? 1.16 : phase === "recover" ? 0.96 : 1) *
+              (C.stage ? 1.06 : 1) *
+              (isPresser ? 1.22 : isSecondMan ? 1.06 : isCarrier ? 0.92 : 1) *
+              (0.7 + 0.3 * Math.min(1, toBall[i] / 26)),
+            jockey: isPresser && nearestD < 4.5,
+            standOff: jockeyDistance(prof.press),
+            carrying: isCarrier,
+            faceX: targetX,
+            faceY: targetY
+          });
           C.anim.set(key, cur);
         }
       }
+
+      // ball velocity, for anticipation
+      {
+        const iv = 1 / Math.max(0.001, dt);
+        C.ballVx = (C.ballX - C.prevBallX) * iv;
+        C.ballVy = (C.ballY - C.prevBallY) * iv;
+        C.prevBallX = C.ballX;
+        C.prevBallY = C.ballY;
+      }
+      // no two bodies in the same place
+      if (!reducedMotion() && C.anim.size > 1) separate([...C.anim.values()], 1.05);
 
       if (C.playing && C.si < tl.length) {
         if (!C.phases) enterStroke();
@@ -738,9 +798,14 @@ function LiveMatchScreen() {
           }
         }
         if ((window as unknown as { __fmDebugOn?: boolean }).__fmDebugOn) {
-          const pos: Record<string, { x: number; y: number }> = {};
+          const pos: Record<string, { x: number; y: number; v: number; h: number }> = {};
           for (const [k, v] of C.anim) {
-            pos[k] = { x: Math.round(v.x * 10) / 10, y: Math.round(v.y * 10) / 10 };
+            pos[k] = {
+              x: Math.round(v.x * 10) / 10,
+              y: Math.round(v.y * 10) / 10,
+              v: Math.round(Math.hypot(v.vx, v.vy) * 10) / 10,
+              h: Math.round(v.heading * 100) / 100
+            };
           }
           (window as unknown as { __fmPos?: unknown }).__fmPos = {
             minute: Math.round(C.minute * 10) / 10,
@@ -797,7 +862,10 @@ function LiveMatchScreen() {
               side,
               ring: key === ringKey,
               legs,
-              cap
+              cap,
+              heading: cur.heading,
+              effort: cur.effort,
+              step: cur.step
             });
           }
         }
