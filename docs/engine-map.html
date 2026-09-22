@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Touchline — engine map</title>
+<style>
+  :root{
+    --bg:#0E1318; --card:#141B22; --line:#22303B; --text:#E8F1EE; --dim:#8FA3AD;
+    --sim:#4DABF7; --view:#2ED573; --ink:#0B1218; --amber:#FFB020;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    padding:16px 14px 64px;max-width:820px;margin-inline:auto}
+  h1{font-size:20px;margin:0 0 2px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:26px 0 10px}
+  p.lede{color:var(--dim);font-size:13px;margin:0 0 14px}
+  .legend{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .key{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);
+    border:1px solid var(--line);border-radius:999px;padding:4px 10px}
+  .dot{width:9px;height:9px;border-radius:50%}
+  .flow{position:relative;padding-left:22px}
+  .flow::before{content:"";position:absolute;left:9px;top:6px;bottom:6px;width:2px;background:var(--line)}
+  .node{position:relative;margin:0 0 8px}
+  .node::before{content:"";position:absolute;left:-17px;top:16px;width:9px;height:9px;border-radius:50%;
+    background:var(--bg);border:2px solid var(--line)}
+  .node.sim::before{border-color:var(--sim)}
+  .node.view::before{border-color:var(--view)}
+  button.box{width:100%;text-align:left;background:var(--card);color:inherit;border:1px solid var(--line);
+    border-radius:12px;padding:11px 12px;font:inherit;cursor:pointer;display:block}
+  button.box:active{transform:scale(.995)}
+  .node.sim button.box{border-left:3px solid var(--sim)}
+  .node.view button.box{border-left:3px solid var(--view)}
+  .box .t{font-weight:650;font-size:14px}
+  .box .s{color:var(--dim);font-size:12px;margin-top:2px}
+  .box .cheat{margin-left:auto;color:var(--dim);font-size:11px;white-space:nowrap}
+  .box .row{display:flex;align-items:flex-start;gap:10px}
+  details{background:#0F161C;border:1px solid var(--line);border-top:0;border-radius:0 0 12px 12px;
+    padding:10px 12px;margin-top:-6px}
+  details p{margin:0 0 8px;font-size:12.5px;color:var(--text)}
+  details .lab{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:#0B1116;border:1px solid var(--line);border-radius:10px;padding:10px;overflow-x:auto;
+    font-size:12px;margin:0;white-space:pre}
+  ul.w{margin:4px 0 0;padding-left:18px;font-size:12.5px}
+  ul.w li{margin:2px 0}
+  .src{color:var(--dim);font-size:11px;margin-top:8px}
+  .split{display:grid;gap:10px}
+  @media(min-width:680px){ .split{grid-template-columns:1fr 1fr} }
+  .chip{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:999px;
+    padding:2px 8px;color:var(--dim);margin-right:6px}
+  .warn{border-left:3px solid var(--amber)}
+  footer{color:var(--dim);font-size:11.5px;margin-top:28px;border-top:1px solid var(--line);padding-top:12px}
+  a{color:var(--sim)}
+</style>
+</head>
+<body>
+  <h1>Touchline — the match engine, clickable</h1>
+  <p class="lede">Every box is a decision the sim makes. Tap one to see the weights and the formula behind it.</p>
+  <div class="legend">
+    <span class="key"><span class="dot" style="background:var(--sim)"></span> simulation — decides results</span>
+    <span class="key"><span class="dot" style="background:var(--view)"></span> view — decides what you watch</span>
+    <span class="key"><span class="dot" style="background:var(--amber)"></span> your lever</span>
+  </div>
+
+  <h2>The minute loop</h2>
+  <div class="flow" id="minute"></div>
+
+  <h2>Inside a chance</h2>
+  <div class="flow" id="chance"></div>
+
+  <h2>Set pieces</h2>
+  <div class="flow" id="setpieces"></div>
+
+  <h2>The bias stack</h2>
+  <p class="lede">Every weighted pick multiplies these. Remove a layer and the number moves.</p>
+  <div class="split" id="stack"></div>
+
+  <h2>Your levers → where they land</h2>
+  <div class="split" id="levers"></div>
+
+  <h2>The view layer (no consequences)</h2>
+  <div class="flow" id="view"></div>
+
+  <footer>
+    Generated from the code in <code>src/engine/</code> — line references are in the panels.
+    Long-form prose lives in <code>docs/ENGINE.md</code>; the picture version in <code>docs/ENGINE-FLOW.md</code>.
+  </footer>
+
+<script>
+const N = {
+  minute: [
+    { id:"m", t:"minute m", s:"the whole match re-rolls from state every minute", layer:"sim",
+      body:"The sim has no momentum memory — only state: score, stamina, cards, instructions, who is on the pitch.",
+      src:"match.ts · minuteStep():1314" },
+    { id:"legs", t:"legs drain", s:"stamina − rate, per player on the pitch", layer:"sim",
+      body:"Each player's drain rate is his own (pace + physical). Legs feed every later edge as staminaFactor.",
+      formula:"stamina[id] −= staminaDrainPerMinute(player)",
+      src:"match.ts:1316" },
+    { id:"teams", t:"team strength", s:"attackStrength × mentality × OI × home", layer:"sim",
+      body:"Built from the eleven on the pitch (roles + attributes), then bent by your mentality, the opponent's opposition instructions and home advantage.",
+      formula:"attH = attackStrength(XI, roles, mentality) × 1.08 × oiPressure(opp)\ndefH = defenseStrength(XI, roles, mentality)",
+      src:"match.ts:1333" },
+    { id:"chance", t:"is there a chance?", s:"one roll per side, independently", layer:"sim",
+      body:"Each minute both sides roll for a chance. It is possible to get two chances in a minute, or none — in which case the minute becomes a passing move instead.",
+      formula:"pH = clamp(0.108 × 2 × attH/(attH + defA), 0.02, 0.45)",
+      src:"match.ts:1340" },
+    { id:"poss", t:"possession move", s:"neither side got a chance", layer:"sim",
+      body:"A stroke with no shot: 3–6 passes chosen with a forward bias, or the ball goes out for a throw. This is what the view replays as a passing sequence.",
+      src:"match.ts · possessionPhase():487" },
+    { id:"foul", t:"foul roll", s:"20 per match → who fouled is a weighted pick", layer:"sim",
+      body:"Defenders commit twice as often as strikers; weaker defenders and physical players more; dives_in ×1.4. A share of fouls are carded (≈3.6 cards/match).",
+      formula:"p(foul) = 20/90 per minute × weather",
+      src:"match.ts:1361 · foul pick:790" },
+    { id:"inj", t:"injury roll", s:"0.32 per match, weeks 1–4", layer:"sim",
+      body:"Medical facility level scales the weeks out (v0.30).",
+      src:"match.ts:1248" },
+    { id:"sub", t:"AI substitutes", s:"55′ / 72′ / 80′ windows", layer:"sim",
+      body:"The AI hooks its most-knackered player rather than its worst: value = attack + defence − (100 − stamina) × 1.1.",
+      src:"match.ts · trySub():1283" },
+    { id:"ht", t:"half time", s:"+stamina for everyone", layer:"sim", body:"A flat recovery, then the second half runs the same loop.", src:"match.ts:1381" }
+  ],
+  chance: [
+    { id:"who", t:"1 · who shoots", s:"weighted pick among the outfielders", layer:"sim",
+      body:"This is the only place a named player makes a choice in the sim.",
+      formula:"weight = pos(FW 4.0 · MF 2.4 · DF 0.7)\n       × (0.5 + shooting/100)\n       × role.shot\n       × trait(shoots_on_sight: ×1.25)\n       × attEdge  × instruction('shoot more')",
+      src:"match.ts:544" },
+    { id:"move", t:"2 · the move", s:"buildChain — 3–6 passes, forward-biased", layer:"sim",
+      body:"Passes are picked with a bias toward progress up the pitch; keepers are almost never in a chain (×0.15). The chain is generated after the outcome is known — it is the explanation, not the cause.",
+      formula:"weight(next) = max(0.12, 1 + clamp(progressiveYards, −15, 30) × 0.07)",
+      src:"match.ts · buildChain():413" },
+    { id:"conv", t:"3 · conversion", s:"pGoal, clamped 4–30%", layer:"sim",
+      body:"finish folds role finish weight, shooting ability, morale/form and your finish instruction; the keeper is their defence score.",
+      formula:"pGoal = 0.115\n  × (1 + (finish − 60)/120)\n  × (1 + (60 − keeper)/160)\n  × weather × pitch",
+      src:"match.ts:562" },
+    { id:"goal", t:"4 · the goal branch", s:"offside flag + VAR", layer:"sim",
+      body:"15% of open-play goals were actually offside; the flag misses 35% of them and wrongly flags 8% of onside goals. VAR reviews 60% of controversies and corrects 75% of reviewed errors.",
+      formula:"trulyOffside = rng < 0.15\nvarCatch     = 0.60 × 0.75",
+      src:"match.ts:585" },
+    { id:"ngoal", t:"4 · the no-goal branch", s:"42% saves · 20%×defence blocks · the rest wide", layer:"sim",
+      body:"Saves and blocks can produce corners (45% / 50%), which are their own decision node.",
+      src:"match.ts:640–760" }
+  ],
+  setpieces: [
+    { id:"zone", t:"where was the foul?", s:"18% in the attacking third", layer:"sim",
+      body:"Fouls elsewhere restart play; a deep foul can still become a penalty.",
+      src:"tuning.ts · fkZoneShare" },
+    { id:"pen", t:"penalty", s:"7% of attacking fouls → ≈0.25 a match", layer:"sim",
+      body:"78% base, taker picked by finishing and nerve, keeper by reflexes. 12% of penalties are reviewed by VAR and 25% of those are overturned.",
+      formula:"pGoal = 0.78 ± (taker finishing − keeper reflexes)",
+      src:"match.ts · resolvePenalty():864" },
+    { id:"fk", t:"direct free kick", s:"45% of attacking fouls are shot", layer:"sim",
+      body:"7% base goal rate against the wall and keeper; dead_ball specialists get the ball.",
+      src:"match.ts · resolveFreeKick():967" },
+    { id:"corner", t:"corner", s:"taker, target and routine", layer:"sim",
+      body:"The taker is your nominated one, or a weighted pick (passing × assist role × dead_ball trait). The target is chosen by the routine — near post wants physical, far post wants shooting. Familiarity with the routine scales the outcome: this is where set-piece training pays.",
+      formula:"weight(taker) = passing × (1 + role.assist) × 0.6 + 20\n                   × trait(dead_ball: ×1.4)\npGoal             = 0.026 × familiarityFactor(routine)",
+      src:"match.ts · resolveCorner():1109" }
+  ],
+  stack: [
+    { id:"ability", t:"ABILITY", s:"the attribute the pick needs", layer:"sim", body:"Shooting to shoot, passing to take a corner, defending to intercept." },
+    { id:"role", t:"ROLE", s:"ROLE_DEFS weights per role", layer:"sim", body:"32 roles; each carries shot / assist / finish / defensive weights. A Poacher's shot weight and an Anchor's are not comparable." },
+    { id:"trait", t:"TRAIT", s:"10 flavours, ×1.25–1.4", layer:"sim", body:"shoots_on_sight, dead_ball, dives_in, leader… each multiplies one specific pick." },
+    { id:"day", t:"THE DAY", s:"morale · form · condition · sharpness · wear", layer:"sim", body:"Folded into attEdge/defEdge — this is why a hot striker finishes more and a tired one drags." },
+    { id:"instr", t:"INSTRUCTIONS", s:"mentality · OI · PI", layer:"sim", body:"Team mentality shifts both multipliers; opposition instructions scale their team strength; player instructions scale individual picks." },
+    { id:"context", t:"CONTEXT", s:"home 1.08 · weather · referee · pitch", layer:"sim", body:"Seeded per round: same for both sides, different every week." },
+    { id:"opp", t:"OPPONENT", s:"their defence, their OI on you", layer:"sim", body:"Every att/(att+def) is a two-sided conversation." }
+  ],
+  levers: [
+    { id:"talk", t:"Team talk / shout", s:"→ moraleEdge on every player", layer:"sim", body:"Journaled live change; moves attEdge and defEdge immediately.", src:"engine/live.ts · talks.ts" },
+    { id:"tsub", t:"Substitution", s:"→ fresh legs in the stamina pool", layer:"sim", body:"The new body brings its own attributes and its own drain rate." },
+    { id:"toi", t:"Opposition instruction", s:"→ oiPressure on their team strength", layer:"sim", body:"Involvement, fouls and quality move — visible in the pre-match panel." },
+    { id:"tpi", t:"Player instruction", s:"→ instrFor(shot / finish / defense)", layer:"sim", body:"Shoot more, close down, mark tighter: each edits one weighted pick." },
+    { id:"tment", t:"Mentality", s:"→ att/def multipliers (0.85–1.15)", layer:"sim", body:"Attacking trades defensive solidity for attacking volume." },
+    { id:"tset", t:"Set-piece plan", s:"→ familiarityFactor on corners", layer:"sim", body:"Drilled routines beat improvised ones." },
+    { id:"tform", t:"Formation & roles", s:"→ attackStrength / defenseStrength", layer:"sim", body:"Who is on the pitch and what job he was given." }
+  ],
+  view: [
+    { id:"v1", t:"role motion profile", s:"press · support · push · drop · width · roam", layer:"view",
+      body:"Engine-owned per-role instructions, scaled by pace and physical (motionFor)." },
+    { id:"v2", t:"14 intents", s:"chosen every few seconds, per player", layer:"view",
+      body:"hold · support · come_short · drift_wide · run_behind · overlap · hold_line · press_ball · cover · drop_deep · counter · spread · sprint_back · delay — weighted by role, mentality, phase and ball position, on each player's own seeded clock.",
+      src:"engine/intents.ts" },
+    { id:"v3", t:"motion physics", s:"velocity · acceleration · turn rate", layer:"view",
+      body:"Bodies with gait bands (walk 1.7 → sprint 8.8 u/s), anticipation of the ball's future position, jockey stand-offs and separation. 60 fps.",
+      src:"ui/motion.ts" },
+    { id:"v4", t:"drawing", s:"oriented bodies, feet in stride, lean", layer:"view",
+      body:"Heading follows the ball when near, the direction of travel otherwise.", src:"ui/matchPitch.ts" }
+  ]
+};
+
+function render(target, items){
+  const host = document.getElementById(target);
+  host.innerHTML = items.map(n => `
+    <div class="node ${n.layer}" data-id="${n.id}">
+      <button class="box" aria-expanded="false">
+        <span class="row">
+          <span>
+            <span class="t">${n.t}</span>
+            <span class="s">${n.s}</span>
+          </span>
+          <span class="cheat">tap ▾</span>
+        </span>
+      </button>
+      <div class="panel" hidden>
+        ${n.body ? `<p>${n.body}</p>` : ""}
+        ${n.formula ? `<div class="lab">formula</div><pre>${n.formula}</pre>` : ""}
+        ${n.src ? `<div class="src">${n.src}</div>` : ""}
+      </div>
+    </div>`).join("");
+  host.querySelectorAll(".node").forEach(node => {
+    const btn = node.querySelector(".box");
+    const panel = node.querySelector(".panel");
+    btn.addEventListener("click", () => {
+      const open = !panel.hidden;
+      panel.hidden = open;
+      btn.setAttribute("aria-expanded", String(!open));
+      node.querySelector(".cheat").textContent = open ? "tap ▾" : "close ▴";
+    });
+  });
+}
+render("minute", N.minute);
+render("chance", N.chance);
+render("setpieces", N.setpieces);
+render("stack", N.stack);
+render("levers", N.levers);
+render("view", N.view);
+</script>
+</body>
+</html>
