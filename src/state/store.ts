@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type {
-  FormationId,
+  FormationDef,
   Lineup,
   MatchResult,
   Mentality,
@@ -9,23 +9,41 @@ import type {
   SaveGame
 } from "@/engine";
 import {
+  addLiveChange,
   autoLineup,
+  builtinFormation,
+  changeMinute,
+  completeRound,
+  finalizeLive,
   fixLineup,
-  FORMATIONS,
   isAvailable,
   newGame,
   nextSeason,
-  playRound,
+  playersById,
+  prepareRound,
   remapLineup,
+  resolveFormation,
+  resumeSecondHalf,
   ROLE_GROUPS,
   seasonRounds,
+  skipToFullTime,
+  skipToHalfTime,
   slotScoreFor,
   squadOf,
+  startLive,
   T
 } from "@/engine";
 import { loadSave, persistSave } from "./save";
 
-export type Screen = "new" | "home" | "squad" | "tactics" | "league" | "match" | "seasonEnd";
+export type Screen =
+  | "new"
+  | "home"
+  | "squad"
+  | "tactics"
+  | "league"
+  | "match"
+  | "seasonEnd"
+  | "builder";
 export type SlotRef = { kind: "xi" | "bench"; index: number };
 
 interface AppState {
@@ -33,14 +51,21 @@ interface AppState {
   game: SaveGame | null;
   screen: Screen;
   reveal: MatchResult | null;
+  builderFor: string | null; // custom formation id being edited (null = creating)
 
   init: () => Promise<void>;
   startNewGame: (clubId: string) => void;
   advance: () => void;
   finishMatch: () => void;
+  liveSub: (outId: string, inId: string) => string | null;
+  liveMentality: (m: Mentality) => void;
+  liveRole: (slot: number, role: RoleId) => void;
+  startSecondHalf: () => void;
+  skipTo: (to: "ht" | "ft") => void;
+  setPlayhead: (m: number) => void;
   startNextSeason: () => void;
   setScreen: (s: Screen) => void;
-  setFormation: (f: FormationId) => void;
+  setFormation: (f: string) => void;
   setMentality: (m: Mentality) => void;
   setRole: (index: number, role: RoleId) => void;
   assignPlayer: (kind: "xi" | "bench", index: number, playerId: string) => void;
@@ -48,11 +73,15 @@ interface AppState {
   swapSlots: (a: SlotRef, b: SlotRef) => void;
   autoPick: (mode?: "best" | "freshest") => number;
   applySuggestions: () => number;
+  setBuilderFor: (id: string | null) => void;
+  saveCustomFormation: (def: FormationDef) => void;
+  deleteCustomFormation: (id: string) => void;
   resetGame: () => void;
   importSave: (save: SaveGame) => void;
 }
 
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
+let lastPlayheadPersist = 0;
 const schedulePersist = (game: SaveGame | null) => {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
@@ -60,43 +89,156 @@ const schedulePersist = (game: SaveGame | null) => {
   }, 400);
 };
 
+const defFor = (game: SaveGame, id: string): FormationDef =>
+  resolveFormation(id, game.customFormations) ?? builtinFormation("4-3-3");
+
+/** The match is finished once the playback has reached the end of the second half. */
+const matchOver = (live: NonNullable<SaveGame["live"]>): boolean =>
+  live.half === 2 && live.playhead >= live.state.total;
+
 export const useGame = create<AppState>()((set, get) => ({
   loaded: false,
   game: null,
   screen: "new",
   reveal: null,
+  builderFor: null,
 
   init: async () => {
     const save = await loadSave();
-    set({ game: save, loaded: true, screen: save ? "home" : "new" });
+    set({ game: save, loaded: true, screen: save ? (save.live ? "match" : "home") : "new" });
   },
 
   startNewGame: (clubId) => {
     const seed = Math.floor(Math.random() * 1_000_000) + 1;
     const game = newGame(seed, clubId);
-    set({ game, screen: "home", reveal: null });
+    set({ game, screen: "home", reveal: null, builderFor: null });
     schedulePersist(game);
   },
 
   advance: () => {
     const { game } = get();
     if (!game) return;
+    if (game.live) {
+      set({ screen: "match" });
+      return;
+    }
     if (game.round > seasonRounds(game)) {
       set({ screen: "seasonEnd" });
       return;
     }
-    const { save, userMatch } = playRound(game);
-    set({ game: save, reveal: userMatch ?? null, screen: userMatch ? "match" : "home" });
+    const prepared = prepareRound(game);
+    const live = startLive(prepared);
+    if (!live) {
+      const save = completeRound(prepared, undefined);
+      set({ game: save, reveal: null, screen: "home" });
+      schedulePersist(save);
+      return;
+    }
+    const save = { ...prepared, live };
+    set({ game: save, reveal: null, screen: "match" });
     schedulePersist(save);
   },
 
   finishMatch: () => {
     const { game } = get();
     if (!game) return;
+    if (game.live) {
+      const result = finalizeLive(game.live);
+      const save = completeRound({ ...game, live: undefined }, result);
+      set({
+        game: save,
+        reveal: result,
+        screen: save.round > seasonRounds(save) ? "seasonEnd" : "home"
+      });
+      schedulePersist(save);
+      return;
+    }
     set({
       reveal: null,
       screen: game.round > seasonRounds(game) ? "seasonEnd" : "home"
     });
+  },
+
+  liveSub: (outId, inId) => {
+    const { game } = get();
+    if (!game?.live) return "No live match.";
+    if (matchOver(game.live)) return "The match is over.";
+    const side = game.live.state.userSide ?? "home";
+    const players = playersById(game);
+    const minute = changeMinute(game.live);
+    const res = addLiveChange(game.live, players, { minute, kind: "sub", side, outId, inId });
+    if (res.error) return res.error;
+    const save = { ...game, live: res.live! };
+    set({ game: save });
+    schedulePersist(save);
+    return null;
+  },
+
+  liveMentality: (m) => {
+    const { game } = get();
+    if (!game?.live) return;
+    if (matchOver(game.live)) return;
+    const side = game.live.state.userSide ?? "home";
+    const minute = changeMinute(game.live);
+    const players = playersById(game);
+    const res = addLiveChange(game.live, players, { minute, kind: "mentality", side, mentality: m });
+    if (res.error) return;
+    const lineup = { ...game.lineup, mentality: m };
+    const save = { ...game, lineup, live: res.live! };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  liveRole: (slot, role) => {
+    const { game } = get();
+    if (!game?.live) return;
+    if (matchOver(game.live)) return;
+    const side = game.live.state.userSide ?? "home";
+    const minute = changeMinute(game.live);
+    const players = playersById(game);
+    const res = addLiveChange(game.live, players, { minute, kind: "role", side, slot, role });
+    if (res.error) return;
+    const roles = [...game.lineup.roles];
+    if (side === "home" || side === "away") roles[slot] = role;
+    const save = { ...game, lineup: { ...game.lineup, roles }, live: res.live! };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  startSecondHalf: () => {
+    const { game } = get();
+    if (!game?.live || game.live.half !== 1) return;
+    const players = playersById(game);
+    const live = resumeSecondHalf(game.live, players);
+    const save = { ...game, live };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  skipTo: (to) => {
+    const { game } = get();
+    if (!game?.live) return;
+    const players = playersById(game);
+    const live =
+      to === "ht"
+        ? game.live.half === 1
+          ? skipToHalfTime(game.live)
+          : game.live
+        : skipToFullTime(game.live, players);
+    const save = { ...game, live };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  setPlayhead: (m) => {
+    const { game } = get();
+    if (!game?.live) return;
+    set({ game: { ...game, live: { ...game.live, playhead: m } } });
+    const now = Date.now();
+    if (now - lastPlayheadPersist > 10000) {
+      lastPlayheadPersist = now;
+      schedulePersist(get().game);
+    }
   },
 
   startNextSeason: () => {
@@ -112,7 +254,10 @@ export const useGame = create<AppState>()((set, get) => ({
   setFormation: (formation) => {
     const { game } = get();
     if (!game || formation === game.lineup.formation) return;
-    const lineup = remapLineup(squadOf(game.players, game.userClubId), game.lineup, formation);
+    const to = resolveFormation(formation, game.customFormations);
+    if (!to) return;
+    const from = defFor(game, game.lineup.formation);
+    const lineup = remapLineup(squadOf(game.players, game.userClubId), game.lineup, from, to);
     const save = { ...game, lineup };
     set({ game: save });
     schedulePersist(save);
@@ -129,8 +274,8 @@ export const useGame = create<AppState>()((set, get) => ({
   setRole: (index, role) => {
     const { game } = get();
     if (!game) return;
-    const slot = FORMATIONS[game.lineup.formation][index];
-    if (!slot || !ROLE_GROUPS[slot].includes(role)) return;
+    const slotPos = defFor(game, game.lineup.formation).slots[index]?.pos;
+    if (!slotPos || !ROLE_GROUPS[slotPos].includes(role)) return;
     const lineup: Lineup = structuredClone(game.lineup);
     lineup.roles[index] = role;
     const save = { ...game, lineup };
@@ -196,10 +341,14 @@ export const useGame = create<AppState>()((set, get) => ({
   autoPick: (mode = "best") => {
     const { game } = get();
     if (!game) return 0;
-    const lineup = autoLineup(squadOf(game.players, game.userClubId), game.lineup.formation, {
-      freshest: mode === "freshest",
-      mentality: game.lineup.mentality
-    });
+    const lineup = autoLineup(
+      squadOf(game.players, game.userClubId),
+      defFor(game, game.lineup.formation),
+      {
+        freshest: mode === "freshest",
+        mentality: game.lineup.mentality
+      }
+    );
     let changes = 0;
     lineup.starters.forEach((id, i) => {
       if (id !== game.lineup.starters[i]) changes++;
@@ -215,8 +364,9 @@ export const useGame = create<AppState>()((set, get) => ({
     if (!game) return 0;
     const squad = squadOf(game.players, game.userClubId);
     const byId = new Map(squad.map((p) => [p.id, p] as const));
-    const lineup = fixLineup(squad, structuredClone(game.lineup));
-    const slots = FORMATIONS[lineup.formation];
+    const def = defFor(game, game.lineup.formation);
+    const lineup = fixLineup(squad, structuredClone(game.lineup), def);
+    const slots = def.slots;
     let changes = 0;
 
     for (let i = 0; i < lineup.starters.length; i++) {
@@ -229,8 +379,8 @@ export const useGame = create<AppState>()((set, get) => ({
         .filter((p): p is Player => !!p && isAvailable(p))
         .sort(
           (a, b) =>
-            slotScoreFor(b, slots[i], lineup.roles[i], 0.45) -
-            slotScoreFor(a, slots[i], lineup.roles[i], 0.45)
+            slotScoreFor(b, slots[i].pos, lineup.roles[i], 0.45) -
+            slotScoreFor(a, slots[i].pos, lineup.roles[i], 0.45)
         )[0];
       if (!alt) continue;
       // tired but fit: only swap for a meaningfully fresher option
@@ -250,13 +400,47 @@ export const useGame = create<AppState>()((set, get) => ({
     return changes;
   },
 
+  setBuilderFor: (id) => set({ builderFor: id }),
+
+  saveCustomFormation: (def) => {
+    const { game } = get();
+    if (!game) return;
+    const customs = [...game.customFormations.filter((f) => f.id !== def.id), def];
+    const from = defFor(game, game.lineup.formation);
+    const lineup = remapLineup(squadOf(game.players, game.userClubId), game.lineup, from, def);
+    const save = { ...game, customFormations: customs, lineup };
+    set({ game: save, screen: "tactics", builderFor: null });
+    schedulePersist(save);
+  },
+
+  deleteCustomFormation: (id) => {
+    const { game } = get();
+    if (!game) return;
+    const customs = game.customFormations.filter((f) => f.id !== id);
+    let save: SaveGame = { ...game, customFormations: customs };
+    if (game.lineup.formation === id) {
+      const from = defFor(game, id);
+      save = {
+        ...save,
+        lineup: remapLineup(
+          squadOf(game.players, game.userClubId),
+          game.lineup,
+          from,
+          builtinFormation("4-3-3")
+        )
+      };
+    }
+    set({ game: save });
+    schedulePersist(save);
+  },
+
   resetGame: () => {
-    set({ game: null, screen: "new", reveal: null });
+    set({ game: null, screen: "new", reveal: null, builderFor: null });
     void persistSave(null);
   },
 
   importSave: (save) => {
-    set({ game: save, screen: "home", reveal: null });
+    set({ game: save, screen: "home", reveal: null, builderFor: null });
     schedulePersist(save);
   }
 }));

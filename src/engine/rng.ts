@@ -1,15 +1,26 @@
-export type Rng = () => number;
+export type Rng = (() => number) & { state: number };
 
-/** Deterministic PRNG — same seed, same sequence, forever. */
+/**
+ * Deterministic PRNG — same seed, same sequence, forever.
+ * `state` exposes the internal counter (uint32) so simulations can be paused,
+ * serialized and resumed from the exact same random position.
+ */
 export function mulberry32(seed: number): Rng {
   let a = seed >>> 0;
-  return () => {
+  const f = (() => {
     a |= 0;
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  }) as Rng;
+  Object.defineProperty(f, "state", { get: () => a >>> 0 });
+  return f;
+}
+
+/** Resume a stream from a previously captured `state` value. */
+export function rngFromState(state: number): Rng {
+  return mulberry32(state);
 }
 
 /** FNV-1a hash over arbitrary parts — used to derive independent RNG streams. */

@@ -1,15 +1,18 @@
 import { useRef, useState } from "react";
-import type { Player, Position, RoleId } from "@/engine";
+import type { FormationSlot, Player, Position, RoleId } from "@/engine";
 import {
   autoLineup,
+  builtinFormation,
   defaultRoleFor,
   isAvailable,
+  laneFits,
   overallFor,
   ROLE_DEFS,
   ROLE_GROUPS,
   slotScoreFor,
   squadOf,
-  suitability
+  suitability,
+  TRAITS
 } from "@/engine";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,7 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { exportSaveFile, parseSaveFile } from "@/state/save";
 import { useGame } from "@/state/store";
-import { posChip } from "@/ui/format";
+import { posChip, shortName } from "@/ui/format";
 
 export function SettingsSheet({
   open,
@@ -92,6 +95,17 @@ export function SettingsSheet({
               <Button variant="secondary" size="sm" onClick={copySeed}>
                 {copied ? "Copied" : String(game.seed)}
               </Button>
+            </div>
+            <div className="flex items-center justify-between rounded-xl border border-border p-3">
+              <div>
+                <div className="font-semibold">App version</div>
+                <div className="text-xs text-muted-foreground">
+                  New deploys load automatically when the app regains focus
+                </div>
+              </div>
+              <span className="tnum text-sm font-semibold text-muted-foreground" data-testid="app-version">
+                {__APP_VERSION__}
+              </span>
             </div>
 
             <Button
@@ -187,7 +201,8 @@ export function PlayerDetailSheet({
             <SheetHeader>
               <SheetTitle>{p.name}</SheetTitle>
               <SheetDescription>
-                {p.pos} · age {p.age} · {p.apps} apps · {p.goals} goals
+                {p.pos} · age {p.age} · {p.apps} app{p.apps === 1 ? "" : "s"} · {p.goals} goal
+                {p.goals === 1 ? "" : "s"} · {p.assists} assist{p.assists === 1 ? "" : "s"}
               </SheetDescription>
             </SheetHeader>
             <div className="space-y-4 px-4 pb-8">
@@ -218,6 +233,23 @@ export function PlayerDetailSheet({
                   </span>
                 )}
               </div>
+
+              {(p.traits ?? []).length > 0 && (
+                <div className="space-y-1.5" data-testid="player-traits">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Traits
+                  </div>
+                  {(p.traits ?? []).map((t) => (
+                    <div
+                      key={t}
+                      className="rounded-lg border border-primary/40 bg-primary/5 px-2.5 py-2"
+                    >
+                      <div className="text-[12px] font-bold text-primary">{TRAITS[t].label}</div>
+                      <div className="text-[11px] text-muted-foreground">{TRAITS[t].blurb}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <div className="space-y-2">
                 {(p.pos === "GK"
@@ -268,7 +300,7 @@ export function PlayerPickerSheet({
   picker,
   onClose
 }: {
-  picker: { kind: "xi" | "bench"; index: number; slotPos: Position } | null;
+  picker: { kind: "xi" | "bench"; index: number; slot: FormationSlot } | null;
   onClose: () => void;
 }) {
   const game = useGame((s) => s.game)!;
@@ -279,7 +311,8 @@ export function PlayerPickerSheet({
   const squad = squadOf(game.players, game.userClubId);
   const lineup = game.lineup;
   const isXi = picker?.kind === "xi";
-  const slotPos: Position = picker?.slotPos ?? "MF";
+  const slot = picker?.slot ?? null;
+  const slotPos: Position = slot?.pos ?? "MF";
   const role: RoleId = isXi && picker
     ? lineup.roles[picker.index] ?? defaultRoleFor(slotPos)
     : defaultRoleFor(slotPos);
@@ -292,6 +325,18 @@ export function PlayerPickerSheet({
     (a, b) => slotScoreFor(b, slotPos, role) - slotScoreFor(a, slotPos, role)
   );
   const topId = sorted[0]?.id;
+  const sortedRoles = slot
+    ? [...ROLE_GROUPS[slotPos]].sort(
+        (a, b) => Number(laneFits(b, slot)) - Number(laneFits(a, slot))
+      )
+    : [];
+  const bestRole = current
+    ? ROLE_GROUPS[slotPos].reduce(
+        (best, r) =>
+          slotScoreFor(current, slotPos, r) > slotScoreFor(current, slotPos, best) ? r : best,
+        ROLE_GROUPS[slotPos][0]
+      )
+    : null;
   const inLineup = new Set(
     [...lineup.starters, ...lineup.bench].filter((id): id is string => id !== null)
   );
@@ -305,7 +350,7 @@ export function PlayerPickerSheet({
   let oppLine = "";
   if (oppClub) {
     const oppSquad = squadOf(game.players, oppClub.id);
-    const ol = autoLineup(oppSquad, oppClub.formation);
+    const ol = autoLineup(oppSquad, builtinFormation(oppClub.formation));
     const oppXi = ol.starters
       .map((id) => (id ? oppSquad.find((p) => p.id === id) : undefined))
       .filter((p): p is Player => !!p);
@@ -325,27 +370,37 @@ export function PlayerPickerSheet({
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-1.5 px-4 pb-8">
-          {isXi && picker && (
+          {isXi && picker && slot && (
             <div className="mb-2 space-y-1">
-              <div className="flex gap-1.5">
-                {ROLE_GROUPS[slotPos].map((r) => (
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                {sortedRoles.map((r) => (
                   <button
                     key={r}
                     data-testid={`role-${r}`}
                     onClick={() => setRole(picker.index, r)}
-                    className={`flex-1 rounded-lg border px-1 py-2 text-[11px] font-bold ${
+                    className={`shrink-0 rounded-lg border px-2.5 py-2 text-[11px] font-bold ${
                       role === r
                         ? "border-primary bg-primary/15 text-primary"
-                        : "border-border text-muted-foreground"
+                        : laneFits(r, slot)
+                          ? "border-border text-muted-foreground"
+                          : "border-dashed border-border text-muted-foreground/70"
                     }`}
                   >
-                    {ROLE_DEFS[r].label}
+                    {ROLE_DEFS[r].short}
                   </button>
                 ))}
               </div>
               <p className="text-[10px] text-muted-foreground">
-                Role: {ROLE_DEFS[role].label} — changes how the engine rates this slot
+                {ROLE_DEFS[role].label} — {ROLE_DEFS[role].desc}
+                {!laneFits(role, slot) && (
+                  <span className="text-[#FFB020]"> · off-lane for this slot</span>
+                )}
               </p>
+              {current && bestRole && bestRole !== role && (
+                <p className="text-[10px] text-muted-foreground">
+                  Best for {shortName(current.name)}: {ROLE_DEFS[bestRole].label}
+                </p>
+              )}
             </div>
           )}
 
@@ -398,6 +453,18 @@ export function PlayerPickerSheet({
                       </span>
                     )}
                   </span>
+                  {(p.traits ?? []).length > 0 && (
+                    <span className="mt-0.5 flex flex-wrap gap-1">
+                      {(p.traits ?? []).map((t) => (
+                        <span
+                          key={t}
+                          className="rounded bg-primary/10 px-1 py-0.5 text-[9px] font-bold text-primary"
+                        >
+                          {TRAITS[t].short}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                   <span className="text-[11px] text-muted-foreground">
                     {fitted ? "In line-up · " : ""}
                     {p.injuredWeeks > 0

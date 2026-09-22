@@ -1,19 +1,85 @@
 import { del, get, set } from "idb-keyval";
 import type { SaveGame } from "@/engine";
-import { defaultRoleFor, FORMATIONS, ROLE_GROUPS } from "@/engine";
+import {
+  autoLineup,
+  builtinFormation,
+  defaultRoleFor,
+  hashSeed,
+  mulberry32,
+  resolveFormation,
+  ROLE_GROUPS,
+  squadOf,
+  TRAITS,
+  traitsFor,
+  validateFormation
+} from "@/engine";
 
 const KEY = "fm-save-v1";
 
-/** Repair saves written by older versions: backfill missing or invalid slot roles. */
+/**
+ * Repair saves written by older versions:
+ * - backfill / validate customFormations
+ * - backfill and normalize slot roles
+ * - fall back to a built-in shape if the stored formation no longer exists
+ */
 export function normalizeSave(save: SaveGame): SaveGame {
-  const slots = FORMATIONS[save.lineup?.formation] ?? [];
-  if (slots.length) {
-    const roles = save.lineup.roles;
-    save.lineup.roles = slots.map((slot, i) => {
-      const r = roles?.[i];
-      return r && ROLE_GROUPS[slot].includes(r) ? r : defaultRoleFor(slot);
-    });
+  for (const p of save.players) {
+    if (typeof p.assists !== "number") p.assists = 0;
+    // traits: keep valid stored ones, otherwise regenerate deterministically
+    const stored = Array.isArray(p.traits) ? p.traits : null;
+    const valid = stored ? stored.filter((t) => typeof t === "string" && t in TRAITS) : null;
+    if (!stored || stored.length > 2 || valid!.length !== stored.length) {
+      p.traits = traitsFor(p, mulberry32(hashSeed(p.id, "traits")));
+    }
   }
+  if (!Array.isArray(save.customFormations)) save.customFormations = [];
+  save.customFormations = save.customFormations.filter(
+    (f) =>
+      f &&
+      typeof f.id === "string" &&
+      typeof f.name === "string" &&
+      validateFormation(f).length === 0
+  );
+
+  if (save.live) {
+    const l = save.live;
+    const fx = l?.state
+      ? save.fixtures.find(
+          (f) =>
+            f.round === l.state.round &&
+            f.homeId === l.state.homeId &&
+            f.awayId === l.state.awayId &&
+            !f.played
+        )
+      : undefined;
+    const ok =
+      !!fx &&
+      l.state.round === save.round &&
+      !!l.base &&
+      !!l.state &&
+      Array.isArray(l.changes) &&
+      Array.isArray(l.state.timeline) &&
+      (l.half === 1 || l.half === 2) &&
+      typeof l.playhead === "number" &&
+      typeof l.state.minute === "number";
+    if (!ok) save.live = undefined;
+    else l.playhead = Math.max(0, Math.min(l.state.total, l.playhead));
+  }
+
+  const def = resolveFormation(save.lineup?.formation, save.customFormations);
+  if (!def) {
+    save.lineup = autoLineup(squadOf(save.players, save.userClubId), builtinFormation("4-3-3"), {
+      mentality: save.lineup?.mentality ?? "bal"
+    });
+    return save;
+  }
+
+  const slots = def.slots.map((s) => s.pos);
+  const roles = save.lineup.roles;
+  save.lineup.roles = slots.map((slot, i) => {
+    const r = roles?.[i];
+    return r && ROLE_GROUPS[slot].includes(r) ? r : defaultRoleFor(slot);
+  });
   return save;
 }
 

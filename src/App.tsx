@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useGame } from "@/state/store";
 import { BottomNav } from "@/ui/BottomNav";
+import { Builder } from "@/ui/screens/Builder";
 import { Home } from "@/ui/screens/Home";
 import { LeagueScreen } from "@/ui/screens/LeagueScreen";
 import { MatchScreen } from "@/ui/screens/MatchScreen";
@@ -30,6 +31,7 @@ export default function App() {
   if (!game || screen === "new") return <NewGame />;
   if (screen === "match") return <MatchScreen />;
   if (screen === "seasonEnd") return <SeasonEnd />;
+  if (screen === "builder") return <Builder />;
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col">

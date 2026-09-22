@@ -1,15 +1,15 @@
 import { useState } from "react";
-import type { FormationId, Mentality, Player, Position, RoleId } from "@/engine";
+import type { FormationSlot, Mentality, Player, RoleId } from "@/engine";
 import {
   attackStrength,
   autoLineup,
+  builtinFormation,
   defenseStrength,
   defaultRoleFor,
-  FORMATION_COORDS,
-  FORMATIONS,
   FORMATION_IDS,
   isAvailable,
   overallFor,
+  resolveFormation,
   ROLE_DEFS,
   squadOf,
   T,
@@ -33,7 +33,7 @@ const MENTALITIES: Array<{ id: Mentality; label: string }> = [
   { id: "att", label: "Attacking" }
 ];
 
-type Picker = { kind: "xi" | "bench"; index: number; slotPos: Position } | null;
+type Picker = { kind: "xi" | "bench"; index: number; slot: FormationSlot } | null;
 type Sel = { kind: "xi" | "bench"; index: number } | null;
 
 export function Tactics() {
@@ -43,16 +43,22 @@ export function Tactics() {
   const autoPick = useGame((s) => s.autoPick);
   const applySuggestions = useGame((s) => s.applySuggestions);
   const swapSlots = useGame((s) => s.swapSlots);
+  const setScreen = useGame((s) => s.setScreen);
+  const setBuilderFor = useGame((s) => s.setBuilderFor);
+  const deleteCustomFormation = useGame((s) => s.deleteCustomFormation);
   const [picker, setPicker] = useState<Picker>(null);
   const [swapMode, setSwapMode] = useState(false);
   const [sel, setSel] = useState<Sel>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [confirmDel, setConfirmDel] = useState(false);
 
   const squad = squadOf(game.players, game.userClubId);
   const byId = new Map(squad.map((p) => [p.id, p] as const));
   const lineup = game.lineup;
-  const slots = FORMATIONS[lineup.formation];
-  const coords = FORMATION_COORDS[lineup.formation];
+  const customs = game.customFormations;
+  const def = resolveFormation(lineup.formation, customs) ?? builtinFormation("4-3-3");
+  const slots = def.slots;
+  const isCustom = customs.some((f) => f.id === lineup.formation);
   const problems = validateLineup(squad, lineup);
   const club = game.clubs.find((c) => c.id === game.userClubId)!;
 
@@ -80,7 +86,7 @@ export function Tactics() {
   let opp = null as null | { short: string; att: number; def: number; avg: number; home: boolean };
   if (fx && oppClub) {
     const oppSquad = squadOf(game.players, oppClub.id);
-    const ol = autoLineup(oppSquad, oppClub.formation);
+    const ol = autoLineup(oppSquad, builtinFormation(oppClub.formation));
     const oppXi = ol.starters
       .map((id) => (id ? oppSquad.find((p) => p.id === id) : undefined))
       .filter((p): p is Player => !!p);
@@ -102,9 +108,9 @@ export function Tactics() {
     })
     .filter((i) => i >= 0);
 
-  const onSlotTap = (kind: "xi" | "bench", index: number, slotPos: Position) => {
+  const onSlotTap = (kind: "xi" | "bench", index: number, slot: FormationSlot) => {
     if (!swapMode) {
-      setPicker({ kind, index, slotPos });
+      setPicker({ kind, index, slot });
       return;
     }
     if (!sel) {
@@ -137,6 +143,17 @@ export function Tactics() {
     );
   };
 
+  const onDelete = () => {
+    if (!confirmDel) {
+      setConfirmDel(true);
+      window.setTimeout(() => setConfirmDel(false), 3000);
+      return;
+    }
+    setConfirmDel(false);
+    deleteCustomFormation(lineup.formation);
+    setNote("Custom formation deleted");
+  };
+
   return (
     <div className="space-y-4">
       <div>
@@ -155,7 +172,15 @@ export function Tactics() {
             id="formation"
             data-testid="formation"
             value={lineup.formation}
-            onChange={(e) => setFormation(e.target.value as FormationId)}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "__new") {
+                setBuilderFor(null);
+                setScreen("builder");
+              } else {
+                setFormation(v);
+              }
+            }}
             className="mt-1 h-10 w-full rounded-xl border border-border bg-card px-3 text-sm font-semibold outline-none"
           >
             {FORMATION_IDS.map((f) => (
@@ -163,7 +188,38 @@ export function Tactics() {
                 {f}
               </option>
             ))}
+            {customs.length > 0 && (
+              <optgroup label="Custom">
+                {customs.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            <option value="__new">New formation…</option>
           </select>
+          {isCustom && (
+            <div className="mt-1 flex items-center gap-3 text-[11px]">
+              <button
+                className="font-semibold text-primary"
+                data-testid="formation-edit"
+                onClick={() => {
+                  setBuilderFor(lineup.formation);
+                  setScreen("builder");
+                }}
+              >
+                Edit
+              </button>
+              <button
+                data-testid="formation-delete"
+                className={`font-semibold ${confirmDel ? "text-destructive" : "text-muted-foreground"}`}
+                onClick={onDelete}
+              >
+                {confirmDel ? "Tap to confirm" : "Delete"}
+              </button>
+            </div>
+          )}
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -217,8 +273,7 @@ export function Tactics() {
               {club.short} <span className="font-medium text-muted-foreground">(you)</span>
             </span>
             <span className="tnum">
-              att <b>{myAtt}</b> · def <b>{myDef}</b> · avg{" "}
-              <b>{myAvg}</b>
+              att <b>{myAtt}</b> · def <b>{myDef}</b> · avg <b>{myAvg}</b>
             </span>
           </div>
           {opp && (
@@ -237,7 +292,7 @@ export function Tactics() {
       <Card>
         <CardContent className="p-3">
           <div className="mb-2 flex items-center justify-between">
-            <span className="eyebrow">Line-up · {lineup.formation}</span>
+            <span className="eyebrow">Line-up · {def.name}</span>
             <Button
               size="sm"
               variant={swapMode ? "default" : "secondary"}
@@ -263,8 +318,8 @@ export function Tactics() {
               <div className="absolute bottom-0 left-1/2 h-9 w-36 -translate-x-1/2 border-x border-t border-primary" />
             </div>
 
-            {slots.map((pos, i) => {
-              const [x, y] = coords[i];
+            {slots.map((slot, i) => {
+              const { pos, x, y } = slot;
               const id = lineup.starters[i];
               const p = id ? byId.get(id) : undefined;
               const role = lineup.roles[i] ?? defaultRoleFor(pos);
@@ -275,7 +330,7 @@ export function Tactics() {
                 <button
                   key={i}
                   data-testid={`slot-xi-${i}`}
-                  onClick={() => onSlotTap("xi", i, pos)}
+                  onClick={() => onSlotTap("xi", i, slot)}
                   style={{ left: `${x}%`, top: `${y}%`, width: "clamp(46px, 15vw, 64px)" }}
                   className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border px-0.5 pb-1 pt-1.5 text-center ${
                     p ? "bg-card/95" : "border-dashed bg-card/60"
@@ -334,7 +389,7 @@ export function Tactics() {
               <button
                 key={i}
                 data-testid={`slot-bench-${i}`}
-                onClick={() => onSlotTap("bench", i, p?.pos ?? "MF")}
+                onClick={() => onSlotTap("bench", i, { pos: p?.pos ?? "MF", x: 50, y: 50 })}
                 className={`flex h-13 flex-col items-center justify-center gap-0.5 rounded-xl border px-1 py-1 text-center ${
                   p ? "border-border bg-secondary/60" : "border-dashed border-border bg-transparent"
                 } ${isSel ? "ring-2 ring-primary" : ""}`}
