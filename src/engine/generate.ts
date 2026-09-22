@@ -6,6 +6,7 @@ import { autoLineup } from "./ratings";
 import { builtinFormation } from "./formations";
 import { buildFixtures } from "./league";
 import { contractFor, freshFinances } from "./transfers";
+import { peakFor } from "./training";
 
 export const CLUB_DEFS: ReadonlyArray<{ name: string; short: string; color: string }> = [
   { name: "Northport FC", short: "NOR", color: "#2ED573" },
@@ -94,9 +95,13 @@ function makePlayer(
     age,
     pos,
     attrs,
-    // deterministic per player id so save backfills match fresh generations
-    traits: traitsFor({ id, pos, attrs, age }, mulberry32(hashSeed(id, "traits"))),
+    // deterministic per player id so existing saves backfill identically
+    traits: traitsFor({ id, pos, attrs, age } as Player, mulberry32(hashSeed(id, "traits"))),
     contract: { wage: 0, until: 0 },
+    peak: 0,
+    dev: {},
+    devSeason: {},
+    focus: null,
     condition: 100,
     injuredWeeks: 0,
     suspension: 0,
@@ -105,6 +110,7 @@ function makePlayer(
     assists: 0
   };
   player.contract = contractFor(player, 1);
+  player.peak = peakFor(player);
   return player;
 }
 
@@ -153,6 +159,8 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     lastResults: [],
     finances: freshFinances({ clubs, players }),
     offers: [],
-    transferLog: []
+    transferLog: [],
+    training: { unit: "balanced", intensity: "normal" },
+    devNews: []
   };
 }

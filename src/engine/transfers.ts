@@ -1,6 +1,7 @@
 import type { Contract, Finances, Player, SaveGame, TransferOffer } from "./types";
 import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
 import { fixLineup, overallFor, squadOf } from "./ratings";
+import { peakFor, pushNews } from "./training";
 import { builtinFormation, resolveFormation } from "./formations";
 
 /**
@@ -406,7 +407,15 @@ export function windowTick(input: SaveGame): SaveGame {
  * the club; AI clubs re-sign most of theirs, the rest hit the free agent pool.
  */
 export function rollContracts(save: SaveGame): SaveGame {
+  const retired: Player[] = [];
   for (const p of save.players) {
+    // 38 and over: hang up the boots (keeps the world from filling with decrepit veterans)
+    if (p.age >= 38 && p.clubId !== "") {
+      const club = save.clubs.find((c) => c.id === p.clubId);
+      retired.push(p);
+      if (club?.id === save.userClubId) pushNews(save, `${p.name} (${p.age}) retires from football.`);
+      continue;
+    }
     if (p.clubId === "" || p.contract.until >= save.season) continue;
     const club = save.clubs.find((c) => c.id === p.clubId);
     if (!club) continue;
@@ -428,6 +437,10 @@ export function rollContracts(save: SaveGame): SaveGame {
   if (frees.length > 24) {
     const oldest = frees.sort((a, b) => b.age - a.age).slice(0, frees.length - 24);
     const gone = new Set(oldest.map((p) => p.id));
+    save.players = save.players.filter((p) => !gone.has(p.id));
+  }
+  if (retired.length) {
+    const gone = new Set(retired.map((p) => p.id));
     save.players = save.players.filter((p) => !gone.has(p.id));
   }
   userFix(save); // any of your departures must leave a legal XI behind
@@ -458,6 +471,10 @@ export function makeFreeAgent(season: number, idx: number): Player {
     attrs,
     traits: [],
     contract: { wage: 0, until: 0 },
+    peak: 0,
+    dev: {},
+    devSeason: {},
+    focus: null,
     condition: 100,
     injuredWeeks: 0,
     suspension: 0,
@@ -466,5 +483,6 @@ export function makeFreeAgent(season: number, idx: number): Player {
     assists: 0
   };
   p.contract = { wage: wageDemand(p), until: 0 };
+  p.peak = peakFor(p);
   return p;
 }

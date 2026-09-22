@@ -7,6 +7,7 @@ import { buildFixtures } from "./league";
 import { simulateMatch } from "./match";
 import { weeklyRecovery } from "./tuning";
 import { TF, freshFinances, makeFreeAgent, rollContracts, windowTick } from "./transfers";
+import { INTENSITIES, developRound, learnTraits, resetSeasonDev, youthIntake } from "./training";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -157,14 +158,22 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
   save.live = undefined;
 
   // Between rounds: players who sat out recover / serve bans.
+  const intensityRec = INTENSITIES[(save.training?.intensity ?? "normal") as keyof typeof INTENSITIES].recovery;
   for (const p of save.players) {
     if (p.injuredWeeks > 0 && !playedIds.has(p.id)) p.injuredWeeks--;
     if (p.suspension > 0 && !playedIds.has(p.id)) p.suspension--;
-    p.condition = Math.min(100, p.condition + weeklyRecovery(p));
+    const rec = weeklyRecovery(p) * (p.clubId === save.userClubId ? intensityRec : 1);
+    p.condition = Math.min(100, p.condition + rec);
   }
 
+  // Training: every player develops a little each round (age × minutes × focus × intensity).
+  const minutesById: Record<string, number> = {};
+  for (const r of save.lastResults)
+    for (const u of r.updates) minutesById[u.playerId] = (minutesById[u.playerId] ?? 0) + u.minutes;
+  const withDev = developRound(save, minutesById);
+
   // Transfer activity for this round while a window is open (AI churn + bids for you).
-  const withTransfers = windowTick(save);
+  const withTransfers = windowTick(withDev);
   withTransfers.round = round + 1;
   return withTransfers;
 }
@@ -203,6 +212,9 @@ export function nextSeason(input: SaveGame): SaveGame {
   save.offers = [];
   save.pending = undefined;
   save.fixtures = buildFixtures(save.clubs, save.season, save.seed);
+  // season-end: trait learning reads last season's minutes; then reset trackers + intake
+  learnTraits(save);
+  resetSeasonDev(save);
   for (const p of save.players) {
     p.age = Math.min(40, p.age + 1);
     p.condition = 100;
@@ -218,6 +230,8 @@ export function nextSeason(input: SaveGame): SaveGame {
     const id = `pfree-${save.season}-${i}`;
     if (!save.players.some((p) => p.id === id)) save.players.push(makeFreeAgent(save.season, i));
   }
+  // academy intake: a kid for your first team, one or two for every AI club
+  youthIntake(save);
   save.finances = freshFinances(save);
   const def =
     resolveFormation(save.lineup.formation, save.customFormations) ?? builtinFormation("4-3-3");
