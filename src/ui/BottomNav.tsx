@@ -1,10 +1,11 @@
-import { ClipboardList, Home as HomeIcon, Trophy, Users } from "lucide-react";
+import { Banknote, ClipboardList, Home as HomeIcon, Trophy, Users } from "lucide-react";
 import { useGame, type Screen } from "@/state/store";
 
 const items: Array<{ screen: Screen; label: string; icon: typeof HomeIcon }> = [
   { screen: "home", label: "Home", icon: HomeIcon },
   { screen: "squad", label: "Squad", icon: Users },
   { screen: "tactics", label: "Tactics", icon: ClipboardList },
+  { screen: "transfers", label: "Transfers", icon: Banknote },
   { screen: "league", label: "League", icon: Trophy }
 ];
 
@@ -13,7 +14,7 @@ export function BottomNav() {
   const setScreen = useGame((s) => s.setScreen);
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
-      <div className="mx-auto grid max-w-md grid-cols-4">
+      <div className="mx-auto grid max-w-md grid-cols-5">
         {items.map(({ screen: s, label, icon: Icon }) => {
           const active = screen === s;
           return (

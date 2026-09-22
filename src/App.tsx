@@ -9,6 +9,7 @@ import { NewGame } from "@/ui/screens/NewGame";
 import { SeasonEnd } from "@/ui/screens/SeasonEnd";
 import { Squad } from "@/ui/screens/Squad";
 import { Tactics } from "@/ui/screens/Tactics";
+import { Transfers } from "@/ui/screens/Transfers";
 
 export default function App() {
   const loaded = useGame((s) => s.loaded);
@@ -39,6 +40,7 @@ export default function App() {
         {screen === "home" && <Home />}
         {screen === "squad" && <Squad />}
         {screen === "tactics" && <Tactics />}
+        {screen === "transfers" && <Transfers />}
         {screen === "league" && <LeagueScreen />}
       </main>
       <BottomNav />

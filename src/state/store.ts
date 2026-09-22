@@ -9,8 +9,10 @@ import type {
   SaveGame
 } from "@/engine";
 import {
+  acceptOffer,
   addLiveChange,
   autoLineup,
+  bidForPlayer,
   builtinFormation,
   changeMinute,
   completeRound,
@@ -19,13 +21,17 @@ import {
   isAvailable,
   newGame,
   nextSeason,
+  offerTerms,
   playersById,
   prepareRound,
+  rejectOffer,
   remapLineup,
+  renewContract,
   resolveFormation,
   resumeSecondHalf,
   ROLE_GROUPS,
   seasonRounds,
+  signFreeAgent,
   skipToFullTime,
   skipToHalfTime,
   slotScoreFor,
@@ -33,6 +39,7 @@ import {
   startLive,
   T
 } from "@/engine";
+import type { BidResponse } from "@/engine";
 import { loadSave, persistSave } from "./save";
 
 export type Screen =
@@ -41,6 +48,7 @@ export type Screen =
   | "squad"
   | "tactics"
   | "league"
+  | "transfers"
   | "match"
   | "seasonEnd"
   | "builder";
@@ -76,6 +84,13 @@ interface AppState {
   setBuilderFor: (id: string | null) => void;
   saveCustomFormation: (def: FormationDef) => void;
   deleteCustomFormation: (id: string) => void;
+  bidFor: (playerId: string, fee: number) => BidResponse | null;
+  signTerms: (playerId: string, wage: number) => BidResponse | null;
+  renew: (playerId: string, wage: number) => BidResponse | null;
+  signFree: (playerId: string, wage: number) => BidResponse | null;
+  acceptIncoming: (offerId: string) => BidResponse | null;
+  rejectIncoming: (offerId: string) => void;
+  cancelDeal: () => void;
   resetGame: () => void;
   importSave: (save: SaveGame) => void;
 }
@@ -430,6 +445,67 @@ export const useGame = create<AppState>()((set, get) => ({
         )
       };
     }
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  bidFor: (playerId, fee) => {
+    const { game } = get();
+    if (!game) return null;
+    const r = bidForPlayer(game, playerId, fee);
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return r.resp;
+  },
+
+  signTerms: (playerId, wage) => {
+    const { game } = get();
+    if (!game) return null;
+    const r = offerTerms(game, playerId, wage);
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return r.resp;
+  },
+
+  renew: (playerId, wage) => {
+    const { game } = get();
+    if (!game) return null;
+    const r = renewContract(game, playerId, wage);
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return r.resp;
+  },
+
+  signFree: (playerId, wage) => {
+    const { game } = get();
+    if (!game) return null;
+    const r = signFreeAgent(game, playerId, wage);
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return r.resp;
+  },
+
+  acceptIncoming: (offerId) => {
+    const { game } = get();
+    if (!game) return null;
+    const r = acceptOffer(game, offerId);
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return r.resp;
+  },
+
+  rejectIncoming: (offerId) => {
+    const { game } = get();
+    if (!game) return;
+    const save = rejectOffer(game, offerId);
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  cancelDeal: () => {
+    const { game } = get();
+    if (!game || !game.pending) return;
+    const save: SaveGame = { ...game, pending: undefined };
     set({ game: save });
     schedulePersist(save);
   },

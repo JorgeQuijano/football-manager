@@ -3,7 +3,9 @@ import type { SaveGame } from "@/engine";
 import {
   autoLineup,
   builtinFormation,
+  contractFor,
   defaultRoleFor,
+  freshFinances,
   hashSeed,
   mulberry32,
   resolveFormation,
@@ -31,6 +33,23 @@ export function normalizeSave(save: SaveGame): SaveGame {
     if (!stored || stored.length > 2 || valid!.length !== stored.length) {
       p.traits = traitsFor(p, mulberry32(hashSeed(p.id, "traits")));
     }
+    // contracts: backfill deterministically for pre-0.11 saves
+    if (!p.contract || typeof p.contract.wage !== "number" || typeof p.contract.until !== "number") {
+      p.contract = contractFor(p, save.season);
+    }
+  }
+  if (!save.finances || typeof save.finances !== "object") save.finances = freshFinances(save);
+  if (!Array.isArray(save.offers)) save.offers = [];
+  save.offers = save.offers.filter(
+    (o) =>
+      o &&
+      typeof o.id === "string" &&
+      typeof o.fee === "number" &&
+      save.players.some((p) => p.id === o.playerId && p.clubId === save.userClubId)
+  );
+  if (!Array.isArray(save.transferLog)) save.transferLog = [];
+  if (save.pending && !save.players.some((p) => p.id === save.pending!.playerId)) {
+    save.pending = undefined;
   }
   if (!Array.isArray(save.customFormations)) save.customFormations = [];
   save.customFormations = save.customFormations.filter(

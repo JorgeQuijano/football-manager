@@ -6,6 +6,7 @@ import { defaultRoleFor } from "./roles";
 import { buildFixtures } from "./league";
 import { simulateMatch } from "./match";
 import { weeklyRecovery } from "./tuning";
+import { TF, freshFinances, makeFreeAgent, rollContracts, windowTick } from "./transfers";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -162,8 +163,10 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
     p.condition = Math.min(100, p.condition + weeklyRecovery(p));
   }
 
-  save.round = round + 1;
-  return save;
+  // Transfer activity for this round while a window is open (AI churn + bids for you).
+  const withTransfers = windowTick(save);
+  withTransfers.round = round + 1;
+  return withTransfers;
 }
 
 /**
@@ -191,12 +194,14 @@ export function playRound(input: SaveGame): { save: SaveGame; userMatch?: MatchR
   return { save, userMatch: userResult };
 }
 
-/** Roll the save into the next season: age up, reset status, fresh fixtures. */
+/** Roll the save into the next season: age up, contracts, fresh fixtures & budgets. */
 export function nextSeason(input: SaveGame): SaveGame {
   const save: SaveGame = structuredClone(input);
   save.season += 1;
   save.round = 1;
   save.live = undefined;
+  save.offers = [];
+  save.pending = undefined;
   save.fixtures = buildFixtures(save.clubs, save.season, save.seed);
   for (const p of save.players) {
     p.age = Math.min(40, p.age + 1);
@@ -207,6 +212,13 @@ export function nextSeason(input: SaveGame): SaveGame {
     p.goals = 0;
     p.assists = 0;
   }
+  // contracts: expiries leave (AI clubs re-sign most), then a fresh free-agent intake
+  rollContracts(save);
+  for (let i = 0; i < TF.freeAgentsPerSeason; i++) {
+    const id = `pfree-${save.season}-${i}`;
+    if (!save.players.some((p) => p.id === id)) save.players.push(makeFreeAgent(save.season, i));
+  }
+  save.finances = freshFinances(save);
   const def =
     resolveFormation(save.lineup.formation, save.customFormations) ?? builtinFormation("4-3-3");
   save.lineup = autoLineup(squadOf(save.players, save.userClubId), def, {
