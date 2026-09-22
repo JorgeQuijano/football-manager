@@ -62,6 +62,7 @@ type StageInfo = {
   tg: [number, number];
   att: number[];
   def: number[];
+  routine?: string;
 };
 
 const SPEEDS = [1, 2, 4, 8] as const;
@@ -273,13 +274,77 @@ function LiveMatchScreen() {
       return arr.map((x) => x.slot);
     };
 
+    /** Routine-aware staging shapes: the chosen set-piece routine decides who stands where. */
+    const stageSpots = (
+      kind: StageKind,
+      routine: string | undefined,
+      left: boolean
+    ): { att: [number, number][]; def: [number, number][]; restAtt: [number, number]; restDef: [number, number] } | null => {
+      const flip = (x: number) => (left ? x : 100 - x);
+      const fix = (b: { att: [number, number][]; def: [number, number][]; restAtt: [number, number]; restDef: [number, number] }) => ({
+        att: b.att.map(([x, y]) => [flip(x), y] as [number, number]),
+        def: b.def.map(([x, y]) => [flip(x), y] as [number, number]),
+        restAtt: [flip(b.restAtt[0]), b.restAtt[1]] as [number, number],
+        restDef: [flip(b.restDef[0]), b.restDef[1]] as [number, number]
+      });
+      if (kind === "corner") {
+        // Spots are authored with the flag on the LEFT (x≈2); `flip` mirrors for a right corner.
+        if (routine === "near_post")
+          return fix({
+            att: [[42, 8], [52, 10], [62, 14], [34, 16], [50, 20]],
+            def: [[44, 10], [54, 12], [60, 16], [36, 18], [50, 6]],
+            restAtt: [50, 46],
+            restDef: [50, 30]
+          });
+        if (routine === "short")
+          return fix({
+            att: [[12, 12], [16, 20], [45, 9], [56, 13], [40, 18]],
+            def: [[14, 14], [20, 22], [46, 11], [55, 15], [50, 6]],
+            restAtt: [50, 42],
+            restDef: [50, 32]
+          });
+        if (routine === "edge")
+          return fix({
+            att: [[38, 22], [62, 22], [50, 24], [45, 18], [55, 18]],
+            def: [[46, 20], [54, 20], [38, 25], [62, 25], [50, 11]],
+            restAtt: [50, 40],
+            restDef: [50, 26]
+          });
+        // far_post (and anything unknown): cluster at the far post
+        return fix({
+          att: [[62, 10], [72, 12], [54, 14], [40, 12], [50, 19]],
+          def: [[64, 12], [70, 14], [56, 16], [42, 14], [50, 7]],
+          restAtt: [50, 44],
+          restDef: [50, 30]
+        });
+      }
+      if (kind === "freekick") {
+        if (routine === "crossed")
+          return fix({
+            att: [[44, 10], [56, 9], [38, 14], [62, 13], [50, 17]],
+            def: [[46, 12], [54, 11], [40, 16], [60, 15], [50, 8]],
+            restAtt: [50, 40],
+            restDef: [50, 28]
+          });
+        if (routine === "short")
+          return fix({
+            att: [[42, 22], [48, 24], [50, 18], [30, 26], [70, 26]],
+            def: [[46, 20], [50, 19], [54, 20], [38, 24], [62, 24]],
+            restAtt: [50, 38],
+            restDef: [50, 30]
+          });
+        return null; // direct = wall shape
+      }
+      return null;
+    };
+
     /** Where a slot should stand while a set piece is staging; null = normal movement. */
     const stageTarget = (side: Side, slot: number) => {
       const S = C.stage;
       if (!S) return null;
       const sd = sideOf(side);
       const m = sideMirror(S.side);
-      const spots = STAGE_SPOTS[S.kind];
+      const spots = stageSpots(S.kind, S.routine, S.tg[0] < 50) ?? STAGE_SPOTS[S.kind];
       const put = (x: number, y: number) => ({
         x: clampPos(m ? 100 - x : x),
         y: clampPos(m ? 100 - y : y)
@@ -446,7 +511,8 @@ function LiveMatchScreen() {
           taker: s.p[0] ?? 0,
           tg: s.tg ?? [50, 12],
           att: rankSide(C.poss, "push"),
-          def: rankSide(other, "drop")
+          def: rankSide(other, "drop"),
+          routine: s.spr
         };
       } else {
         C.stage = null;

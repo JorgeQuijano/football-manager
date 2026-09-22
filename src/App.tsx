@@ -7,6 +7,7 @@ import { LeagueScreen } from "@/ui/screens/LeagueScreen";
 import { MatchScreen } from "@/ui/screens/MatchScreen";
 import { NewGame } from "@/ui/screens/NewGame";
 import { SeasonEnd } from "@/ui/screens/SeasonEnd";
+import { SetPieces } from "@/ui/screens/SetPieces";
 import { Squad } from "@/ui/screens/Squad";
 import { Tactics } from "@/ui/screens/Tactics";
 import { Training } from "@/ui/screens/Training";
@@ -43,6 +44,7 @@ export default function App() {
         {screen === "tactics" && <Tactics />}
         {screen === "transfers" && <Transfers />}
         {screen === "training" && <Training />}
+        {screen === "setpieces" && <SetPieces />}
         {screen === "league" && <LeagueScreen />}
       </main>
       <BottomNav />

@@ -8,6 +8,7 @@ import { simulateMatch } from "./match";
 import { weeklyRecovery } from "./tuning";
 import { TF, freshFinances, makeFreeAgent, rollContracts, windowTick } from "./transfers";
 import { INTENSITIES, developRound, learnTraits, resetSeasonDev, youthIntake } from "./training";
+import { growFamiliarity, planForClub } from "./setpieces";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -76,6 +77,8 @@ const matchInputs = (save: SaveGame, round: number, homeId: string, awayId: stri
     awayCoords: away.coords,
     homePoss: home.poss,
     awayPoss: away.poss,
+    homePlan: planForClub(save, homeId),
+    awayPlan: planForClub(save, awayId),
     rng
   };
 };
@@ -171,6 +174,7 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
   for (const r of save.lastResults)
     for (const u of r.updates) minutesById[u.playerId] = (minutesById[u.playerId] ?? 0) + u.minutes;
   const withDev = developRound(save, minutesById);
+  growFamiliarity(withDev); // set-piece routines get groovier every round
 
   // Transfer activity for this round while a window is open (AI churn + bids for you).
   const withTransfers = windowTick(withDev);

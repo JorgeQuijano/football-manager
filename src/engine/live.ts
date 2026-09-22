@@ -16,6 +16,7 @@ import {
   substitutionError
 } from "./match";
 import { resolveSide } from "./advance";
+import { planForClub } from "./setpieces";
 import { ROLE_GROUPS } from "./roles";
 
 export const playersById = (save: SaveGame): Map<string, Player> =>
@@ -58,6 +59,8 @@ export function startLive(save: SaveGame): LiveMatch | undefined {
     awayCoords: away.coords,
     homePoss: home.poss,
     awayPoss: away.poss,
+    homePlan: planForClub(save, fx.homeId),
+    awayPlan: planForClub(save, fx.awayId),
     rng,
     userSide
   });

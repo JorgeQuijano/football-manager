@@ -9,11 +9,13 @@ import type {
   Position,
   RoleId,
   SetPiece,
+  SetPiecePlan,
   StrokeOut
 } from "./types";
 import { hashSeed, mulberry32, pick, pickWeighted, randInt, type Rng } from "./rng";
 import { T } from "./tuning";
 import { hasTrait } from "./traits";
+import { CORNER_ROUTINES, FK_ROUTINES, familiarityFactor, familiarityOf } from "./setpieces";
 import {
   attackScore,
   attackStrength,
@@ -40,6 +42,8 @@ export interface MatchInputs {
   awayCoords: [number, number][];
   homePoss: Position[];
   awayPoss: Position[];
+  homePlan: SetPiecePlan;
+  awayPlan: SetPiecePlan;
   rng: Rng;
   userSide?: "home" | "away";
 }
@@ -175,7 +179,8 @@ const buildSide = (
   mentality: Mentality,
   roles: RoleId[],
   coords: [number, number][],
-  poss0: Position[]
+  poss0: Position[],
+  plan: SetPiecePlan
 ): MatchSideState => {
   const slots: (string | null)[] = [];
   const poss: Position[] = [];
@@ -190,6 +195,7 @@ const buildSide = (
     cds.push(coords[i] ?? [50, 50]);
   }
   return {
+    plan,
     clubId: club.id,
     name: club.name,
     short: club.short,
@@ -216,8 +222,8 @@ export function startMatch(inp: MatchInputs): MatchState {
     total,
     rngState: 0,
     userSide: inp.userSide,
-    home: buildSide(inp.homeClub, inp.homeXI, inp.homeBench, inp.homeMentality, inp.homeRoles, inp.homeCoords, inp.homePoss),
-    away: buildSide(inp.awayClub, inp.awayXI, inp.awayBench, inp.awayMentality, inp.awayRoles, inp.awayCoords, inp.awayPoss),
+    home: buildSide(inp.homeClub, inp.homeXI, inp.homeBench, inp.homeMentality, inp.homeRoles, inp.homeCoords, inp.homePoss, inp.homePlan),
+    away: buildSide(inp.awayClub, inp.awayXI, inp.awayBench, inp.awayMentality, inp.awayRoles, inp.awayCoords, inp.awayPoss, inp.awayPlan),
     events: [],
     timeline: [],
     ratings: {},
@@ -594,6 +600,10 @@ const processFoul = (
 };
 
 /** Penalty: staged in the 2D view via sp/tg (taker on the spot, players on the arc). */
+/** The nominated taker for a discipline if he is on the pitch, else null. */
+const prefTaker = <X extends { p: Player }>(list: X[], id: string | null | undefined): X | null =>
+  id ? (list.find((x) => x.p.id === id) ?? null) : null;
+
 const resolvePenalty = (
   s: MatchState,
   atkSide: MatchSideState,
@@ -604,13 +614,15 @@ const resolvePenalty = (
 ) => {
   const atk = proto(atkSide, players).filter((x) => x.p.pos !== "GK");
   if (!atk.length) return;
-  const taker = pickWeighted(
-    rng,
-    atk,
-    (x) =>
-      (x.p.attrs.shooting * 0.7 + roleFinish(x.p, x.role) * 0.3) *
-      (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
-  );
+  const taker =
+    prefTaker(atk, atkSide.plan?.takers?.penalty) ??
+    pickWeighted(
+      rng,
+      atk,
+      (x) =>
+        (x.p.attrs.shooting * 0.7 + roleFinish(x.p, x.role) * 0.3) *
+        (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
+    );
   const gk = proto(defSide, players).find((x) => x.p.pos === "GK");
   const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
   const pGoal = clamp(
@@ -684,23 +696,42 @@ const resolveFreeKick = (
 ) => {
   const atk = proto(atkSide, players).filter((x) => x.p.pos !== "GK");
   if (!atk.length) return;
-  const taker = pickWeighted(
-    rng,
-    atk,
-    (x) =>
-      (x.p.attrs.shooting * 0.75 + roleFinish(x.p, x.role) * 0.25) *
-      (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
-  );
+  const routine = atkSide.plan?.freekick ?? "direct";
+  const eff = FK_ROUTINES[routine];
+  const fam = familiarityFactor(familiarityOf(atkSide.plan, "freekick", routine));
+  const taker =
+    prefTaker(atk, atkSide.plan?.takers?.freekick) ??
+    pickWeighted(
+      rng,
+      atk,
+      (x) =>
+        (eff.delivery
+          ? x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20
+          : x.p.attrs.shooting * 0.75 + roleFinish(x.p, x.role) * 0.25) *
+        (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
+    );
   const dfn = proto(defSide, players);
   const gk = dfn.find((x) => x.p.pos === "GK");
   const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
+  // a crossed routine is a headed delivery (corner-like); everything else is a shot
+  const contenders = atk.filter((x) => x.p.id !== taker.p.id);
+  const header =
+    eff.delivery && contenders.length
+      ? pickWeighted(
+          rng,
+          contenders,
+          (x) => x.p.attrs.physical * 1.1 + x.p.attrs.shooting * 0.35 + ROLE_DEFS[x.role].finish * 9
+        )
+      : null;
   const pGoal = clamp(
-    T.fkGoalBase *
-      (1 + (taker.p.attrs.shooting - 60) / 80) *
-      (1 + (60 - gkSkill) / 200) *
-      (hasTrait(taker.p, "dead_ball") ? 1.08 : 1),
-    0.02,
-    0.16
+    (eff.delivery && header ? T.cornerGoalBase : T.fkGoalBase) *
+      eff.goal *
+      fam *
+      (1 + ((eff.delivery ? taker.p.attrs.passing : taker.p.attrs.shooting) - 60) / (eff.delivery ? 100 : 80)) *
+      (1 + (60 - gkSkill) / (eff.delivery ? 220 : 200)) *
+      (hasTrait(taker.p, "dead_ball") ? (eff.delivery ? 1.06 : 1.08) : 1),
+    eff.delivery ? 0.008 : 0.02,
+    eff.delivery ? 0.1 : 0.16
   );
   s.events.push({
     minute: m,
@@ -713,13 +744,18 @@ const resolveFreeKick = (
   let out: StrokeOut;
   let b: number | undefined;
   if (rng() < pGoal) {
+    const scorer = header ?? taker;
     out = "goal";
     atkSide.goals++;
-    updOf(s, taker.p.id).goals++;
-    s.ratings[taker.p.id] = clamp(s.ratings[taker.p.id] + 1.0, 4, 10);
+    updOf(s, scorer.p.id).goals++;
+    s.ratings[scorer.p.id] = clamp(s.ratings[scorer.p.id] + 1.0, 4, 10);
+    if (header) {
+      updOf(s, taker.p.id).assists++;
+      s.ratings[taker.p.id] = clamp(s.ratings[taker.p.id] + 0.4, 4, 10);
+    }
     s.scorers.push({
-      playerId: taker.p.id,
-      name: taker.p.name,
+      playerId: scorer.p.id,
+      name: scorer.p.name,
       clubId: atkSide.clubId,
       minute: m
     });
@@ -727,8 +763,10 @@ const resolveFreeKick = (
       minute: m,
       type: "goal",
       clubId: atkSide.clubId,
-      playerId: taker.p.id,
-      text: pick(rng, FK_GOAL_TEXT)(taker.p.name, atkSide.short)
+      playerId: scorer.p.id,
+      text: header
+        ? `${pick(rng, CORNER_GOAL_TEXT)(scorer.p.name, atkSide.short)} — ${taker.p.name} with the free kick.`
+        : pick(rng, FK_GOAL_TEXT)(scorer.p.name, atkSide.short)
     });
   } else if (rng() < T.saveShare) {
     out = "save";
@@ -781,6 +819,7 @@ const resolveFreeKick = (
     b,
     r: s.events.length > evBefore ? s.events.length - 1 : undefined,
     sp: "freekick",
+    spr: routine,
     tg: [50, 24]
   });
 };
@@ -797,13 +836,18 @@ const resolveCorner = (
 ) => {
   const atk = proto(atkSide, players).filter((x) => x.p.pos !== "GK");
   if (!atk.length) return;
-  const taker = pickWeighted(
-    rng,
-    atk,
-    (x) =>
-      (x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20) *
-      (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
-  );
+  const routine = atkSide.plan?.corner ?? "far_post";
+  const eff = CORNER_ROUTINES[routine];
+  const fam = familiarityFactor(familiarityOf(atkSide.plan, "corner", routine));
+  const taker =
+    prefTaker(atk, atkSide.plan?.takers?.corner) ??
+    pickWeighted(
+      rng,
+      atk,
+      (x) =>
+        (x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20) *
+        (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
+    );
   const flagX = rng() < 0.5 ? 2 : 98;
   const contenders = atk.filter((x) => x.p.id !== taker.p.id);
   const header =
@@ -812,7 +856,11 @@ const resolveCorner = (
           rng,
           contenders,
           (x) =>
-            x.p.attrs.physical * 0.9 + x.p.attrs.shooting * 0.3 + ROLE_DEFS[x.role].finish * 10
+            eff.header === "physical"
+              ? x.p.attrs.physical * 1.3 + x.p.attrs.shooting * 0.25 + ROLE_DEFS[x.role].finish * 8
+              : eff.header === "shooting"
+                ? x.p.attrs.shooting * 0.8 + x.p.attrs.physical * 0.45 + ROLE_DEFS[x.role].finish * 10
+                : x.p.attrs.physical * 0.9 + x.p.attrs.shooting * 0.3 + ROLE_DEFS[x.role].finish * 10
         )
       : taker;
   const dfn = proto(defSide, players);
@@ -820,6 +868,8 @@ const resolveCorner = (
   const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
   const pGoal = clamp(
     T.cornerGoalBase *
+      eff.goal *
+      fam *
       (1 + (taker.p.attrs.passing - 60) / 100 + (header.p.attrs.physical - 60) / 120) *
       (1 + (60 - gkSkill) / 220) *
       (hasTrait(taker.p, "dead_ball") ? 1.06 : 1),
@@ -849,7 +899,7 @@ const resolveCorner = (
       playerId: header.p.id,
       text: `${pick(rng, CORNER_GOAL_TEXT)(header.p.name, atkSide.short)} — ${taker.p.name} with the corner.`
     });
-  } else if (depth < 2 && rng() < T.secondCornerShare) {
+  } else if (depth < 2 && rng() < Math.min(0.85, T.secondCornerShare * eff.recycle)) {
     s.events.push({
       minute: m,
       type: "corner",
@@ -865,6 +915,7 @@ const resolveCorner = (
       b: header.slot,
       r: s.events.length - 1,
       sp: "corner",
+      spr: routine,
       tg: [flagX, 2]
     });
     resolveCorner(s, atkSide, defSide, m, rng, players, depth + 1);
@@ -905,6 +956,7 @@ const resolveCorner = (
     b,
     r: s.events.length > evBefore ? s.events.length - 1 : undefined,
     sp: "corner",
+    spr: routine,
     tg: [flagX, 2]
   });
 };

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mulberry32, hashSeed } from "./rng";
 import { newGame } from "./generate";
 import { nextSeason, playRound, resolveSide, seasonRounds } from "./advance";
-import { simulateMatch } from "./match";
+import { simulateMatch, startMatch, advanceTo, finalizeMatch } from "./match";
 import { addLiveChange, finalizeLive, matchStats, playersById, resumeSecondHalf, startLive, userFixture } from "./live";
 import { computeTable } from "./league";
 import {
@@ -38,6 +38,18 @@ import {
   squadPlan
 } from "./planner";
 import {
+  CORNER_ROUTINES,
+  FK_ROUTINES,
+  aiSetPieces,
+  cleanSetPieces,
+  defaultSetPieces,
+  familiarityFactor,
+  familiarityOf,
+  growFamiliarity,
+  planForClub,
+  routineKey
+} from "./setpieces";
+import {
   acceptOffer,
   bidForPlayer,
   freeAgents,
@@ -54,7 +66,7 @@ import {
   windowTick
 } from "./transfers";
 import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
-import type { Intensity, Mentality, Player, Position, SaveGame, Stroke, TrainingPlan, TrainingUnit } from "./types";
+import type { CornerRoutine, FreeKickRoutine, Intensity, Mentality, Player, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit } from "./types";
 
 function playSeason(start: SaveGame): SaveGame {
   let save = start;
@@ -572,7 +584,9 @@ describe("live match", () => {
       homeCoords: home.coords,
       awayCoords: away.coords,
       homePoss: home.poss,
-      awayPoss: away.poss
+      awayPoss: away.poss,
+      homePlan: planForClub(save, fx.homeId),
+      awayPlan: planForClub(save, fx.awayId)
     };
   }
 
@@ -1480,6 +1494,248 @@ describe("planner", () => {
     expect(plan.avgAge).toBeLessThan(40);
     expect(plan.wageBill).toBe(wageBill(s, s.userClubId));
     expect(JSON.stringify(squadPlan(s))).toBe(JSON.stringify(squadPlan(s)));
+  });
+});
+
+describe("set piece creator", () => {
+  const simMatch = (save: SaveGame, planOf: (clubId: string) => SetPiecePlan) => {
+    const fx = userFixture(save)!;
+    const home = resolveSide(save, fx.homeId);
+    const away = resolveSide(save, fx.awayId);
+    const rng = mulberry32(
+      hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)
+    );
+    const state = startMatch({
+      round: save.round,
+      homeClub: save.clubs.find((c) => c.id === fx.homeId)!,
+      awayClub: save.clubs.find((c) => c.id === fx.awayId)!,
+      homeXI: home.xi,
+      awayXI: away.xi,
+      homeBench: home.bench,
+      awayBench: away.bench,
+      homeMentality: home.mentality,
+      awayMentality: away.mentality,
+      homeRoles: home.roles,
+      awayRoles: away.roles,
+      homeCoords: home.coords,
+      awayCoords: away.coords,
+      homePoss: home.poss,
+      awayPoss: away.poss,
+      homePlan: planOf(fx.homeId),
+      awayPlan: planOf(fx.awayId),
+      rng,
+      userSide: fx.homeId === save.userClubId ? "home" : "away"
+    });
+    const done = advanceTo(state, state.total, playersById(save));
+    return {
+      state: done,
+      res: finalizeMatch(done),
+      side: (fx.homeId === save.userClubId ? 1 : 0) as 0 | 1,
+      userClubId: save.userClubId
+    };
+  };
+
+  it("exposes routine metadata and sane defaults", () => {
+    expect(Object.keys(CORNER_ROUTINES)).toEqual(["near_post", "far_post", "short", "edge"]);
+    expect(Object.keys(FK_ROUTINES)).toEqual(["direct", "crossed", "short"]);
+    const d = defaultSetPieces();
+    expect(d.corner).toBe("far_post");
+    expect(d.freekick).toBe("direct");
+    expect(d.takers).toEqual({ corner: null, freekick: null, penalty: null });
+    expect(familiarityOf(d, "corner", "far_post")).toBe(60);
+    expect(familiarityOf(d, "corner", "near_post")).toBe(25); // never trained
+    expect(familiarityFactor(0)).toBeCloseTo(0.9, 5);
+    expect(familiarityFactor(100)).toBeCloseTo(1.0, 5);
+  });
+
+  it("grows familiarity each round, faster with set-piece training, and keeps it per routine", () => {
+    const s = newGame(7);
+    const before = familiarityOf(s.setpieces, "corner", s.setpieces.corner);
+    growFamiliarity(s);
+    expect(familiarityOf(s.setpieces, "corner", s.setpieces.corner)).toBe(before + 4);
+    const trained = structuredClone(s);
+    trained.training = { unit: "setpieces", intensity: "normal" };
+    growFamiliarity(trained, 2);
+    expect(familiarityOf(trained.setpieces, "corner", trained.setpieces.corner)).toBe(before + 4 + 14);
+    for (let i = 0; i < 40; i++) growFamiliarity(trained);
+    expect(familiarityOf(trained.setpieces, "corner", trained.setpieces.corner)).toBe(100);
+    trained.setpieces.corner = "near_post";
+    expect(familiarityOf(trained.setpieces, "corner", "near_post")).toBe(25); // fresh routine
+    expect(familiarityOf(trained.setpieces, "corner", "far_post")).toBe(100); // old one still grooved
+  });
+
+  it("nominated takers take the set pieces when they are on the pitch", () => {
+    const base = newGame(41);
+    const cornerTaker = base.lineup.starters.find(
+      (id) => id && base.players.find((p) => p.id === id)!.pos !== "GK"
+    )!;
+    const planOf = (clubId: string): SetPiecePlan =>
+      clubId === base.userClubId
+        ? {
+            ...base.setpieces,
+            takers: { corner: cornerTaker, freekick: cornerTaker, penalty: cornerTaker }
+          }
+        : aiSetPieces(base, clubId);
+    let seen = 0;
+    for (let r = 1; r <= 10; r++) {
+      const { state } = simMatch({ ...base, round: r }, planOf);
+      const evs = state.events.filter(
+        (e) => (e.type === "corner" || e.type === "freekick") && e.clubId === base.userClubId
+      );
+      for (const e of evs) {
+        seen++;
+        expect(e.playerId).toBe(cornerTaker);
+      }
+    }
+    expect(seen).toBeGreaterThan(3);
+  });
+
+  it("falls back to the best available when the nominated taker is not playing", () => {
+    const base = newGame(43);
+    const benchId = base.lineup.bench.find(Boolean)!;
+    const planOf = (clubId: string): SetPiecePlan =>
+      clubId === base.userClubId
+        ? { ...base.setpieces, takers: { corner: benchId, freekick: benchId, penalty: benchId } }
+        : aiSetPieces(base, clubId);
+    let seen = 0;
+    for (let r = 1; r <= 10; r++) {
+      const { state } = simMatch({ ...base, round: r }, planOf);
+      for (const e of state.events) {
+        if ((e.type === "corner" || e.type === "freekick") && e.clubId === base.userClubId) {
+          seen++;
+          expect(e.playerId).not.toBe(benchId);
+        }
+      }
+    }
+    expect(seen).toBeGreaterThan(3);
+  });
+
+  it("corner routines change the goal rate and the second phases", () => {
+    const base = newGame(31);
+    const measure = (routine: CornerRoutine) => {
+      const planOf = (clubId: string): SetPiecePlan =>
+        clubId === base.userClubId
+          ? {
+              ...base.setpieces,
+              corner: routine,
+              familiarity: {
+                [routineKey("corner", routine)]: 100,
+                [routineKey("freekick", "direct")]: 100
+              }
+            }
+          : aiSetPieces(base, clubId);
+      let corners = 0;
+      let goals = 0;
+      for (let r = 1; r <= 18; r++) {
+        const { state, side } = simMatch({ ...base, round: r }, planOf);
+        const sts = state.timeline.filter((st) => st.h === side && st.sp === "corner");
+        corners += sts.length;
+        goals += sts.filter((st) => st.o === "goal").length;
+      }
+      return { corners, goals, perCorner: goals / Math.max(1, corners) };
+    };
+    const near = measure("near_post");
+    const short = measure("short");
+    expect(near.perCorner).toBeGreaterThan(short.perCorner);
+    expect(short.corners).toBeGreaterThan(near.corners); // short corners keep the move alive
+  });
+
+  it("free-kick routines: crossed delivers, short rarely threatens", () => {
+    const base = newGame(33);
+    const measure = (routine: FreeKickRoutine) => {
+      const planOf = (clubId: string): SetPiecePlan =>
+        clubId === base.userClubId
+          ? {
+              ...base.setpieces,
+              freekick: routine,
+              familiarity: {
+                [routineKey("corner", "far_post")]: 100,
+                [routineKey("freekick", routine)]: 100
+              }
+            }
+          : aiSetPieces(base, clubId);
+      let fks = 0;
+      let goals = 0;
+      for (let r = 1; r <= 18; r++) {
+        const { state, side } = simMatch({ ...base, round: r }, planOf);
+        const sts = state.timeline.filter((st) => st.h === side && st.sp === "freekick");
+        fks += sts.length;
+        goals += sts.filter((st) => st.o === "goal").length;
+      }
+      return { fks, goals, perFk: goals / Math.max(1, fks) };
+    };
+    const shortFk = measure("short");
+    const crossed = measure("crossed");
+    expect(crossed.perFk).toBeGreaterThan(shortFk.perFk);
+    expect(crossed.fks).toBeGreaterThan(5);
+  });
+
+  it("tags strokes with the routine in play", () => {
+    const base = newGame(37);
+    const planOf = (clubId: string): SetPiecePlan =>
+      clubId === base.userClubId
+        ? {
+            ...base.setpieces,
+            corner: "edge",
+            freekick: "crossed",
+            familiarity: { "corner:edge": 100, "freekick:crossed": 100 }
+          }
+        : aiSetPieces(base, clubId);
+    let cornerStrokes = 0;
+    let fkStrokes = 0;
+    for (let r = 1; r <= 6; r++) {
+      const { state, side } = simMatch({ ...base, round: r }, planOf);
+      for (const st of state.timeline) {
+        if (st.h !== side) continue;
+        if (st.sp === "corner") {
+          cornerStrokes++;
+          expect(st.spr).toBe("edge");
+        }
+        if (st.sp === "freekick") {
+          fkStrokes++;
+          expect(st.spr).toBe("crossed");
+        }
+      }
+    }
+    expect(cornerStrokes).toBeGreaterThan(3);
+    expect(fkStrokes).toBeGreaterThan(0);
+  });
+
+  it("keeps matches deterministic with plans in play", () => {
+    const base = newGame(47);
+    const planOf = (clubId: string): SetPiecePlan =>
+      clubId === base.userClubId ? base.setpieces : aiSetPieces(base, clubId);
+    const a = simMatch({ ...base, round: 3 }, planOf);
+    const b = simMatch({ ...base, round: 3 }, planOf);
+    expect(JSON.stringify(a.state.timeline)).toBe(JSON.stringify(b.state.timeline));
+    expect(JSON.stringify(a.res.events)).toBe(JSON.stringify(b.res.events));
+  });
+
+  it("AI clubs get their own deterministic routines", () => {
+    const s = newGame(7);
+    const corners = s.clubs.map((c) => aiSetPieces(s, c.id).corner);
+    expect(new Set(corners).size).toBeGreaterThan(1);
+    expect(s.clubs.map((c) => aiSetPieces(s, c.id).corner)).toEqual(corners);
+    expect(planForClub(s, s.userClubId).corner).toBe(s.setpieces.corner);
+  });
+
+  it("normalises stored plans (bad routines, stale takers, wild familiarity)", () => {
+    const ids = new Set(["p1"]);
+    const clean = cleanSetPieces(
+      {
+        corner: "nonsense",
+        freekick: "crossed",
+        takers: { corner: "ghost", freekick: null, penalty: "p1" },
+        familiarity: { "corner:crossed": 500, "freekick:crossed": -3 }
+      } as never,
+      ids
+    );
+    expect(clean.corner).toBe("far_post");
+    expect(clean.freekick).toBe("crossed");
+    expect(clean.takers.corner).toBeNull();
+    expect(clean.takers.penalty).toBe("p1");
+    expect(clean.familiarity["corner:crossed"]).toBe(100);
+    expect(clean.familiarity["freekick:crossed"]).toBe(0);
   });
 });
 

@@ -3,6 +3,7 @@ import type { SaveGame } from "@/engine";
 import {
   autoLineup,
   builtinFormation,
+  cleanSetPieces,
   contractFor,
   defaultRoleFor,
   ensureDev,
@@ -45,6 +46,7 @@ export function normalizeSave(save: SaveGame): SaveGame {
     save.training = { unit: "balanced", intensity: "normal" };
   }
   if (!Array.isArray(save.devNews)) save.devNews = [];
+  save.setpieces = cleanSetPieces(save.setpieces, new Set(save.players.map((p) => p.id)));
   if (!save.finances || typeof save.finances !== "object") save.finances = freshFinances(save);
   if (!Array.isArray(save.offers)) save.offers = [];
   save.offers = save.offers.filter(
