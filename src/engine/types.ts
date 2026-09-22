@@ -61,19 +61,42 @@ export type TraitId =
 
 export interface Player {
   id: string;
-  clubId: string;
+  clubId: string; // "" = free agent
   name: string;
   age: number;
   pos: Position;
   attrs: PlayerAttrs;
   /** FM-style behavioural traits (0-2 per player); see engine/traits.ts */
   traits: TraitId[];
+  /** contract state; see engine/transfers.ts */
+  contract: Contract;
   condition: number; // 0-100
   injuredWeeks: number; // 0 = fit
   suspension: number; // matches left to sit out; 0 = available
   apps: number;
   goals: number;
   assists: number;
+}
+
+/** A player's deal: weekly wage and the last season it covers. */
+export interface Contract {
+  wage: number; // £/week
+  until: number; // expires at the end of this season
+}
+
+/** Club money for the current season; see engine/transfers.ts. */
+export interface Finances {
+  transfer: number; // available transfer budget
+  wageBudget: number; // weekly wage ceiling
+}
+
+/** An offer for one of the user's players, waiting for accept / reject. */
+export interface TransferOffer {
+  id: string;
+  playerId: string;
+  fromClubId: string; // bidding club
+  fee: number;
+  day: string; // context label, e.g. "R9 · winter window"
 }
 
 export interface Club {
@@ -268,4 +291,12 @@ export interface SaveGame {
   lastResults: MatchResult[];
   lastUserMatch?: MatchResult;
   live?: LiveMatch;
+  /** per-club money for the current season (engine/transfers.ts) */
+  finances: Record<string, Finances>;
+  /** incoming offers for the user's players, pending a decision */
+  offers: TransferOffer[];
+  /** a fee already agreed with a club, awaiting personal terms (single-deal workflow) */
+  pending?: { playerId: string; fee: number; fromClubId: string };
+  /** human-readable transfer feed, newest first (capped) */
+  transferLog: string[];
 }

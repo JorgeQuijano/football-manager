@@ -32,6 +32,7 @@ src/engine/
   match.ts       Minute-tick match simulation → MatchResult; state-based (startMatch/advanceTo/finalizeMatch) + the possession timeline
   live.ts        Live match: startLive, addLiveChange, resumeSecondHalf, skip helpers, matchStats
   advance.ts     prepareRound(), completeRound(), playRound(), nextSeason() — orchestration
+  transfers.ts   Contracts, wages, market values, transfer windows, bids/terms negotiation, AI churn, contract rollover
   index.ts       Barrel export
 ```
 
@@ -239,3 +240,29 @@ Invariants any change must keep green:
 - Hot path is the minute loop (≈90–95 iterations × 2 chances × fixtures). Avoid per-call allocations: `roles.ts` iterates a fixed `KEYS` array instead of `Object.keys`; strength functions are single loops.
 - A full season simulates in ~0.1–0.2 s (40-season calibration ≈ 6 s in Node). The browser plays a round synchronously on tap.
 - The engine is tree-shakeable and UI-free; keep it that way.
+
+## 16. Transfers, contracts & finance (`transfers.ts`)
+
+The squad-building loop: every player carries a `Contract { wage, until }` (`until` = last covered season), every club has `Finances { transfer, wageBudget }`.
+
+**Money formulas** (pure, deterministic):
+- `marketValue(p)` = `150 x (ovr - 40)^2.8 x ageFactor`, rounded to 10k, floor 10k. `ageFactor`: 21 or younger -> 1.05, 22-27 -> 1.0, then -0.14/season down to a 0.1 floor (34-year-olds are cheap).
+- `wageDemand(p)` = `120 x (ovr - 40)^1.7`, rounded to 100/wk, floor 300. A 92-OVR star is about 99k/wk, 5-9m value.
+- `freshFinances(save)`: per club `transfer = 25% x squadValue + 1m` (floor 500k), `wageBudget = 1.25 x current bill`. Refreshed **every season start** (in `nextSeason`); within a season it only moves with deals (fees in/out, wages on/off the bill).
+- `wageHeadroom = wageBudget - wageBill` - every personal-terms offer must fit inside it, otherwise the offer is rejected with the remaining headroom.
+
+**Transfer windows** (`transferWindow(save)`): summer = rounds **1-3**, winter = rounds **9-10** of the 18-round season; closed otherwise (bids blocked, browse list disabled in the UI). Renewals are allowed any time.
+
+**Negotiation** - two steps, both seeded (`hashSeed(seed, tag, season, ...)`), so re-issuing the same bid on the same state gives the same answer:
+1. `bidForPlayer(save, playerId, fee)` - the seller's **ask** = `marketValue x appetite x (0.92-1.08)`. `appetite` by rank in their squad: top-2 -> 1.35 (won't sell cheaply), 3-6 -> 1.1, 7-11 -> 1.0, 12+ -> 0.85. `fee >= ask x 1.05` -> **accepted** (sets `save.pending`); `>= ask x 0.85` -> **counter** at the ask; else rejected. Fee must fit your transfer budget.
+2. `offerTerms(save, playerId, wage)` - the player's `want = wageDemand x (0.98-1.06)`. `>= want x 1.02` -> **signs** (moves club, fee charged, log line, `userFix` re-validates your XI); `>= want x 0.88` -> counter; else insulted. `renewContract` / `signFreeAgent` reuse the same shape (own players get a softer requirement; free agents cost no fee).
+
+**World evolution** - `windowTick(save)` runs inside `completeRound` while a window is open, seeded by `(seed, "window", season, round)`:
+- 1-2 **AI-to-AI deals** a round: a strong club with budget buys an above-average player from a weaker one at 0.95-1.15x value.
+- **Incoming offers** for your players (max 3 pending, about 45%/round): a club your strength or better bids 0.8-1.3x value on one of your top-4 assets worth 400k+. Accept -> `acceptOffer` moves him, credits your budget, drops rival interest in the same player; reject -> `rejectOffer`.
+
+**Contract rollover** - `rollContracts(save)` inside `nextSeason`: players whose `until` has passed leave. AI clubs re-sign about 85% (new deal `season + 2...4`), the rest hit the free-agent pool; **your** expiring players always leave unless you renewed during the season (the Transfers screen lists them year-round). A small deterministic free-agent intake (`makeFreeAgent`, 5/season, ids `pfree-<season>-<n>`) keeps the pool stocked; the pool is capped at 24 names (oldest drift out). After departures the XI is re-validated via `userFix`.
+
+**Tuning**: `TF` in `transfers.ts` - `valueBase/Pow/Pivot`, `wagePow/Mult`, `minFee/minWage`, `budgetBase/budgetValueShare/wageBudgetHeadroom`, `renewalProb`, `freeAgentsPerSeason`, `summerRounds`, `winterRounds`, `logCap`.
+
+**Tests** (`describe("transfers")`, 10): value/wage monotonicity + age curve, budget/headroom integrity, window calendar, bid ladder (rejected/counter/accepted + determinism), budget and closed-window guards, full signing (fee charged, contract `season+3`, seller credited, log), accepting an incoming offer, renew/free-agent signing, `windowTick` determinism, rollover (expiry, AI renewal-or-release, budget refresh, free-agent intake).

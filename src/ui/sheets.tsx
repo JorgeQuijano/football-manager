@@ -6,6 +6,8 @@ import {
   defaultRoleFor,
   isAvailable,
   laneFits,
+  marketValue,
+  money,
   overallFor,
   ROLE_DEFS,
   ROLE_GROUPS,
@@ -232,6 +234,32 @@ export function PlayerDetailSheet({
                     Available
                   </span>
                 )}
+              </div>
+
+              <div
+                className="grid grid-cols-3 gap-2 rounded-lg border border-border bg-card p-2 text-center"
+                data-testid="player-money"
+              >
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Value
+                  </div>
+                  <div className="text-sm font-extrabold tnum">{money(marketValue(p))}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Wages
+                  </div>
+                  <div className="text-sm font-extrabold tnum">{money(p.contract.wage)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Contract
+                  </div>
+                  <div className="text-sm font-extrabold">
+                    {p.clubId === "" ? "Free" : p.contract.until <= game.season ? "Expires" : `S${p.contract.until}`}
+                  </div>
+                </div>
               </div>
 
               {(p.traits ?? []).length > 0 && (
