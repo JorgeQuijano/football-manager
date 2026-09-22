@@ -18,8 +18,11 @@ import {
   finalizeLive,
   laneFits,
   matchStats,
+  pitchOf,
+  refOf,
   ROLE_DEFS,
-  ROLE_GROUPS
+  ROLE_GROUPS,
+  weatherOf
 } from "@/engine";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -878,10 +881,20 @@ function LiveMatchScreen() {
           </div>
           <div className="mt-1.5 flex justify-between text-[10px] font-semibold text-muted-foreground tnum">
             <span>
-              Poss {possPct}% · Sh {stats.shotsHome} · Crn {stats.cornersHome}
+              Poss {possPct}% · Sh {stats.shotsHome} · Crn {stats.cornersHome} · Off {stats.offsideHome}
             </span>
             <span>
-              Crn {stats.cornersAway} · Sh {stats.shotsAway} · Poss {100 - possPct}%
+              Off {stats.offsideAway} · Crn {stats.cornersAway} · Sh {stats.shotsAway} · Poss {100 - possPct}%
+            </span>
+          </div>
+          <div
+            className="mt-1.5 flex items-center justify-between gap-2 border-t border-border pt-1.5 text-[10px] font-semibold"
+            data-testid="match-conditions"
+          >
+            <span style={{ color: weatherOf(st.cond.weather).tint }}>{weatherOf(st.cond.weather).short}</span>
+            <span className="text-muted-foreground">
+              Ref: {refOf(st.cond.ref).name} ({refOf(st.cond.ref).label}) · {pitchOf(st.cond.pitch).label}
+              {stats.varHome + stats.varAway > 0 ? ` · VAR ×${stats.varHome + stats.varAway}` : ""}
             </span>
           </div>
         </CardContent>
@@ -937,6 +950,11 @@ function LiveMatchScreen() {
               </div>
               <div className="mt-1 text-2xl font-extrabold tnum">
                 {st.home.short} {st.home.goals}–{st.away.goals} {st.away.short}
+              </div>
+              <div className="mt-1 text-[10px] font-semibold text-muted-foreground" data-testid="ft-conditions">
+                {weatherOf(st.cond.weather).label} · Ref {refOf(st.cond.ref).name} · Off {stats.offsideHome}–
+                {stats.offsideAway}
+                {stats.varHome + stats.varAway > 0 ? ` · VAR ×${stats.varHome + stats.varAway}` : ""}
               </div>
               {performers.length > 0 && (
                 <ul className="mt-2 space-y-1 text-left">

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { SeasonRecord } from "@/engine";
-import { computeTable, money, ordinal, rating1, ratingAvg, topScorers } from "@/engine";
+import { computeTable, conditionLine, conditionsFor, money, ordinal, rating1, ratingAvg, topScorers, weatherOf } from "@/engine";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGame } from "@/state/store";
@@ -90,6 +90,13 @@ export function LeagueScreen() {
                       </span>
                     )}
                   </div>
+                  {r === game.round && (
+                    <div className="mt-0.5 text-[10px] font-semibold" data-testid={`round-conditions-${r}`}>
+                      <span style={{ color: weatherOf(conditionsFor(game, r).weather).tint }}>
+                        {conditionLine(conditionsFor(game, r))}
+                      </span>
+                    </div>
+                  )}
                   {(() => {
                     const award = game.awards.rounds.find((a) => a.season === game.season && a.round === r);
                     return award ? (

@@ -17,6 +17,7 @@ import {
 } from "./match";
 import { resolveSide } from "./advance";
 import { planForClub } from "./setpieces";
+import { conditionsFor } from "./conditions";
 import { ROLE_GROUPS } from "./roles";
 
 export const playersById = (save: SaveGame): Map<string, Player> =>
@@ -61,6 +62,7 @@ export function startLive(save: SaveGame): LiveMatch | undefined {
     awayPoss: away.poss,
     homePlan: planForClub(save, fx.homeId),
     awayPlan: planForClub(save, fx.awayId),
+    conditions: conditionsFor(save, save.round),
     rng,
     userSide
   });
@@ -158,6 +160,12 @@ export interface MatchStats {
   onTargetAway: number;
   cornersHome: number;
   cornersAway: number;
+  /** offsides flagged (or chalked off by VAR) */
+  offsideHome: number;
+  offsideAway: number;
+  /** VAR reviews, by the side the review helped (the attacking side on a goal check) */
+  varHome: number;
+  varAway: number;
   strokes: number;
 }
 
@@ -165,6 +173,10 @@ export interface MatchStats {
 export function matchStats(state: MatchState, upto?: number): MatchStats {
   let h = 0;
   let a = 0;
+  let oh = 0;
+  let oa = 0;
+  let vh = 0;
+  let va = 0;
   let sh = 0;
   let sa = 0;
   let oth = 0;
@@ -183,10 +195,20 @@ export function matchStats(state: MatchState, upto?: number): MatchStats {
       if (st.h) sh++;
       else sa++;
     }
+    if (st.o === "offside") {
+      if (st.h) oh++;
+      else oa++;
+    }
     if (st.o === "goal" || st.o === "save") {
       if (st.h) oth++;
       else ota++;
     }
+  }
+  // VAR reviews come from the commentary: each event belongs to the side it favoured
+  for (const e of state.events) {
+    if (e.type !== "var") continue;
+    if (e.clubId === state.homeId) vh++;
+    else if (e.clubId === state.awayId) va++;
   }
   const total = h + a;
   return {
@@ -197,6 +219,10 @@ export function matchStats(state: MatchState, upto?: number): MatchStats {
     onTargetAway: ota,
     cornersHome: ch,
     cornersAway: ca,
+    offsideHome: oh,
+    offsideAway: oa,
+    varHome: vh,
+    varAway: va,
     strokes: total
   };
 }

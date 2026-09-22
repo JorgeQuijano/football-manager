@@ -26,6 +26,14 @@ export const T = {
   /** set pieces */
   fkZoneShare: 0.18, // share of fouls in the attacking third
   penShareOfAttFouls: 0.07, // → ≈ 0.25 penalties/match
+  // --- on-pitch realism (v0.19): officials, offside & VAR ---
+  offsideRate: 0.15, // share of open-play goals that were actually offside
+  linesmanMiss: 0.35, // share of true offsides the flag misses
+  linesmanWrong: 0.08, // share of onside goals wrongly flagged
+  varReview: 0.6, // share of controversial calls reviewed
+  varCatch: 0.75, // share of reviewed errors corrected
+  varPenCheck: 0.12, // share of penalties reviewed
+  varPenOverturn: 0.25, // share of reviewed penalties overturned
   fkShotShareOfAttFouls: 0.45, // → ≈ 1.6 direct free-kick attempts/match
   penaltyGoalBase: 0.78,
   fkGoalBase: 0.07,

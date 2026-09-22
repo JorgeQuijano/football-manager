@@ -119,7 +119,8 @@ import {
 import {
   FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery
 } from "./tuning";
-import type { CornerRoutine, FreeKickRoutine, Intensity, MatchResult, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit } from "./types";
+import { DEFAULT_CONDITIONS, REFS, WEATHERS, conditionEffects, conditionLine, conditionsFor, pitchOf, weatherOf } from "./conditions";
+import type { CornerRoutine, FreeKickRoutine, Intensity, MatchConditions, MatchResult, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit, WeatherId } from "./types";
 import type { MatchStatCtx } from "./stats";
 
 function playSeason(start: SaveGame): SaveGame {
@@ -661,7 +662,9 @@ describe("live match", () => {
       homePoss: home.poss,
       awayPoss: away.poss,
       homePlan: planForClub(save, fx.homeId),
-      awayPlan: planForClub(save, fx.awayId)
+      awayPlan: planForClub(save, fx.awayId),
+      // mirror the real matchInputs: the round's weather, referee and pitch
+      conditions: conditionsFor(save, save.round)
     };
   }
 
@@ -2753,6 +2756,198 @@ describe("morale & squad dynamics", () => {
       let s = newGame(109);
       for (let r = 1; r <= 6; r++) s = playRound(s).save;
       return JSON.stringify(s.players.map((p) => [p.id, p.morale, p.recentMin]));
+    };
+    expect(run()).toBe(run());
+  });
+});
+
+describe("on-pitch realism", () => {
+  const conds = (over: Partial<MatchConditions> = {}): MatchConditions => ({
+    weather: "dry",
+    ref: "ref-okafor",
+    pitch: "good",
+    ...over
+  });
+
+  const sim = (save: SaveGame, fx: { round: number; homeId: string; awayId: string }, conditions: MatchConditions) => {
+    const home = resolveSide(save, fx.homeId);
+    const away = resolveSide(save, fx.awayId);
+    const inputs = {
+      round: fx.round,
+      homeClub: save.clubs.find((c) => c.id === fx.homeId)!,
+      awayClub: save.clubs.find((c) => c.id === fx.awayId)!,
+      homeXI: home.xi,
+      awayXI: away.xi,
+      homeBench: home.bench,
+      awayBench: away.bench,
+      homeMentality: home.mentality,
+      awayMentality: away.mentality,
+      homeRoles: home.roles,
+      awayRoles: away.roles,
+      homeCoords: home.coords,
+      awayCoords: away.coords,
+      homePoss: home.poss,
+      awayPoss: away.poss,
+      homePlan: planForClub(save, fx.homeId),
+      awayPlan: planForClub(save, fx.awayId),
+      conditions,
+      rng: mulberry32(hashSeed(save.seed, "match", save.season, fx.round, fx.homeId, fx.awayId)),
+      userSide: fx.homeId === save.userClubId ? ("home" as const) : ("away" as const)
+    };
+    const state = advanceTo(startMatch(inputs), 200, playersById(save));
+    return { result: finalizeMatch(state), state };
+  };
+
+  /** A neutral fixture (no user club involvement) from a fresh save. */
+  const neutralFixture = (seed: number) => {
+    const save = newGame(seed);
+    const fx = save.fixtures.find((f) => f.round === 1 && f.homeId !== save.userClubId && f.awayId !== save.userClubId)!;
+    return { save, fx };
+  };
+
+  const aggregate = (weather: WeatherId, ref: string, n = 14) => {
+    let goals = 0;
+    let blocks = 0;
+    let corners = 0;
+    let cards = 0;
+    let offsides = 0;
+    let vars = 0;
+    for (let i = 1; i <= n; i++) {
+      const { save, fx } = neutralFixture(i * 41);
+      const r = sim(save, fx, conds({ weather, ref }));
+      goals += r.result.homeGoals + r.result.awayGoals;
+      blocks += r.result.events.filter((e) => e.type === "block").length;
+      corners += r.result.events.filter((e) => e.type === "corner").length;
+      cards += r.result.events.filter((e) => e.type === "yellow" || e.type === "red").length;
+      offsides += r.state.timeline.filter((s) => s.o === "offside").length;
+      vars += r.state.timeline.filter((s) => s.vr !== undefined).length;
+    }
+    return { goals, blocks, corners, cards, offsides, vars };
+  };
+
+  it("picks the round's conditions deterministically, the same for the whole division", () => {
+    const a = conditionsFor(newGame(11), 4);
+    const b = conditionsFor(newGame(11), 4);
+    expect(a).toEqual(b);
+    expect(REFS.some((r) => r.id === a.ref)).toBe(true);
+    expect(WEATHERS[a.weather]).toBeDefined();
+    // weather varies round to round, and the pitches wear through the season
+    const s = newGame(11);
+    const weathers = new Set<string>();
+    for (let r = 1; r <= 18; r++) weathers.add(conditionsFor(s, r).weather);
+    expect(weathers.size).toBeGreaterThan(1);
+    expect(conditionsFor(s, 1).pitch).toBe("good");
+    expect(conditionsFor(s, 15).pitch).toBe("heavy");
+    // a soaking on a good pitch downgrades it
+    for (let r = 1; r <= 6; r++) {
+      const c = conditionsFor(s, r);
+      if (c.weather === "rain" && r <= 6) expect(c.pitch).not.toBe("good");
+    }
+    expect(conditionLine(a)).toMatch(/Ref: .+ \((strict|lenient|balanced)\)/);
+  });
+
+  it("neutral conditions change nothing (calibration safety)", () => {
+    const eff = conditionEffects(DEFAULT_CONDITIONS);
+    expect(eff.conversion).toBe(1);
+    expect(eff.turnover).toBe(1);
+    expect(eff.corner).toBe(1);
+    expect(eff.fouls).toBe(1);
+    expect(eff.cards).toBe(1);
+    expect(eff.pen).toBe(1);
+    expect(weatherOf("rain").conversion).toBeLessThan(1);
+    expect(pitchOf("heavy").turnover).toBeGreaterThan(1);
+  });
+
+  it("rain roughens a match up: fewer goals, more blocks than a dry day", () => {
+    const dry = aggregate("dry", "ref-okafor");
+    const rain = aggregate("rain", "ref-okafor");
+    expect(rain.goals).toBeLessThan(dry.goals);
+    expect(rain.blocks).toBeGreaterThan(dry.blocks);
+    expect(rain.corners).toBeGreaterThan(dry.corners);
+  });
+
+  it("a strict referee books far more players than a lenient one", () => {
+    const strict = aggregate("dry", "ref-doyle");
+    const lenient = aggregate("dry", "ref-whitfield");
+    expect(strict.cards).toBeGreaterThan(lenient.cards);
+    expect(strict.cards).toBeGreaterThan(lenient.cards * 1.4);
+  });
+
+  it("the assistant's flag and the VAR room change results — and the stats count them", () => {
+    let flagged = 0;
+    let overturned = 0;
+    let restored = 0;
+    let penaltyReviews = 0;
+    let statOffsides = 0;
+    let offsideStrokesTotal = 0;
+    for (let i = 1; i <= 60; i++) {
+      const { save, fx } = neutralFixture(i * 17);
+      const r = sim(save, fx, conds());
+      for (const s of r.state.timeline) {
+        if (s.o === "offside") expect(s.vr === "restored").not.toBe(true);
+        if (s.vr === "overturned") overturned++;
+        if (s.vr === "restored") restored++;
+      }
+      for (const e of r.result.events) {
+        if (e.type === "offside") flagged++;
+        if (e.type === "var" && /penalty/.test(e.text)) penaltyReviews++;
+      }
+      const st = matchStats(r.state, r.state.total);
+      statOffsides += st.offsideHome + st.offsideAway;
+      offsideStrokesTotal += r.state.timeline.filter((s) => s.o === "offside").length;
+      expect(st.varHome + st.varAway).toBe(r.result.events.filter((e) => e.type === "var").length);
+    }
+    expect(flagged).toBeGreaterThan(0);
+    expect(statOffsides).toBe(offsideStrokesTotal);
+    expect(overturned).toBeGreaterThan(0);
+    expect(restored).toBeGreaterThan(0);
+    expect(penaltyReviews).toBeGreaterThan(0);
+  });
+
+  it("disallowed goals never reach the scorers list or the scoreline", () => {
+    let checked = 0;
+    for (let i = 1; i <= 40 && checked < 6; i++) {
+      const { save, fx } = neutralFixture(i * 29);
+      const r = sim(save, fx, conds({ weather: "rain" }));
+      const offsideStrokes = r.state.timeline.filter((s) => s.o === "offside");
+      if (!offsideStrokes.length) continue;
+      checked++;
+      // the timeline's goal count always equals the result
+      expect(r.state.timeline.filter((s) => s.o === "goal").length).toBe(r.result.homeGoals + r.result.awayGoals);
+      // the scoreline itself matches the credited goals
+      const credited = r.result.scorers.length;
+      expect(credited).toBe(r.result.homeGoals + r.result.awayGoals);
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it("announces the conditions at kickoff and the added time", () => {
+    const save = newGame(5);
+    const live = startLive(save)!;
+    expect(live.state.events[0].text).toMatch(/Referee: /);
+    expect(live.state.cond).toEqual(conditionsFor(save, save.round));
+    expect(live.state.events.some((e) => /added on/.test(e.text))).toBe(true);
+    expect(live.state.total).toBeGreaterThan(90);
+  });
+
+  it("the live match keeps its conditions across the half-time split", () => {
+    const save = newGame(4243);
+    const live = startLive(save)!;
+    const second = resumeSecondHalf(live, playersById(save));
+    expect(second.state.cond).toEqual(live.base.cond);
+    // and the second half is still byte-identical to the one-shot sim
+    const fx = userFixture(save)!;
+    const one = sim(save, fx, conditionsFor(save, save.round)).result;
+    const split = finalizeLive(second);
+    expect(split.homeGoals).toBe(one.homeGoals);
+    expect(JSON.stringify(split.events)).toBe(JSON.stringify(one.events));
+  });
+
+  it("is deterministic", () => {
+    const run = () => {
+      const save = newGame(66);
+      const r = sim(save, neutralFixture(66).fx, conditionsFor(save, 7));
+      return JSON.stringify([r.result.homeGoals, r.result.awayGoals, r.result.events, r.state.timeline]);
     };
     expect(run()).toBe(run());
   });

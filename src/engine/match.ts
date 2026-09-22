@@ -1,5 +1,6 @@
 import type {
   Club,
+  MatchConditions,
   MatchResult,
   MatchSideState,
   MatchState,
@@ -25,6 +26,7 @@ import {
   suitability
 } from "./ratings";
 import { defaultRoleFor, roleFinish, ROLE_DEFS } from "./roles";
+import { DEFAULT_CONDITIONS, conditionEffects, refOf, weatherOf } from "./conditions";
 
 /**
  * Morale edge (engine/morale.ts, inlined here to keep match.ts free of the
@@ -50,6 +52,8 @@ export interface MatchInputs {
   awayPoss: Position[];
   homePlan: SetPiecePlan;
   awayPlan: SetPiecePlan;
+  /** weather, referee and pitch (engine/conditions.ts); omitted = neutral */
+  conditions?: MatchConditions;
   rng: Rng;
   userSide?: "home" | "away";
 }
@@ -76,6 +80,17 @@ const MISS_TEXT: TextFn[] = [
   (s) => `${s} snatches at it — over the bar.`,
   (s) => `Dragged wide by ${s}.`,
   (s) => `${s} shoots into the stands.`
+];
+const OFFSIDE_TEXT: TextFn[] = [
+  (s) => `Flag up! ${s} strayed offside.`,
+  (s) => `${s} went too early — the assistant's flag is up.`,
+  (s) => `Offside against ${s}, the move is chalked off.`,
+  (s) => `The linesman flags ${s} for offside.`
+];
+const VAR_TEXT: TextFn[] = [
+  (s, d) => `VAR review: ${d} — ${s}.`,
+  (s, d) => `The referee checks the monitor… ${d}: ${s}.`,
+  (s, d) => `VAR: ${d} — ${s}.`
 ];
 const BLOCK_TEXT: TextFn[] = [
   (s, d) => `Blocked! ${d} throws himself in front of ${s}'s shot.`,
@@ -239,7 +254,8 @@ export function startMatch(inp: MatchInputs): MatchState {
     exitMinute: {},
     played: [],
     scorers: [],
-    pin: {}
+    pin: {},
+    cond: inp.conditions ?? DEFAULT_CONDITIONS
   };
   for (const p of [...inp.homeXI, ...inp.homeBench, ...inp.awayXI, ...inp.awayBench]) {
     state.ratings[p.id] = T.ratingBase;
@@ -257,6 +273,23 @@ export function startMatch(inp: MatchInputs): MatchState {
   for (const p of inp.homeBench) state.pin[p.id] = { s: 0, pos: p.pos };
   for (const p of inp.awayBench) state.pin[p.id] = { s: 1, pos: p.pos };
   state.rngState = rng.state;
+  // conditions: announce the weather and the referee
+  const w = weatherOf(state.cond.weather);
+  const ref = refOf(state.cond.ref);
+  state.events.unshift({
+    minute: 0,
+    type: "info",
+    text: `${w.label} at ${inp.homeClub.name} — ${w.blurb} Referee: ${ref.name} (${
+      ref.label === "strict" ? "a strict one" : ref.label === "lenient" ? "lets it flow" : "balanced"
+    }).`
+  });
+  if (total > 90) {
+    state.events.push({
+      minute: 90,
+      type: "info",
+      text: `${total - 90} minute${total - 90 === 1 ? "" : "s"} added on.`
+    });
+  }
   return state;
 }
 
@@ -403,7 +436,8 @@ const resolveChance = (
   const gk = dfn.find((x) => x.p.pos === "GK");
   const finish = roleFinish(shooter.p, shooter.role) * ROLE_DEFS[shooter.role].finish * moraleEdge(shooter.p);
   const gkSkill = gk ? defenseScore(gk.p, gk.role) * moraleEdge(gk.p) : 50;
-  let pGoal = T.conversionBase * (1 + (finish - 60) / 120) * (1 + (60 - gkSkill) / 160);
+  const eff = conditionEffects(s.cond);
+  let pGoal = T.conversionBase * (1 + (finish - 60) / 120) * (1 + (60 - gkSkill) / 160) * eff.conversion;
   pGoal = clamp(pGoal, 0.04, 0.3);
 
   const evBefore = s.events.length;
@@ -411,8 +445,94 @@ const resolveChance = (
   let b: number | undefined;
   let corner = false;
   let goalKick = false;
+  let vr: "stands" | "overturned" | "restored" | undefined;
 
   if (rng() < pGoal) {
+    // --- the flag, and the VAR room: was he onside? -------------------------------
+    const trulyOffside = rng() < T.offsideRate;
+    const missRate = T.linesmanMiss;
+    let disallowed = false;
+    if (trulyOffside) {
+      if (rng() >= missRate) {
+        // flagged, as it should be
+        disallowed = true;
+        if (rng() < T.varReview) {
+          vr = "stands";
+          s.events.push({
+            minute: m,
+            type: "var",
+            clubId: defSide.clubId,
+            playerId: shooter.p.id,
+            text: pick(rng, VAR_TEXT)("the decision stands, no goal", "Offside")
+          });
+        } else {
+          s.events.push({
+            minute: m,
+            type: "offside",
+            clubId: atkSide.clubId,
+            playerId: shooter.p.id,
+            text: pick(rng, OFFSIDE_TEXT)(shooter.p.name, "")
+          });
+        }
+      } else if (rng() < T.varReview * T.varCatch) {
+        // the flag missed it, but the VAR room caught it
+        disallowed = true;
+        vr = "overturned";
+        s.events.push({
+          minute: m,
+          type: "var",
+          clubId: defSide.clubId,
+          playerId: shooter.p.id,
+          text: pick(rng, VAR_TEXT)("the goal is overturned, offside in the build-up", "VAR review")
+        });
+      }
+    } else if (rng() < T.linesmanWrong) {
+      // a wrong flag — the goal comes off, and VAR may put it back
+      const reviewed = rng() < T.varReview;
+      if (reviewed && rng() < T.varCatch) {
+        vr = "restored";
+        s.events.push({
+          minute: m,
+          type: "var",
+          clubId: atkSide.clubId,
+          playerId: shooter.p.id,
+          text: pick(rng, VAR_TEXT)("the goal is given after all, he was onside", "VAR review")
+        });
+      } else {
+        disallowed = true;
+        vr = reviewed ? "stands" : undefined;
+        s.events.push({
+          minute: m,
+          type: "offside",
+          clubId: atkSide.clubId,
+          playerId: shooter.p.id,
+          text: pick(rng, OFFSIDE_TEXT)(shooter.p.name, "")
+        });
+        if (reviewed) {
+          s.events.push({
+            minute: m,
+            type: "var",
+            clubId: defSide.clubId,
+            playerId: shooter.p.id,
+            text: pick(rng, VAR_TEXT)("the call stands — the flag was right", "VAR review")
+          });
+        }
+      }
+    }
+    if (disallowed) {
+      // no goal: the restart is a free kick to the defending side
+      s.timeline.push({ m, h: isHome(s, atkSide) ? 1 : 0, p: chain, o: "offside", r: s.events.length - 1, vr });
+      const setter = proto(defSide, players).find((x) => x.p.pos === "GK") ?? proto(defSide, players)[0];
+      s.timeline.push({
+        m,
+        h: isHome(s, defSide) ? 1 : 0,
+        p: setter ? [setter.slot] : [],
+        o: "turnover",
+        b: setter?.slot
+      });
+      return;
+    }
+
     out = "goal";
     atkSide.goals++;
     updOf(s, shooter.p.id).goals++;
@@ -462,12 +582,12 @@ const resolveChance = (
       text: pick(rng, SAVE_TEXT)(shooter.p.name, gk?.p.name ?? "the keeper")
     });
     if (gk) s.ratings[gk.p.id] = clamp(s.ratings[gk.p.id] + 0.15, 4, 10);
-    corner = rng() < T.cornerFromSave;
+    corner = rng() < T.cornerFromSave * eff.corner;
   } else {
     const blockers = dfn.filter((x) => x.p.pos !== "GK");
     const defMean =
       dfn.reduce((acc, x) => acc + defenseScore(x.p, x.role) * moraleEdge(x.p), 0) / Math.max(1, dfn.length);
-    if (blockers.length > 0 && rng() < T.blockShare * clamp(defMean / 62, 0.6, 1.4)) {
+    if (blockers.length > 0 && rng() < T.blockShare * eff.turnover * clamp(defMean / 62, 0.6, 1.4)) {
       const blocker = pickWeighted(rng, blockers, (x) => defenseScore(x.p, x.role) * moraleEdge(x.p));
       out = "block";
       b = blocker.slot;
@@ -479,7 +599,7 @@ const resolveChance = (
         playerId: blocker.p.id,
         text: pick(rng, BLOCK_TEXT)(shooter.p.name, blocker.p.name)
       });
-      corner = rng() < T.cornerFromBlock;
+      corner = rng() < T.cornerFromBlock * eff.corner;
     } else {
       out = "miss";
       s.events.push({
@@ -509,7 +629,8 @@ const resolveChance = (
     o: out,
     t,
     b,
-    r: s.events.length > evBefore ? s.events.length - 1 : undefined
+    r: s.events.length > evBefore ? s.events.length - 1 : undefined,
+    ...(out === "goal" && typeof vr !== "undefined" ? { vr } : {})
   });
 
   if (corner) {
@@ -550,7 +671,8 @@ const processFoul = (
       (hasTrait(x.p, "dives_in") ? 1.4 : 1)
   );
   const evBefore = s.events.length;
-  if (rng() < T.cardShareOfFouls) {
+  const effF = conditionEffects(s.cond);
+  if (rng() < T.cardShareOfFouls * effF.cards) {
     if (rng() < T.redChancePerFoul * (hasTrait(offender.p, "dives_in") ? 1.5 : 1)) {
       leaveSlot(s, committed, offender.slot, m);
       updOf(s, offender.p.id).red = true;
@@ -600,9 +722,9 @@ const processFoul = (
   // set-piece consequence for the side that was fouled
   if (rng() < T.fkZoneShare) {
     const roll = rng();
-    if (roll < T.penShareOfAttFouls) {
+    if (roll < T.penShareOfAttFouls * effF.pen) {
       resolvePenalty(s, fouled, committed, m, rng, players);
-    } else if (roll < T.penShareOfAttFouls + T.fkShotShareOfAttFouls) {
+    } else if (roll < T.penShareOfAttFouls * effF.pen + T.fkShotShareOfAttFouls) {
       resolveFreeKick(s, fouled, committed, m, rng, players);
     }
   }
@@ -623,6 +745,25 @@ const resolvePenalty = (
 ) => {
   const atk = proto(atkSide, players).filter((x) => x.p.pos !== "GK");
   if (!atk.length) return;
+  // VAR: penalties get a second look
+  if (rng() < T.varPenCheck) {
+    if (rng() < T.varPenOverturn) {
+      s.events.push({
+        minute: m,
+        type: "var",
+        clubId: defSide.clubId,
+        text: "VAR review: the penalty is overturned — no infringement spotted on the monitor."
+      });
+      s.timeline.push({ m, h: isHome(s, defSide) ? 1 : 0, p: [], o: "turnover", vr: "overturned" });
+      return;
+    }
+    s.events.push({
+      minute: m,
+      type: "var",
+      clubId: atkSide.clubId,
+      text: "VAR review: the penalty stands — the referee points to the spot."
+    });
+  }
   const taker =
     prefTaker(atk, atkSide.plan?.takers?.penalty) ??
     pickWeighted(
@@ -635,9 +776,10 @@ const resolvePenalty = (
   const gk = proto(defSide, players).find((x) => x.p.pos === "GK");
   const gkSkill = gk ? defenseScore(gk.p, gk.role) * moraleEdge(gk.p) : 50;
   const pGoal = clamp(
-    T.penaltyGoalBase +
+    (T.penaltyGoalBase +
       (taker.p.attrs.shooting - gkSkill) / 300 +
-      (hasTrait(taker.p, "dead_ball") ? 0.02 : 0),
+      (hasTrait(taker.p, "dead_ball") ? 0.02 : 0)) *
+      conditionEffects(s.cond).conversion,
     0.62,
     0.92
   );
@@ -739,6 +881,7 @@ const resolveFreeKick = (
       fam *
       (1 + ((eff.delivery ? taker.p.attrs.passing : taker.p.attrs.shooting) - 60) / (eff.delivery ? 100 : 80)) *
       (1 + (60 - gkSkill) / (eff.delivery ? 220 : 200)) *
+      conditionEffects(s.cond).conversion *
       (hasTrait(taker.p, "dead_ball") ? (eff.delivery ? 1.06 : 1.08) : 1),
     eff.delivery ? 0.008 : 0.02,
     eff.delivery ? 0.1 : 0.16
@@ -883,6 +1026,7 @@ const resolveCorner = (
       fam *
       (1 + (taker.p.attrs.passing - 60) / 100 + (header.p.attrs.physical - 60) / 120) *
       (1 + (60 - gkSkill) / 220) *
+      conditionEffects(s.cond).conversion *
       (hasTrait(taker.p, "dead_ball") ? 1.06 : 1),
     0.008,
     0.09
@@ -910,7 +1054,7 @@ const resolveCorner = (
       playerId: header.p.id,
       text: `${pick(rng, CORNER_GOAL_TEXT)(header.p.name, atkSide.short)} — ${taker.p.name} with the corner.`
     });
-  } else if (depth < 2 && rng() < Math.min(0.85, T.secondCornerShare * eff.recycle)) {
+  } else if (depth < 2 && rng() < Math.min(0.85, T.secondCornerShare * eff.recycle * conditionEffects(s.cond).corner)) {
     s.events.push({
       minute: m,
       type: "corner",
@@ -1064,7 +1208,7 @@ const minuteStep = (s: MatchState, m: number, rng: Rng, players: Map<string, Pla
     possessionPhase(s, possHome ? s.home : s.away, possHome ? s.away : s.home, m, rng, players);
   }
 
-  const pFoul = T.foulPerMatch / 90;
+  const pFoul = (T.foulPerMatch / 90) * conditionEffects(s.cond).fouls;
   if (rng() < pFoul) {
     const homeCommits = rng() < 0.5;
     processFoul(
