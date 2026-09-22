@@ -10,7 +10,7 @@ export const T = {
   strengthOffsets: [8, 6, 4, 2, 0, 0, -2, -3, -5, -6],
 
   /** match engine */
-  baseChancePerMinute: 0.135,
+  baseChancePerMinute: 0.108,
   conversionBase: 0.115,
   saveShare: 0.42, // of non-goal chance outcomes
   homeAdvantage: 1.08,
@@ -19,8 +19,21 @@ export const T = {
     bal: { att: 1.0, def: 1.0 },
     att: { att: 1.15, def: 0.85 }
   } as Record<string, { att: number; def: number }>,
-  yellowPerMatch: 3.6,
+  /** fouls & cards (fouls produce restarts; a share of them are carded) */
+  foulPerMatch: 20,
+  cardShareOfFouls: 0.18, // 20 × 0.18 ≈ 3.6 cards/match
   redChancePerFoul: 0.045,
+  /** set pieces */
+  fkZoneShare: 0.18, // share of fouls in the attacking third
+  penShareOfAttFouls: 0.07, // → ≈ 0.25 penalties/match
+  fkShotShareOfAttFouls: 0.45, // → ≈ 1.6 direct free-kick attempts/match
+  penaltyGoalBase: 0.78,
+  fkGoalBase: 0.07,
+  cornerGoalBase: 0.026,
+  cornerFromBlock: 0.5,
+  cornerFromSave: 0.45,
+  cornerFromOut: 0.4,
+  secondCornerShare: 0.3,
   injuryPerMatch: 0.32,
   injuryWeeks: [1, 4] as [number, number],
   blockShare: 0.2, // share of non-goal outcomes that become blocks (defence-scaled)

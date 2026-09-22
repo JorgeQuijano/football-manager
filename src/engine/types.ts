@@ -83,7 +83,10 @@ export type MatchEventType =
   | "injury"
   | "sub"
   | "half"
-  | "full";
+  | "full"
+  | "corner"
+  | "freekick"
+  | "penalty";
 
 export interface MatchEvent {
   minute: number;
@@ -121,6 +124,9 @@ export interface MatchResult {
 
 export type StrokeOut = "turnover" | "out" | "foul" | "goal" | "save" | "block" | "miss";
 
+/** Set-piece tags: staging + commentary hints for the 2D view. */
+export type SetPiece = "corner" | "freekick" | "penalty" | "goalkick" | "throw";
+
 /** One possession phase rendered on the 2D pitch: a pass chain + how it ended. */
 export interface Stroke {
   m: number; // minute
@@ -130,6 +136,8 @@ export interface Stroke {
   t?: number; // target x of the final ball (shot / out), 0..100 in the attacking frame
   b?: number; // other-side slot involved: keeper (save), blocker (block), interceptor (turnover)
   r?: number; // index into `events` this stroke produced
+  sp?: SetPiece; // set-piece tag (staging + commentary)
+  tg?: [number, number]; // staged target point in the attacking side's frame (corners / penalties)
 }
 
 export interface MatchSideState {

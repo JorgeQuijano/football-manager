@@ -22,12 +22,29 @@ const eventClass: Record<string, string> = {
   save: "text-muted-foreground",
   miss: "text-muted-foreground",
   block: "text-muted-foreground",
+  corner: "text-muted-foreground",
+  freekick: "text-muted-foreground",
+  penalty: "text-[#FFB020] font-semibold",
   half: "font-bold",
   full: "font-bold",
   kickoff: "text-muted-foreground"
 };
 
 type Side = "home" | "away";
+
+type StageKind = "corner" | "penalty" | "freekick";
+
+/** Set-piece staging: where each side lines up while a corner / penalty / free kick is taken. */
+type StageInfo = {
+  kind: StageKind;
+  side: Side;
+  taker: number;
+  tg: [number, number];
+  att: number[];
+  def: number[];
+};
+
+const SPEEDS = [1, 2, 4, 8] as const;
 
 type Phase =
   | { k: "player"; opp: boolean; slot: number; dur: number }
@@ -64,7 +81,10 @@ function LiveMatchScreen() {
 
   const [ui, setUi] = useState({ minute: live.playhead, si: 0, gh: 0, ga: 0 });
   const [playing, setPlaying] = useState(true);
-  const [speed, setSpeed] = useState(2);
+  const [speed, setSpeed] = useState(() => {
+    const v = Number(typeof localStorage === "undefined" ? "" : localStorage.getItem("fm-speed"));
+    return (SPEEDS as readonly number[]).includes(v) ? v : 2;
+  });
   const [htReady, setHtReady] = useState(false);
   const [ftReady, setFtReady] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -119,6 +139,7 @@ function LiveMatchScreen() {
     poss: null as null | Side,
     transT: 0,
     transSide: null as null | Side,
+    stage: null as null | StageInfo,
     phases: null as null | Phase[],
     anim: new Map<string, { x: number; y: number }>(),
     flashT: 0,
@@ -149,6 +170,7 @@ function LiveMatchScreen() {
     c.pi = 0;
     c.t = 0;
     c.phases = null;
+    c.stage = null;
     c.originX = c.ballX;
     c.originY = c.ballY;
     c.minute = Math.max(0, Math.min(minute, s.total));
@@ -189,6 +211,70 @@ function LiveMatchScreen() {
       seed: 0.5
     };
 
+    /** Staged positions (attacking-side frame) for set plays: who stands where. */
+    const STAGE_SPOTS: Record<
+      StageKind,
+      { att: [number, number][]; def: [number, number][]; restAtt: [number, number]; restDef: [number, number] }
+    > = {
+      corner: {
+        att: [[44, 10], [56, 9], [38, 14], [62, 13], [50, 17]],
+        def: [[46, 12], [54, 11], [40, 16], [60, 15], [50, 8]],
+        restAtt: [50, 44],
+        restDef: [50, 30]
+      },
+      penalty: {
+        att: [[30, 26], [70, 26], [50, 30], [20, 30], [80, 30]],
+        def: [[28, 24], [72, 24], [50, 28], [12, 28], [88, 28]],
+        restAtt: [50, 40],
+        restDef: [50, 34]
+      },
+      freekick: {
+        att: [[40, 16], [60, 16], [50, 20], [30, 24], [70, 24]],
+        def: [[46, 19], [50, 18], [54, 19], [38, 23], [62, 23]],
+        restAtt: [50, 36],
+        restDef: [50, 30]
+      }
+    };
+
+    /** Rank a side's outfield slots by how far a role pushes / drops (for set-piece roles). */
+    const rankSide = (s2: Side, field: "push" | "drop") => {
+      const sd2 = sideOf(s2);
+      const arr: { slot: number; v: number }[] = [];
+      for (let i = 0; i < 11; i++) {
+        if (sd2.poss[i] === "GK") continue;
+        const prof = profRef.current.get(s2 + ":" + i) ?? DEFAULT_PROFILE;
+        arr.push({ slot: i, v: field === "push" ? prof.push : prof.drop });
+      }
+      arr.sort((a, b) => b.v - a.v);
+      return arr.map((x) => x.slot);
+    };
+
+    /** Where a slot should stand while a set piece is staging; null = normal movement. */
+    const stageTarget = (side: Side, slot: number) => {
+      const S = C.stage;
+      if (!S) return null;
+      const sd = sideOf(side);
+      const m = sideMirror(S.side);
+      const spots = STAGE_SPOTS[S.kind];
+      const put = (x: number, y: number) => ({
+        x: clampPos(m ? 100 - x : x),
+        y: clampPos(m ? 100 - y : y)
+      });
+      if (side === S.side) {
+        if (sd.poss[slot] === "GK") return put(50, 92);
+        if (slot === S.taker) return put(S.tg[0], S.tg[1]);
+        const r = S.att.indexOf(slot);
+        if (r >= 0 && r < spots.att.length) return put(spots.att[r][0], spots.att[r][1]);
+        const rr = spots.restAtt;
+        return put(r % 2 === 0 ? rr[0] - 9 : rr[0] + 9, rr[1]);
+      }
+      if (sd.poss[slot] === "GK") return put(50, 4);
+      const r2 = S.def.indexOf(slot);
+      if (r2 >= 0 && r2 < spots.def.length) return put(spots.def[r2][0], spots.def[r2][1]);
+      const rr2 = spots.restDef;
+      return put(r2 % 2 === 0 ? rr2[0] - 9 : rr2[0] + 9, rr2[1]);
+    };
+
     /** in possession · out of possession · the 2.5 s after a turnover */
     const phaseOf = (side: Side): "in" | "out" | "break" | "recover" => {
       if (C.transT > 0 && C.transSide) return side === C.transSide ? "break" : "recover";
@@ -204,6 +290,9 @@ function LiveMatchScreen() {
      * turnover winner breaks and the loser recovers at sprint pace.
      */
     const targetFor = (side: Side, slot: number) => {
+      // set plays: hold the staged shape (corner box, penalty arc, free-kick wall)
+      const staged = stageTarget(side, slot);
+      if (staged) return staged;
       const sd = sideOf(side);
       const prof = profRef.current.get(side + ":" + slot) ?? DEFAULT_PROFILE;
       const base = slotScreen(sd, slot, sideMirror(side));
@@ -267,8 +356,22 @@ function LiveMatchScreen() {
         C.transSide = newPoss;
       }
       C.poss = newPoss;
+      if (s.sp === "corner" || s.sp === "penalty" || s.sp === "freekick") {
+        const other: Side = C.poss === "home" ? "away" : "home";
+        C.stage = {
+          kind: s.sp,
+          side: C.poss,
+          taker: s.p[0] ?? 0,
+          tg: s.tg ?? [50, 12],
+          att: rankSide(C.poss, "push"),
+          def: rankSide(other, "drop")
+        };
+      } else {
+        C.stage = null;
+      }
       const phases: Phase[] = [];
-      if (s.p.length) phases.push({ k: "player", opp: false, slot: s.p[0], dur: 0.16 });
+      const firstDur = s.sp === "penalty" ? 4.0 : s.sp === "corner" ? 3.0 : s.sp ? 2.8 : 0.16;
+      if (s.p.length) phases.push({ k: "player", opp: false, slot: s.p[0], dur: firstDur });
       for (let i = 0; i + 1 < s.p.length; i++) {
         phases.push({ k: "player", opp: false, slot: s.p[i + 1], dur: 0.3 });
       }
@@ -329,7 +432,8 @@ function LiveMatchScreen() {
       if (C.transT > 0) C.transT = Math.max(0, C.transT - dt * C.speed);
       for (const side of ["home", "away"] as const) {
         const phase = phaseOf(side);
-        const hurry = phase === "break" || phase === "recover" ? 1.2 : 1;
+        const hurry =
+          (phase === "break" || phase === "recover" ? 1.2 : 1) * (C.stage ? 1.5 : 1);
         for (let i = 0; i < 11; i++) {
           const key = side + ":" + i;
           const prof = profRef.current.get(key) ?? DEFAULT_PROFILE;
@@ -373,6 +477,7 @@ function LiveMatchScreen() {
             C.pi = 0;
             C.t = 0;
             C.phases = null;
+            C.stage = null;
             if (done) {
               C.minute = done.m;
               if (done.o === "goal") {
@@ -441,6 +546,7 @@ function LiveMatchScreen() {
             minute: Math.round(C.minute * 10) / 10,
             ball: { x: Math.round(C.ballX * 10) / 10, y: Math.round(C.ballY * 10) / 10 },
             phase: { home: phaseOf("home"), away: phaseOf("away") },
+            stage: C.stage ? C.stage.kind : null,
             pos
           };
         }
@@ -502,13 +608,21 @@ function LiveMatchScreen() {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight });
   }, [ui.si]);
 
+  useEffect(() => {
+    clock.current.speed = speed;
+    try {
+      localStorage.setItem("fm-speed", String(speed));
+    } catch {
+      /* private mode — speed just won't persist */
+    }
+  }, [speed]);
+
   const setPlayingBoth = (v: boolean) => {
     clock.current.playing = v;
     setPlaying(v);
   };
   const togglePlay = () => setPlayingBoth(!clock.current.playing);
-  const cycleSpeed = () => {
-    const n = speed === 1 ? 2 : speed === 2 ? 4 : 1;
+  const setSpeedTo = (n: number) => {
     clock.current.speed = n;
     setSpeed(n);
   };
@@ -606,9 +720,11 @@ function LiveMatchScreen() {
             />
           </div>
           <div className="mt-1.5 flex justify-between text-[10px] font-semibold text-muted-foreground tnum">
-            <span>Poss {possPct}% · Shots {stats.shotsHome}</span>
             <span>
-              Shots {stats.shotsAway} · Poss {100 - possPct}%
+              Poss {possPct}% · Sh {stats.shotsHome} · Crn {stats.cornersHome}
+            </span>
+            <span>
+              Crn {stats.cornersAway} · Sh {stats.shotsAway} · Poss {100 - possPct}%
             </span>
           </div>
         </CardContent>
@@ -627,7 +743,7 @@ function LiveMatchScreen() {
               </div>
               <div className="mt-1 text-[11px] text-muted-foreground tnum">
                 Poss {Math.round(halfStats.possHome * 100)}% · Shots {halfStats.shotsHome}–
-                {halfStats.shotsAway}
+                {halfStats.shotsAway} · Corners {halfStats.cornersHome}–{halfStats.cornersAway}
               </div>
               <div className="mt-3 grid gap-2">
                 <Button
@@ -690,7 +806,7 @@ function LiveMatchScreen() {
         )}
       </div>
 
-      <div className="mt-3 grid grid-cols-5 gap-1.5">
+      <div className="mt-3 grid grid-cols-2 gap-1.5">
         <Button
           data-testid="pb-play"
           variant="secondary"
@@ -701,26 +817,41 @@ function LiveMatchScreen() {
           {playing ? "Pause" : "Play"}
         </Button>
         <Button
-          data-testid="pb-speed"
-          variant="secondary"
-          className="h-10 font-bold tnum"
-          onClick={cycleSpeed}
-        >
-          {speed}x
-        </Button>
-        <Button
           data-testid="pb-changes"
           variant="secondary"
-          className="h-10 text-[11px] font-bold"
+          className="h-10 font-bold"
           onClick={openChanges}
           disabled={ftReady}
         >
           Changes
         </Button>
+      </div>
+
+      <div className="mt-1.5 flex items-stretch gap-1.5">
+        <div
+          role="group"
+          aria-label="Playback speed"
+          className="flex flex-1 gap-1 rounded-xl border border-border p-0.5"
+          data-testid="pb-speed"
+        >
+          {SPEEDS.map((n) => (
+            <button
+              key={n}
+              data-testid={`pb-speed-${n}`}
+              onClick={() => setSpeedTo(n)}
+              aria-pressed={speed === n}
+              className={`h-9 flex-1 rounded-lg text-[12px] font-bold tnum ${
+                speed === n ? "bg-primary/15 text-primary" : "text-muted-foreground"
+              }`}
+            >
+              {n}x
+            </button>
+          ))}
+        </div>
         <Button
           data-testid="pb-ht"
           variant="secondary"
-          className="h-10 text-[11px] font-bold"
+          className="h-10 px-2 text-[11px] font-bold"
           onClick={onSkipHT}
           disabled={live.half === 2 || htReady || ftReady}
         >
@@ -729,7 +860,7 @@ function LiveMatchScreen() {
         <Button
           data-testid="pb-ft"
           variant="secondary"
-          className="h-10 text-[11px] font-bold"
+          className="h-10 px-2 text-[11px] font-bold"
           onClick={onSkipFT}
           disabled={ftReady}
         >

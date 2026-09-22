@@ -8,6 +8,7 @@ import type {
   PlayerUpdate,
   Position,
   RoleId,
+  SetPiece,
   StrokeOut
 } from "./types";
 import { hashSeed, mulberry32, pick, pickWeighted, randInt, type Rng } from "./rng";
@@ -90,6 +91,47 @@ const SUB_TEXT: TextFn[] = [
   (a, b) => `${a} makes way for ${b}.`,
   (a, b) => `Fresh legs: ${b} replaces ${a}.`,
   (a, b) => `${b} comes on for ${a}.`
+];
+const CORNER_TEXT: TextFn[] = [
+  (c) => `Corner for ${c}.`,
+  (c) => `${c} win a corner.`,
+  (c) => `Behind for a corner — ${c} will swing it in.`
+];
+const CORNER_CLEAR_TEXT: TextFn[] = [
+  (t, d) => `${t} swings it in — headed clear by ${d}.`,
+  (t, d) => `Corner delivered by ${t}; ${d} gets it away.`,
+  (t, d) => `${t}'s corner is punched clear under pressure from ${d}.`
+];
+const CORNER_AGAIN_TEXT: TextFn[] = [
+  (c, t) => `${c} keep it alive — another corner, ${t} to take.`,
+  (c, t) => `Blocked at the near post! Second corner for ${c}.`
+];
+const CORNER_GOAL_TEXT: TextFn[] = [
+  (s, c) => `GOAL! ${s} rises highest and heads it in for ${c}!`,
+  (s, c) => `${s} attacks the corner and buries it — ${c} score from a set piece!`,
+  (s, c) => `From the corner, ${s} finds the net for ${c}!`
+];
+const FK_TEXT: TextFn[] = [
+  (s, c) => `Free kick in shooting range — ${s} stands over it for ${c}.`,
+  (s, c) => `${c} have a dangerous free kick. ${s} fancies this.`
+];
+const FK_GOAL_TEXT: TextFn[] = [
+  (s, c) => `GOAL! ${s} whips the free kick into the top corner for ${c}!`,
+  (s, c) => `What a strike! ${s} bends the free kick home for ${c}.`,
+  (s, c) => `The free kick flies in — ${s} scores for ${c}!`
+];
+const PEN_SCORE_TEXT: TextFn[] = [
+  (s, c) => `PENALTY GOAL! ${s} sends the keeper the wrong way. ${c} score.`,
+  (s, c) => `${s} buries the penalty for ${c}.`,
+  (s, c) => `Cool as ice — ${s} converts from the spot for ${c}.`
+];
+const PEN_SAVE_TEXT: TextFn[] = [
+  (s, gk) => `SAVED! ${gk} guesses right and keeps out ${s}'s penalty!`,
+  (s, gk) => `${gk} is the hero — ${s}'s penalty is stopped!`
+];
+const PEN_MISS_TEXT: TextFn[] = [
+  (s, c) => `${s} blazes the penalty over the bar — let-off for ${c}'s opponents!`,
+  (s) => `${s} misses from the spot — wide of the post!`
 ];
 
 interface Proto {
@@ -290,7 +332,20 @@ const possessionPhase = (
   if (!atk.length) return;
   const chain = buildChain(side, atk, rng);
   if (rng() < 0.2) {
-    s.timeline.push({ m, h: isHome(s, side) ? 1 : 0, p: chain, o: "out", t: rng() < 0.5 ? 4 : 96 });
+    const lastSlot = chain[chain.length - 1];
+    const deepInAttack = lastSlot !== undefined && (side.coords[lastSlot]?.[1] ?? 100) < 40;
+    if (deepInAttack && rng() < T.cornerFromOut) {
+      resolveCorner(s, side, opp, m, rng, players);
+      return;
+    }
+    s.timeline.push({
+      m,
+      h: isHome(s, side) ? 1 : 0,
+      p: chain,
+      o: "out",
+      t: rng() < 0.5 ? 4 : 96,
+      sp: "throw"
+    });
     return;
   }
   const dfn = proto(opp, players);
@@ -338,6 +393,8 @@ const resolveChance = (
   const evBefore = s.events.length;
   let out: StrokeOut;
   let b: number | undefined;
+  let corner = false;
+  let goalKick = false;
 
   if (rng() < pGoal) {
     out = "goal";
@@ -381,6 +438,7 @@ const resolveChance = (
       text: pick(rng, SAVE_TEXT)(shooter.p.name, gk?.p.name ?? "the keeper")
     });
     if (gk) s.ratings[gk.p.id] = clamp(s.ratings[gk.p.id] + 0.15, 4, 10);
+    corner = rng() < T.cornerFromSave;
   } else {
     const blockers = dfn.filter((x) => x.p.pos !== "GK");
     const defMean =
@@ -397,6 +455,7 @@ const resolveChance = (
         playerId: blocker.p.id,
         text: pick(rng, BLOCK_TEXT)(shooter.p.name, blocker.p.name)
       });
+      corner = rng() < T.cornerFromBlock;
     } else {
       out = "miss";
       s.events.push({
@@ -406,6 +465,7 @@ const resolveChance = (
         playerId: shooter.p.id,
         text: pick(rng, MISS_TEXT)(shooter.p.name, "")
       });
+      goalKick = true;
     }
   }
 
@@ -427,16 +487,34 @@ const resolveChance = (
     b,
     r: s.events.length > evBefore ? s.events.length - 1 : undefined
   });
+
+  if (corner) {
+    resolveCorner(s, atkSide, defSide, m, rng, players);
+  } else if (goalKick) {
+    const gk2 = dfn.find((x) => x.p.pos === "GK");
+    if (gk2) {
+      s.timeline.push({
+        m,
+        h: isHome(s, defSide) ? 1 : 0,
+        p: [gk2.slot],
+        o: "turnover",
+        b: gk2.slot,
+        sp: "goalkick"
+      });
+    }
+  }
 };
 
-const processCard = (
+/** A foul: whistle + card roll + the set-piece consequence for the fouled side. */
+const processFoul = (
   s: MatchState,
-  side: MatchSideState,
+  committed: MatchSideState,
+  fouled: MatchSideState,
   m: number,
   rng: Rng,
   players: Map<string, Player>
 ) => {
-  const offenders = proto(side, players).filter((x) => x.p.pos !== "GK");
+  const offenders = proto(committed, players).filter((x) => x.p.pos !== "GK");
   if (!offenders.length) return;
   const offender = pickWeighted(
     rng,
@@ -447,50 +525,361 @@ const processCard = (
       (1 + (x.p.attrs.physical - 65) / 250)
   );
   const evBefore = s.events.length;
-  if (rng() < T.redChancePerFoul) {
-    leaveSlot(s, side, offender.slot, m);
-    updOf(s, offender.p.id).red = true;
-    s.ratings[offender.p.id] = clamp(s.ratings[offender.p.id] - 0.5, 4, 10);
-    s.events.push({
-      minute: m,
-      type: "red",
-      clubId: side.clubId,
-      playerId: offender.p.id,
-      text: `Straight red! ${offender.p.name} is off for a reckless lunge.`
-    });
-    s.timeline.push({ m, h: isHome(s, side) ? 1 : 0, p: [offender.slot], o: "foul", r: s.events.length - 1 });
-    return;
+  if (rng() < T.cardShareOfFouls) {
+    if (rng() < T.redChancePerFoul) {
+      leaveSlot(s, committed, offender.slot, m);
+      updOf(s, offender.p.id).red = true;
+      s.ratings[offender.p.id] = clamp(s.ratings[offender.p.id] - 0.5, 4, 10);
+      s.events.push({
+        minute: m,
+        type: "red",
+        clubId: committed.clubId,
+        playerId: offender.p.id,
+        text: `Straight red! ${offender.p.name} is off for a reckless lunge.`
+      });
+    } else {
+      const count = (s.yellows[offender.p.id] ?? 0) + 1;
+      s.yellows[offender.p.id] = count;
+      if (count >= 2) {
+        leaveSlot(s, committed, offender.slot, m);
+        updOf(s, offender.p.id).red = true;
+        s.ratings[offender.p.id] = clamp(s.ratings[offender.p.id] - 0.5, 4, 10);
+        s.events.push({
+          minute: m,
+          type: "red",
+          clubId: committed.clubId,
+          playerId: offender.p.id,
+          text: `Second yellow — ${offender.p.name} is sent off.`
+        });
+      } else {
+        updOf(s, offender.p.id).yellow++;
+        s.ratings[offender.p.id] = clamp(s.ratings[offender.p.id] - 0.15, 4, 10);
+        s.events.push({
+          minute: m,
+          type: "yellow",
+          clubId: committed.clubId,
+          playerId: offender.p.id,
+          text: pick(rng, YELLOW_TEXT)(offender.p.name, "")
+        });
+      }
+    }
   }
-  const count = (s.yellows[offender.p.id] ?? 0) + 1;
-  s.yellows[offender.p.id] = count;
-  if (count >= 2) {
-    leaveSlot(s, side, offender.slot, m);
-    updOf(s, offender.p.id).red = true;
-    s.ratings[offender.p.id] = clamp(s.ratings[offender.p.id] - 0.5, 4, 10);
+  // the whistle: everything stops on the foul
+  s.timeline.push({
+    m,
+    h: isHome(s, committed) ? 1 : 0,
+    p: [offender.slot],
+    o: "foul",
+    r: s.events.length > evBefore ? s.events.length - 1 : undefined
+  });
+  // set-piece consequence for the side that was fouled
+  if (rng() < T.fkZoneShare) {
+    const roll = rng();
+    if (roll < T.penShareOfAttFouls) {
+      resolvePenalty(s, fouled, committed, m, rng, players);
+    } else if (roll < T.penShareOfAttFouls + T.fkShotShareOfAttFouls) {
+      resolveFreeKick(s, fouled, committed, m, rng, players);
+    }
+  }
+};
+
+/** Penalty: staged in the 2D view via sp/tg (taker on the spot, players on the arc). */
+const resolvePenalty = (
+  s: MatchState,
+  atkSide: MatchSideState,
+  defSide: MatchSideState,
+  m: number,
+  rng: Rng,
+  players: Map<string, Player>
+) => {
+  const atk = proto(atkSide, players).filter((x) => x.p.pos !== "GK");
+  if (!atk.length) return;
+  const taker = pickWeighted(
+    rng,
+    atk,
+    (x) => x.p.attrs.shooting * 0.7 + roleFinish(x.p, x.role) * 0.3
+  );
+  const gk = proto(defSide, players).find((x) => x.p.pos === "GK");
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
+  const pGoal = clamp(T.penaltyGoalBase + (taker.p.attrs.shooting - gkSkill) / 300, 0.62, 0.92);
+  const evBefore = s.events.length;
+  let out: StrokeOut;
+  if (rng() < pGoal) {
+    out = "goal";
+    atkSide.goals++;
+    updOf(s, taker.p.id).goals++;
+    s.ratings[taker.p.id] = clamp(s.ratings[taker.p.id] + 0.8, 4, 10);
+    s.scorers.push({
+      playerId: taker.p.id,
+      name: taker.p.name,
+      clubId: atkSide.clubId,
+      minute: m
+    });
     s.events.push({
       minute: m,
-      type: "red",
-      clubId: side.clubId,
-      playerId: offender.p.id,
-      text: `Second yellow — ${offender.p.name} is sent off.`
+      type: "penalty",
+      clubId: atkSide.clubId,
+      playerId: taker.p.id,
+      text: pick(rng, PEN_SCORE_TEXT)(taker.p.name, atkSide.short)
+    });
+  } else if (rng() < 0.75) {
+    out = "save";
+    if (gk) s.ratings[gk.p.id] = clamp(s.ratings[gk.p.id] + 0.6, 4, 10);
+    s.events.push({
+      minute: m,
+      type: "penalty",
+      clubId: defSide.clubId,
+      playerId: gk?.p.id,
+      text: pick(rng, PEN_SAVE_TEXT)(taker.p.name, gk?.p.name ?? "the keeper")
     });
   } else {
-    updOf(s, offender.p.id).yellow++;
-    s.ratings[offender.p.id] = clamp(s.ratings[offender.p.id] - 0.15, 4, 10);
+    out = "miss";
     s.events.push({
       minute: m,
-      type: "yellow",
-      clubId: side.clubId,
-      playerId: offender.p.id,
-      text: pick(rng, YELLOW_TEXT)(offender.p.name, "")
+      type: "penalty",
+      clubId: atkSide.clubId,
+      playerId: taker.p.id,
+      text: pick(rng, PEN_MISS_TEXT)(taker.p.name, atkSide.short)
     });
   }
   s.timeline.push({
     m,
-    h: isHome(s, side) ? 1 : 0,
-    p: [offender.slot],
-    o: "foul",
-    r: s.events.length > evBefore ? s.events.length - 1 : undefined
+    h: isHome(s, atkSide) ? 1 : 0,
+    p: [taker.slot],
+    o: out,
+    t: 50 + randInt(rng, -8, 8),
+    b: gk?.slot,
+    r: s.events.length > evBefore ? s.events.length - 1 : undefined,
+    sp: "penalty",
+    tg: [50, 12]
+  });
+};
+
+/** Direct free kick from a foul in shooting range. */
+const resolveFreeKick = (
+  s: MatchState,
+  atkSide: MatchSideState,
+  defSide: MatchSideState,
+  m: number,
+  rng: Rng,
+  players: Map<string, Player>
+) => {
+  const atk = proto(atkSide, players).filter((x) => x.p.pos !== "GK");
+  if (!atk.length) return;
+  const taker = pickWeighted(
+    rng,
+    atk,
+    (x) => x.p.attrs.shooting * 0.75 + roleFinish(x.p, x.role) * 0.25
+  );
+  const dfn = proto(defSide, players);
+  const gk = dfn.find((x) => x.p.pos === "GK");
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
+  const pGoal = clamp(
+    T.fkGoalBase * (1 + (taker.p.attrs.shooting - 60) / 80) * (1 + (60 - gkSkill) / 200),
+    0.02,
+    0.16
+  );
+  s.events.push({
+    minute: m,
+    type: "freekick",
+    clubId: atkSide.clubId,
+    playerId: taker.p.id,
+    text: pick(rng, FK_TEXT)(taker.p.name, atkSide.short)
+  });
+  const evBefore = s.events.length;
+  let out: StrokeOut;
+  let b: number | undefined;
+  if (rng() < pGoal) {
+    out = "goal";
+    atkSide.goals++;
+    updOf(s, taker.p.id).goals++;
+    s.ratings[taker.p.id] = clamp(s.ratings[taker.p.id] + 1.0, 4, 10);
+    s.scorers.push({
+      playerId: taker.p.id,
+      name: taker.p.name,
+      clubId: atkSide.clubId,
+      minute: m
+    });
+    s.events.push({
+      minute: m,
+      type: "goal",
+      clubId: atkSide.clubId,
+      playerId: taker.p.id,
+      text: pick(rng, FK_GOAL_TEXT)(taker.p.name, atkSide.short)
+    });
+  } else if (rng() < T.saveShare) {
+    out = "save";
+    b = gk?.slot;
+    if (gk) s.ratings[gk.p.id] = clamp(s.ratings[gk.p.id] + 0.2, 4, 10);
+    s.events.push({
+      minute: m,
+      type: "save",
+      clubId: defSide.clubId,
+      playerId: gk?.p.id,
+      text: pick(rng, SAVE_TEXT)(taker.p.name, gk?.p.name ?? "the keeper")
+    });
+  } else {
+    const wall = dfn.filter((x) => x.p.pos !== "GK");
+    if (wall.length && rng() < 0.55) {
+      const blocker = pickWeighted(
+        rng,
+        wall,
+        (x) => x.p.attrs.defending + x.p.attrs.physical * 0.5
+      );
+      out = "block";
+      b = blocker.slot;
+      s.events.push({
+        minute: m,
+        type: "block",
+        clubId: defSide.clubId,
+        playerId: blocker.p.id,
+        text: pick(rng, BLOCK_TEXT)(taker.p.name, blocker.p.name)
+      });
+    } else {
+      out = "miss";
+      s.events.push({
+        minute: m,
+        type: "miss",
+        clubId: atkSide.clubId,
+        playerId: taker.p.id,
+        text: pick(rng, MISS_TEXT)(taker.p.name, "")
+      });
+    }
+  }
+  s.timeline.push({
+    m,
+    h: isHome(s, atkSide) ? 1 : 0,
+    p: [taker.slot],
+    o: out,
+    t:
+      out === "miss"
+        ? clamp(50 + (rng() < 0.5 ? -1 : 1) * (16 + randInt(rng, 0, 10)), 4, 96)
+        : 50 + randInt(rng, -12, 12),
+    b,
+    r: s.events.length > evBefore ? s.events.length - 1 : undefined,
+    sp: "freekick",
+    tg: [50, 24]
+  });
+};
+
+/** Corner: staged in the 2D view via sp/tg (taker at the flag, the box loaded). */
+const resolveCorner = (
+  s: MatchState,
+  atkSide: MatchSideState,
+  defSide: MatchSideState,
+  m: number,
+  rng: Rng,
+  players: Map<string, Player>,
+  depth = 0
+) => {
+  const atk = proto(atkSide, players).filter((x) => x.p.pos !== "GK");
+  if (!atk.length) return;
+  const taker = pickWeighted(
+    rng,
+    atk,
+    (x) => x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20
+  );
+  const flagX = rng() < 0.5 ? 2 : 98;
+  const contenders = atk.filter((x) => x.p.id !== taker.p.id);
+  const header =
+    contenders.length > 0
+      ? pickWeighted(
+          rng,
+          contenders,
+          (x) =>
+            x.p.attrs.physical * 0.9 + x.p.attrs.shooting * 0.3 + ROLE_DEFS[x.role].finish * 10
+        )
+      : taker;
+  const dfn = proto(defSide, players);
+  const gk = dfn.find((x) => x.p.pos === "GK");
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
+  const pGoal = clamp(
+    T.cornerGoalBase *
+      (1 + (taker.p.attrs.passing - 60) / 100 + (header.p.attrs.physical - 60) / 120) *
+      (1 + (60 - gkSkill) / 220),
+    0.008,
+    0.09
+  );
+  const evBefore = s.events.length;
+  let out: StrokeOut;
+  let b: number | undefined;
+  if (rng() < pGoal) {
+    out = "goal";
+    atkSide.goals++;
+    updOf(s, header.p.id).goals++;
+    s.ratings[header.p.id] = clamp(s.ratings[header.p.id] + 1.0, 4, 10);
+    updOf(s, taker.p.id).assists++;
+    s.ratings[taker.p.id] = clamp(s.ratings[taker.p.id] + 0.4, 4, 10);
+    s.scorers.push({
+      playerId: header.p.id,
+      name: header.p.name,
+      clubId: atkSide.clubId,
+      minute: m
+    });
+    s.events.push({
+      minute: m,
+      type: "goal",
+      clubId: atkSide.clubId,
+      playerId: header.p.id,
+      text: `${pick(rng, CORNER_GOAL_TEXT)(header.p.name, atkSide.short)} — ${taker.p.name} with the corner.`
+    });
+  } else if (depth < 2 && rng() < T.secondCornerShare) {
+    s.events.push({
+      minute: m,
+      type: "corner",
+      clubId: atkSide.clubId,
+      playerId: taker.p.id,
+      text: pick(rng, CORNER_AGAIN_TEXT)(atkSide.short, taker.p.name)
+    });
+    s.timeline.push({
+      m,
+      h: isHome(s, atkSide) ? 1 : 0,
+      p: [taker.slot, header.slot],
+      o: "block",
+      b: header.slot,
+      r: s.events.length - 1,
+      sp: "corner",
+      tg: [flagX, 2]
+    });
+    resolveCorner(s, atkSide, defSide, m, rng, players, depth + 1);
+    return;
+  } else {
+    out = "turnover";
+    const clearers = dfn.filter((x) => x.p.pos !== "GK");
+    if (clearers.length) {
+      const clearer = pickWeighted(
+        rng,
+        clearers,
+        (x) => x.p.attrs.defending + x.p.attrs.physical * 0.5
+      );
+      b = clearer.slot;
+      s.events.push({
+        minute: m,
+        type: "corner",
+        clubId: atkSide.clubId,
+        playerId: taker.p.id,
+        text: pick(rng, CORNER_CLEAR_TEXT)(taker.p.name, clearer.p.name)
+      });
+    } else {
+      s.events.push({
+        minute: m,
+        type: "corner",
+        clubId: atkSide.clubId,
+        playerId: taker.p.id,
+        text: pick(rng, CORNER_TEXT)(atkSide.short, "")
+      });
+    }
+  }
+  s.timeline.push({
+    m,
+    h: isHome(s, atkSide) ? 1 : 0,
+    p: [taker.slot, header.slot],
+    o: out,
+    t: 50 + randInt(rng, -14, 14),
+    b,
+    r: s.events.length > evBefore ? s.events.length - 1 : undefined,
+    sp: "corner",
+    tg: [flagX, 2]
   });
 };
 
@@ -586,8 +975,18 @@ const minuteStep = (s: MatchState, m: number, rng: Rng, players: Map<string, Pla
     possessionPhase(s, possHome ? s.home : s.away, possHome ? s.away : s.home, m, rng, players);
   }
 
-  const pFoul = T.yellowPerMatch / (90 * 2);
-  if (rng() < pFoul) processCard(s, rng() < 0.5 ? s.home : s.away, m, rng, players);
+  const pFoul = T.foulPerMatch / 90;
+  if (rng() < pFoul) {
+    const homeCommits = rng() < 0.5;
+    processFoul(
+      s,
+      homeCommits ? s.home : s.away,
+      homeCommits ? s.away : s.home,
+      m,
+      rng,
+      players
+    );
+  }
 
   const pInj = T.injuryPerMatch / (90 * 2);
   if (rng() < pInj) processInjury(s, rng() < 0.5 ? s.home : s.away, m, rng, players);

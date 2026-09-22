@@ -137,11 +137,15 @@ Commentary: >3 text variants per event type; events carry `minute`, `type`, opti
 
 **Live match (halves, changes, timeline).** The engine is state-based so the user's fixture can pause. `startMatch(inputs)` builds a plain-data `MatchState` (per slot: player id, designed position, role, coordinates; plus bench, mentality, goals, subs, windows, rng state — fully serializable); `advanceTo(state, minute, players)` simulates forward (pure); `finalizeMatch(state)` produces the `MatchResult`. `simulateMatch` = start + advance + finalize, so AI matches and live matches share every formula — a test asserts that **splitting at 45' reproduces the one-shot result exactly**.
 
-The timeline: each minute emits possession phases as `Stroke`s — `{ m, h (home?), p (pass chain as slot indices), o (turnover | out | foul | goal | save | block | miss), t (end x), b (other-side slot: keeper/blocker/interceptor), r (event index) }`. Chances resolve exactly as above; the pass chain is walk-built from a deep initiator to the chosen shooter (forward passes favoured). Minutes without a chance still get a chain ending in a turnover or out of play; cards add a `foul` stroke. The 2D view renders strokes directly, and possession/shots stats derive from them.
+The timeline: each minute emits possession phases as `Stroke`s — `{ m, h (home?), p (pass chain as slot indices), o (turnover | out | foul | goal | save | block | miss), t (end x), b (other-side slot: keeper/blocker/interceptor), r (event index), sp (set-piece tag), tg (staged point) }`. Chances resolve exactly as above; the pass chain is walk-built from a deep initiator to the chosen shooter (forward passes favoured). Minutes without a chance still get a chain ending in a turnover or out of play; cards add a `foul` stroke. The 2D view renders strokes directly, and possession/shots/corners stats derive from them.
 
 Manager changes replay deterministically: `LiveMatch` keeps `base` (the snapshot at the start of the current half) + a journal of `LiveChange`s (sub / mentality / role, each stamped with its application minute). Any change re-simulates from `base` with the journal replayed — the tail changes, everything before the change stays byte-identical. `playhead` (playback minute) is persisted with the match, so reloads resume where you were; `normalizeSave` drops the live match if the round moved on.
 
 **Substitution rules (Premier League): max 5 subs; 3 in-match windows; half-time substitutions are free** (`state.minute === 45`); a player who leaves the pitch cannot return. Enforced by `substitutionError` in `match.ts`; the UI shows its messages verbatim.
+
+**Set pieces.** Fouls (`foulPerMatch` 20/match) split into carded fouls (`cardShareOfFouls` 0.18 → ≈ 3.6 cards/match) and restarts; the rest can produce a **direct free kick** when the foul is in the attacking third (`fkZoneShare` 0.18, then `fkShotShareOfAttFouls` 0.45 → ≈ 1.8 attempts/match; conversion `fkGoalBase` 0.07 scaled by the taker's shooting vs keeper skill) or a **penalty** (`penShareOfAttFouls` 0.07 → ≈ 0.23/match; conversion `penaltyGoalBase` 0.78 ± (shooting − keeper skill)/300, clamped 0.62–0.92 — scored by the best shooter, saved by the defending keeper's reflexes/handling). **Corners** arise from blocked shots (`cornerFromBlock` 0.5), parried saves (`cornerFromSave` 0.45) and balls out in the final third (`cornerFromOut` 0.4) → ≈ 10.7/match; the delivery is taken by the best passer (weighted by role assist bias), attacked by the best header (physical + shooting + role finishing), converts at `cornerGoalBase` 0.026 ≈ 0.4 goals/match, and can be recycled into another corner (`secondCornerShare` 0.3, depth-capped). A scored corner credits the header and the taker (assist). **Goal kicks** follow missed shots (`goalkick` stroke to the keeper); balls out are tagged `throw`. Takers are automatic — best shooter for free kicks and penalties, best crosser for corners. All set-piece strokes carry `sp` (kind) and `tg` (staged point in the attacking side's frame).
+
+**Set-piece staging (2D view).** When a set-piece stroke starts, every slot switches from its movement target to a staged one (`STAGE_SPOTS` in `MatchScreen.tsx`): corners load the box (the side's slots ranked by role `push` → box positions; defenders ranked by `drop` → markers; taker walks to the flag at `tg`; keepers on their lines), penalties put the taker on the spot with everyone else outside the box on the arc, free kicks build a wall between the ball and goal. Players jog to position at 1.5× their normal speed cap during the staging phase (held 2.8–4.0 s at 1×) and the shape stays while the delivery plays out; outside the stroke, normal phase movement resumes.
 
 **Movement model (`motion.ts`).** The 2D view is rendered from engine-owned movement instructions, not from a shared animation: `ROLE_MOTION` gives each of the 26 roles its press / support / push / drop / width / roam / recovery / break values, and `motionFor(player, role, slot)` folds in the actual player — **pace sets top speed** (8.5 + pace×0.095 u/s; keepers capped at 6.5 + pace×0.035), pace + physical set acceleration, physical sets stamina (roaming and push scale with it), slot geometry scales the width bias (wide slots keep it, central slots damp it) and a per-player hash gives every dot its own drift phase so no two move in lockstep. Behaviour is selected by **phase**: in possession roles push up, offer for the ball and hold or leave their width; out of possession they drop into shape and the most eager roles (BWM, Pressing Forward) close down; the 2.5 s after a turnover is a transition — the winner breaks and the loser recovers at sprint pace (both phases +20% speed). Measured on the live build: players run at 5.5–16 u/s, all four phases occur, and on-screen speed correlates with pace at r ≈ 0.8.
 
@@ -174,12 +178,18 @@ Manager changes replay deterministically: `LiveMatch` keeps `base` (the snapshot
 
 | Knob | Raise it → | Notes |
 |---|---|---|
-| `baseChancePerMinute` (0.135) | more goals (chances/min) | main goal-volume dial |
+| `baseChancePerMinute` (0.108) | more goals (chances/min) | main goal-volume dial; set pieces add ≈ 0.5 goals on top |
 | `conversionBase` (0.115) | more goals (finishing) | |
 | `saveShare` (0.42) | more keeper heroics | share of non-goal outcomes |
 | `homeAdvantage` (1.08) | stronger home bias | |
 | `mentality` (att/def ±15%) | sharper trade-offs | |
-| `yellowPerMatch` (3.6) / `redChancePerFoul` (0.045) | more cards/suspensions | |
+| `foulPerMatch` (20) / `cardShareOfFouls` (0.18) | more fouls & cards | 20 × 0.18 ≈ 3.6 cards/match |
+| `redChancePerFoul` (0.045) | more reds/suspensions | |
+| `fkZoneShare` (0.18) / `fkShotShareOfAttFouls` (0.45) | more direct free kicks | ≈ 1.8 attempts/match |
+| `penShareOfAttFouls` (0.07) | more penalties | ≈ 0.23/match |
+| `cornerFromBlock` / `cornerFromSave` / `cornerFromOut` (0.5 / 0.45 / 0.4) | more corners | ≈ 10.7/match delivered |
+| `cornerGoalBase` (0.026) / `secondCornerShare` (0.3) | set-piece goals / recycled corners | ≈ 0.4 corner goals/match |
+| `penaltyGoalBase` (0.78) / `fkGoalBase` (0.07) | penalty / direct-FK conversion | |
 | `injuryPerMatch` (0.32) / `injuryWeeks` (1–4) | more availability chaos | |
 | `blockShare` (0.2) | more blocked shots / defender credit | scales 0.6–1.4 with the defence's mean score |
 | `assistChance` (0.82) | fewer solo goals | assister weighted by passing |
@@ -189,11 +199,11 @@ Manager changes replay deterministically: `LiveMatch` keeps `base` (the snapshot
 | `subWindowsMax` (3) | more/fewer in-match sub windows | PL = 3 windows + free half-time |
 | `chainPasses` (2–5) | longer/shorter possession chains | 2D timeline density; no effect on results |
 
-Workflow: edit → `npm test` (calibration test guards avg goals 1.6–4.2 and home-win share 0.25–0.65; current ≈ 2.7) → `npm run sim -- --seed 42 --match` to eyeball a season.
+Workflow: edit → `npm test` (calibration test guards avg goals 1.6–4.2 and home-win share 0.25–0.65; current ≈ 2.8 with set pieces folded in) → `npm run sim -- --seed 42 --match` to eyeball a season.
 
 ## 13. Testing & tooling
 
-- `src/engine/engine.test.ts` — rng determinism; generation invariants (squad shape, attr bounds, 90 fixtures / 18 rounds / home-away balance); season table consistency; **determinism golden** (seed 7 twice); calibration across 40 seasons (30 s timeout — keep it); availability handling; season rollover; match bookkeeping (everyone who appeared is rated); roles (26 profiles unique, defaults valid per slot, finishing-weight orderings, assist/shot bias sanity); lineup ops (auto roles, remap keeps players); conditioning (recovery scaling); formations (built-ins valid, custom validation, custom fill/remap, templates lane-aware, geometry defaults, zones enforced, slot roles wired); **live match** (half split ≡ one-shot byte-for-byte, timeline invariants, PL sub rules: 5 subs / 3 windows / free half-time window / no returns; second-half changes carry over).
+- `src/engine/engine.test.ts` — rng determinism; generation invariants (squad shape, attr bounds, 90 fixtures / 18 rounds / home-away balance); season table consistency; **determinism golden** (seed 7 twice); calibration across 40 seasons (30 s timeout — keep it); availability handling; season rollover; match bookkeeping (everyone who appeared is rated); roles (26 profiles unique, defaults valid per slot, finishing-weight orderings, assist/shot bias sanity); lineup ops (auto roles, remap keeps players); conditioning (recovery scaling); formations (built-ins valid, custom validation, custom fill/remap, templates lane-aware, geometry defaults, zones enforced, slot roles wired); **live match** (half split ≡ one-shot byte-for-byte, timeline invariants, PL sub rules: 5 subs / 3 windows / free half-time window / no returns; second-half changes carry over); **set pieces** (season rates for corners / direct free kicks / penalties / cards; staged strokes carry `sp` + `tg`; `matchStats` corner counting).
 - `src/state/save.test.ts` — `normalizeSave` migration cases (roles, customs, vanished formation, stale live match).
 - CLI: `npm run sim -- --seed 42 [--match] [--seasons 3]` — headless season(s) with optional commentary dump.
 

@@ -153,10 +153,12 @@ export interface MatchStats {
   shotsAway: number;
   onTargetHome: number;
   onTargetAway: number;
+  cornersHome: number;
+  cornersAway: number;
   strokes: number;
 }
 
-/** Possession / shots stats derived from the timeline (optionally up to a minute). */
+/** Possession / shots / corners stats derived from the timeline (optionally up to a minute). */
 export function matchStats(state: MatchState, upto?: number): MatchStats {
   let h = 0;
   let a = 0;
@@ -164,10 +166,16 @@ export function matchStats(state: MatchState, upto?: number): MatchStats {
   let sa = 0;
   let oth = 0;
   let ota = 0;
+  let ch = 0;
+  let ca = 0;
   for (const st of state.timeline) {
     if (upto !== undefined && st.m > upto) break;
     if (st.h) h++;
     else a++;
+    if (st.sp === "corner") {
+      if (st.h) ch++;
+      else ca++;
+    }
     if (st.o === "goal" || st.o === "save" || st.o === "block" || st.o === "miss") {
       if (st.h) sh++;
       else sa++;
@@ -184,6 +192,8 @@ export function matchStats(state: MatchState, upto?: number): MatchStats {
     shotsAway: sa,
     onTargetHome: oth,
     onTargetAway: ota,
+    cornersHome: ch,
+    cornersAway: ca,
     strokes: total
   };
 }

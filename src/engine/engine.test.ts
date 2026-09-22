@@ -3,7 +3,7 @@ import { mulberry32, hashSeed } from "./rng";
 import { newGame } from "./generate";
 import { nextSeason, playRound, resolveSide, seasonRounds } from "./advance";
 import { simulateMatch } from "./match";
-import { addLiveChange, finalizeLive, playersById, resumeSecondHalf, startLive, userFixture } from "./live";
+import { addLiveChange, finalizeLive, matchStats, playersById, resumeSecondHalf, startLive, userFixture } from "./live";
 import { computeTable } from "./league";
 import {
   attackScore,
@@ -18,7 +18,7 @@ import { builtinFormation, clampToZone, resolveFormation, roleTemplate, scratchS
 import { defaultRoleFor, laneFits, roleFinish, ROLE_DEFS, ROLE_GROUPS } from "./roles";
 import { motionFor, ROLE_MOTION } from "./motion";
 import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
-import type { Player, Position, SaveGame } from "./types";
+import type { Player, Position, SaveGame, Stroke } from "./types";
 
 function playSeason(start: SaveGame): SaveGame {
   let save = start;
@@ -728,6 +728,69 @@ describe("motion", () => {
     expect(motionFor(p, "w", { x: 14, y: 48, pos: "MF" }).seed).toBe(
       motionFor(p, "w", { x: 50, y: 48, pos: "MF" }).seed
     );
+  });
+});
+
+describe("set pieces", () => {
+  it("a season produces corners, direct free kicks and penalties at sane rates", () => {
+    let g = newGame(7);
+    const rounds = seasonRounds(g);
+    let matches = 0;
+    let corners = 0;
+    let cornerGoals = 0;
+    let fks = 0;
+    let pens = 0;
+    let cards = 0;
+    while (g.round <= rounds) {
+      const r = playRound(g);
+      g = r.save;
+      for (const f of g.lastResults) {
+        matches++;
+        corners += f.events.filter((e) => e.type === "corner").length;
+        cornerGoals += f.events.filter((e) => e.type === "goal" && /corner/i.test(e.text)).length;
+        fks += f.events.filter((e) => e.type === "freekick").length;
+        pens += f.events.filter((e) => e.type === "penalty").length;
+        cards += f.events.filter((e) => e.type === "yellow" || e.type === "red").length;
+      }
+    }
+    expect(matches).toBeGreaterThan(60);
+    const cornerRate = (corners + cornerGoals) / matches;
+    expect(cornerRate).toBeGreaterThan(3);
+    expect(cornerRate).toBeLessThan(20);
+    expect(fks / matches).toBeGreaterThan(0.3);
+    expect(fks / matches).toBeLessThan(5);
+    expect(pens).toBeGreaterThan(0);
+    expect(pens / matches).toBeLessThan(1.2);
+    expect(cards / matches).toBeGreaterThan(1);
+    expect(cards / matches).toBeLessThan(8);
+  });
+
+  it("set-piece strokes carry staging data (sp/tg) in the live timeline", () => {
+    let staged: Stroke[] | undefined;
+    for (let seed = 1; seed <= 60 && !staged; seed++) {
+      const live = startLive(newGame(seed));
+      if (!live) continue;
+      const tl = live.state.timeline;
+      const kinds = new Set(tl.map((st) => st.sp).filter(Boolean));
+      if (kinds.has("corner") && kinds.has("penalty") && kinds.has("freekick")) staged = tl;
+    }
+    expect(staged).toBeDefined();
+    for (const st of staged!) {
+      if (st.sp === "corner") {
+        expect(st.tg).toBeDefined();
+        expect(st.tg![1]).toBe(2);
+      }
+      if (st.sp === "penalty") expect(st.tg).toEqual([50, 12]);
+      if (st.sp === "freekick") expect(st.tg).toEqual([50, 24]);
+    }
+  });
+
+  it("matchStats counts corner deliveries from the timeline", () => {
+    const live = startLive(newGame(7))!;
+    const stats = matchStats(live.state);
+    const strokes = live.state.timeline.filter((st) => st.sp === "corner").length;
+    expect(stats.cornersHome + stats.cornersAway).toBe(strokes);
+    expect(strokes).toBeGreaterThan(0);
   });
 });
 
