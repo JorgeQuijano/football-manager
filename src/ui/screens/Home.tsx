@@ -4,9 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   computeTable,
+  conditionLine,
+  conditionsFor,
   formGuide,
   seasonRounds,
-  userFixtureForRound
+  userFixtureForRound,
+  weatherOf
 } from "@/engine";
 import { useGame } from "@/state/store";
 import { formColor, initials, ordinal } from "@/ui/format";
@@ -57,7 +60,7 @@ export function Home() {
         <button
           data-testid="settings"
           onClick={() => setSettingsOpen(true)}
-          className="grid size-10 place-items-center rounded-full bg-secondary text-muted-foreground"
+          className="grid size-11 place-items-center rounded-full bg-secondary text-muted-foreground"
           aria-label="Settings"
         >
           <Settings size={17} />
@@ -87,6 +90,11 @@ export function Home() {
             <div className="mt-1.5 text-lg font-bold leading-tight">{opponent.name}</div>
             <div className="mt-0.5 text-xs text-muted-foreground">
               {isHome ? "Home" : "Away"} · {isHome ? club.name : opponent.name}'s ground
+            </div>
+            <div className="mt-1.5 text-[11px] font-semibold" data-testid="home-conditions">
+              <span style={{ color: weatherOf(conditionsFor(game, game.round).weather).tint }}>
+                {conditionLine(conditionsFor(game, game.round))}
+              </span>
             </div>
             <Button
               data-testid="continue"
@@ -128,7 +136,7 @@ export function Home() {
             <span className="eyebrow">League One</span>
             <button
               data-testid="mini-table-link"
-              className="-my-3 px-3 py-3 text-[11px] font-semibold text-primary"
+              className="-my-2.5 px-3 py-3.5 text-[11px] font-semibold text-primary"
               onClick={() => setScreen("league")}
             >
               Full table

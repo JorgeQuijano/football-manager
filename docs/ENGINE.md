@@ -420,3 +420,26 @@ Every player carries a mood (`Player.morale`, 0-100, **60 = neutral**) that move
 **UI** — `src/ui/Dynamics.tsx`, mounted as the third tab on the Squad screen (`squad-tab-dynamics`, Roster/Planner/Dynamics in a 3-col row): atmosphere card (`atmo-card`, `atmo-label`, distribution chips, the club's last-5 W/D/L strip from `SaveGame.recentResults`, and a transfer-request line), the leaders card (`leaders-card`), social groups (`group-young|core|vets` — ≤21 / 22–29 / 30+, each with average mood, its key man and a tinted bar), and the happiness list (`happiness-list`, worst first) with squad status, the top reason and Praise/Warn buttons (`talk-praise-<id>`, `talk-warn-<id>`, disabled during cooldown). Roster rows carry a mood dot (`mood-<id>`); the player sheet has a **Mood** block (`player-morale`) with the mood chip, the full factor list, the transfer-request line and its own Praise/Warn buttons.
 
 **Tests** (`describe("morale & squad dynamics")`, 12 + a normalizeSave backfill case): neutral-at-60 edges, mood bands, star-vs-fringe playing time, winning/losing runs, every factor label plus its numeric effect, the leader pull (both directions), transfer requests in and out, every chat reaction (in form / out of form / leader / cooldown / not your player), the unhappy-player renewal refusal (and the overpay escape hatch), the on-pitch effect over 60 seeded matches, the dressing-room view builders, and determinism.
+
+## 24. On-pitch realism: weather, officials, offside & VAR (`conditions.ts`)
+
+Every round now comes with weather, a named referee and a pitch — the same for the whole division — and the match engine polices the laws of the game.
+
+**Conditions** — `conditionsFor(save, round)` (seeded by `(seed, "conditions", season, round)`): weather weighted dry 38% / wet 26% / rain 14% / wind 14% / frost 8%; one of eight `REFS` (strictness 0.65–1.45 on bookings, pen tendency 0.85–1.25); pitch `good ≤6 → worn ≤12 → heavy`, downgraded a step by rain. `conditionEffects(c)` folds them into multipliers (**all exactly 1.0 for dry + a balanced ref + a good pitch**, so the neutral calibration is untouched):
+
+- `conversion` — finishing (rain 0.9, wind 0.9, frost 0.94, wet 0.96; heavy pitch ×0.97)
+- `turnover` — blocks & interceptions (rain 1.3, wet 1.12, frost 1.18; worn ×1.08, heavy ×1.18)
+- `corner` — corner/second-phase frequency (rain 1.16, wind 0.92)
+- `fouls` / `cards` (+ referee strictness) / `pen` (+ referee tendency)
+
+They land in `match.ts` at: the open-play `pGoal`, the block share + both `cornerFrom*` rolls, `foulPerMatch`, the card roll, the penalty roll, plus the corner/FK/penalty conversion terms and the second-phase corner share. `MatchInputs.conditions` is optional (defaults to `DEFAULT_CONDITIONS`) and lives on `MatchState.cond`, so the live match carries the round's conditions through the half-time split (byte-identical test still holds).
+
+**Offside** — on every open-play goal a true-offside roll (`T.offsideRate` 0.15) runs against the assistant's flag: the flag misses 35% of true offsides (`T.linesmanMiss`) and goes up wrongly on 8% of onside goals (`T.linesmanWrong`). A disallowed goal never reaches the scoreline or the scorers list; instead an `offside` stroke is added (restart: free kick to the defending side) plus commentary from `OFFSIDE_TEXT`.
+
+**VAR** — controversial calls get reviewed 60% of the time (`T.varReview`) and reviewed errors are corrected 75% of the time (`T.varCatch`): a missed offside becomes `vr: "overturned"`, a wrong flag becomes `vr: "restored"` (the goal stands after all), a confirmed call becomes `vr: "stands"`. Penalties get their own review (`T.varPenCheck` 0.12, `T.varPenOverturn` 0.25 → the spot-kick is cancelled). Every review emits a `var` MatchEvent whose `clubId` is the side the decision favoured, so `matchStats` counts `varHome`/`varAway` straight from the commentary, alongside `offsideHome`/`offsideAway` counted from the strokes.
+
+**Kickoff & stoppage** — `startMatch` unshifts an info event ("Heavy rain at Northport FC — … Referee: M. Doyle (a strict one).") and, when the match runs past 90, adds a minute-90 info event with the added time (the total is already `90 + 1..5`, so the added minutes are real minutes of play).
+
+**UI** — the Home next-match card (`home-conditions`) and the League fixtures' current-round header (`round-conditions-<n>`) show `conditionLine(c)` ("Wet · Ref: T. Marsh (lenient) · Good pitch"), tinted by weather; the match screen shows the same line plus per-side `Off` counts in the live stats strip (`match-conditions`) and again in the full-time panel (`ft-conditions`) with the `VAR ×n` count.
+
+**Tests** (`describe("on-pitch realism")`, 9): condition determinism + season pitch wear + rain downgrades, exactly-neutral defaults, rain vs dry aggregates (fewer goals, more blocks and corners), strict vs lenient referee bookings, the flag/VAR scan (offside events, overturns, restores, penalty reviews, stats == commentary), disallowed goals never counting, the kickoff/added-time announcements, conditions surviving the half-time split byte-for-byte, and determinism.

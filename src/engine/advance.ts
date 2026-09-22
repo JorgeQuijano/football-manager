@@ -13,6 +13,7 @@ import { recordMatch } from "./stats";
 import { scoutingBudgetFor, scoutingTick } from "./scouting";
 import { payPrize, recordSeason, roundAwards } from "./history";
 import { moraleTick, MORALE_START } from "./morale";
+import { conditionsFor } from "./conditions";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -83,6 +84,7 @@ const matchInputs = (save: SaveGame, round: number, homeId: string, awayId: stri
     awayPoss: away.poss,
     homePlan: planForClub(save, homeId),
     awayPlan: planForClub(save, awayId),
+    conditions: conditionsFor(save, round),
     rng
   };
 };

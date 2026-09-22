@@ -244,7 +244,10 @@ export type MatchEventType =
   | "full"
   | "corner"
   | "freekick"
-  | "penalty";
+  | "penalty"
+  | "offside"
+  | "var"
+  | "info";
 
 export interface MatchEvent {
   minute: number;
@@ -280,10 +283,60 @@ export interface MatchResult {
 
 // --- live match (pauseable, resumable, renderable) ---------------------------------
 
-export type StrokeOut = "turnover" | "out" | "foul" | "goal" | "save" | "block" | "miss";
+export type StrokeOut = "turnover" | "out" | "foul" | "goal" | "save" | "block" | "miss" | "offside";
 
 /** Set-piece tags: staging + commentary hints for the 2D view. */
 export type SetPiece = "corner" | "freekick" | "penalty" | "goalkick" | "throw";
+
+// --- on-pitch realism (v0.19): weather, officials, pitch ---------------------------
+
+export type WeatherId = "dry" | "wet" | "rain" | "wind" | "frost";
+export type PitchId = "good" | "worn" | "heavy";
+
+/** A weather state and how it bends the match. All factors are 1.0 = neutral. */
+export interface WeatherDef {
+  id: WeatherId;
+  label: string;
+  short: string;
+  tint: string;
+  blurb: string;
+  /** finishing multiplier */
+  conversion: number;
+  /** blocks / interceptions / slips multiplier */
+  turnover: number;
+  /** corner & second-phase multiplier */
+  corner: number;
+  /** fouls multiplier */
+  fouls: number;
+  /** bookings multiplier */
+  cards: number;
+}
+
+export interface PitchDef {
+  id: PitchId;
+  label: string;
+  blurb: string;
+  turnover: number;
+  conversion: number;
+}
+
+export interface RefDef {
+  id: string;
+  name: string;
+  /** "lenient" | "balanced" | "strict" */
+  label: string;
+  /** bookings multiplier */
+  strictness: number;
+  /** penalty-award multiplier */
+  pen: number;
+}
+
+/** Everything the officials and the elements bring to one round's matches. */
+export interface MatchConditions {
+  weather: WeatherId;
+  ref: string;
+  pitch: PitchId;
+}
 
 /** Attacking corner routines (set-piece creator). */
 export type CornerRoutine = "near_post" | "far_post" | "short" | "edge";
@@ -312,6 +365,8 @@ export interface Stroke {
   sp?: SetPiece; // set-piece tag (staging + commentary)
   spr?: string; // set-piece routine used (e.g. "near_post", "crossed") — staging detail
   tg?: [number, number]; // staged target point in the attacking side's frame (corners / penalties)
+  /** VAR outcome tied to this stroke (goals only): the on-field call stood, was overturned, or was restored */
+  vr?: "stands" | "overturned" | "restored";
 }
 
 export interface MatchSideState {
@@ -336,6 +391,8 @@ export interface MatchState {
   awayId: string;
   minute: number; // last simulated minute (0 = not started)
   total: number; // 90 + stoppage
+  /** weather, referee and pitch for this match (engine/conditions.ts) */
+  cond: MatchConditions;
   rngState: number;
   userSide?: "home" | "away";
   home: MatchSideState;
