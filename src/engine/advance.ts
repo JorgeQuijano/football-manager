@@ -11,6 +11,7 @@ import { INTENSITIES, developRound, learnTraits, resetSeasonDev, youthIntake } f
 import { growFamiliarity, planForClub } from "./setpieces";
 import { recordMatch } from "./stats";
 import { scoutingBudgetFor, scoutingTick } from "./scouting";
+import { payPrize, recordSeason, roundAwards } from "./history";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -174,6 +175,9 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
 
   save.live = undefined;
 
+  // awards & records for this round: player of the round, biggest win
+  roundAwards(save);
+
   // Between rounds: players who sat out recover / serve bans.
   const intensityRec = INTENSITIES[(save.training?.intensity ?? "normal") as keyof typeof INTENSITIES].recovery;
   for (const p of save.players) {
@@ -225,6 +229,9 @@ export function playRound(input: SaveGame): { save: SaveGame; userMatch?: MatchR
 /** Roll the save into the next season: age up, contracts, fresh fixtures & budgets. */
 export function nextSeason(input: SaveGame): SaveGame {
   const save: SaveGame = structuredClone(input);
+  // remember the season that just finished (career totals, records, awards) — before
+  // retirements remove players and before the season counters reset
+  recordSeason(save);
   save.season += 1;
   save.round = 1;
   save.live = undefined;
@@ -259,6 +266,8 @@ export function nextSeason(input: SaveGame): SaveGame {
   // academy intake: a kid for your first team, one or two for every AI club
   youthIntake(save);
   save.finances = freshFinances(save);
+  // prize money for last season's finish lands with the new budgets
+  payPrize(save);
   // fresh scouting budget for the season
   save.scouting.budget = scoutingBudgetFor(save.finances[save.userClubId]?.transfer ?? 1_000_000);
   const def =

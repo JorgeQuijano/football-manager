@@ -370,3 +370,24 @@ Before v0.16 every rival player was an open book (exact OVR/POT/wage/value every
 **Determinism**: all discovery/polish/progress rolls are seeded from `(seed, tags, season, round)`; two identical saves produce identical knowledge (test-enforced). AI clubs still use true values.
 
 **Tests** (`describe("scouting")`, 12 + a normalizeSave backfill/drop case): staff/pool/budget at start, own-vs-rival knowledge, single-player job progress to extensive, no-own/two-scouts-busy/already-scouting guards, poor-vs-elite width and knowledge tightening, focus matching + polish, budget pause, decay floor, shortlist trickle, hire/dismiss (cap + job cancellation), top-up, star scale, bids still work at 0 knowledge, determinism, save backfill.
+
+## 22. History, records & rewards (`history.ts`)
+
+A save now remembers every season it has played through.
+
+**State**: `SaveGame.history` (`seasons[]`, `titles`, `allTime` record book) and `SaveGame.awards` (the *current* season's live awards: `rounds[]` Player-of-the-Round feed, `bestWin`). Per player: `Player.totals` (career league totals **per club** — `{apps, goals, assists}`) and `Player.titles` (honours). `emptyHistory()`/`emptyAwards()` seed both at `newGame`; `normalizeSave` backfills/repairs them.
+
+**Per round** — `roundAwards(save)` runs from `completeRound` once the round's results are final: the **Player of the Round** is the best rating in the league with `minutes ≥ POTR_MIN_MINUTES` (45) — one entry per round, capped 18, unshifted (newest first) — and the **biggest win** tracker updates the season's (`awards.bestWin`) and all-time (`history.allTime.biggestWin`) records on margin. Deterministic: first best wins ties.
+
+**Per season** — `recordSeason(save)` runs at the very top of `nextSeason`, *before* retirements delete players and before the season counters reset:
+1. Folds each contributor's season counters into `totals[clubId]` (players with 0 apps/goals/assists are skipped, so saves stay small).
+2. Builds the `SeasonRecord`: champion (from `computeTable`), runner-up, your finish (pos/pts/W-D-L/prize), top scorer, **Player of the Season** (best average rating, `apps ≥ AWARD_MIN_APPS` = 8), **Team of the Season** (`TOTS_SHAPE` 4-3-3, best available rated player per slot, no duplicates) and the season's biggest win.
+3. Titles: `history.titles` +1 when *you* win; every player at the champion club gets `titles +1` (honours).
+4. All-time records: most career goals, most appearances, most goals in a season, best season rating (+ biggest win). Stored entries survive retirements — only a strictly better value replaces them.
+5. Resets `save.awards` for the new campaign.
+
+**Rewards** — `payPrize(save)` runs right after `freshFinances` in `nextSeason`: it adds the recorded prize money to the new transfer budget and pushes a news line ("Season 1: Ironvale United champions. You finished 5th — £2.2m prize money."). `PRIZE_MONEY` runs 8m → 700k by position via `prizeFor(position)` (clamped). Helpers: `careerTotals(p)` (sum across clubs) and `totalsFor(p, clubId)` (club record book / player sheet).
+
+**UI** — the League screen gained **Scorers** (this season's top 15: goals/assists/apps/avg, `scorers-tab`) and **History** (`history-tab`) tabs next to Table/Fixtures, and every played round in the Fixtures tab shows its Player of the Round (`potr-<round>`). The History tab shows your record card (`hist-titles`: titles, seasons, career W-D-L, prize money), the season list — each expandable (`hist-season-<n>` / `hist-detail-<n>`) to runner-up, biggest win and the full Team of the Season — the all-time **Records** card (`hist-records`) and this season's Player-of-the-Round feed (`hist-awards`). The player sheet gained a **Career** block (`player-career`): career apps/goals/assists, the same numbers for your club, the club trail when he has moved, and honours (`career-honours`). The Training screen's news card carries the season/prize lines. `topScorers(save, limit)` backs the Scorers tab and is empty pre-season (stats reset).
+
+**Tests** (`describe("history, records & awards")`, 11 + a normalizeSave repair case): one-time folding of career totals + season reset, the full SeasonRecord (vs `computeTable`), prize payment + news, champion titles and user-only title counting, all-time record updates across seasons, Player of the Round (recomputed from `lastResults`), season/all-time biggest win, per-club vs career totals, four-season run with retirements, prize/ordinal rules, mid-season state (no history yet) and determinism.

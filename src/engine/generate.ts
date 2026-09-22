@@ -9,6 +9,7 @@ import { contractFor, freshFinances } from "./transfers";
 import { peakFor } from "./training";
 import { defaultSetPieces } from "./setpieces";
 import { initScouting } from "./scouting";
+import { emptyAwards, emptyHistory } from "./history";
 
 export const CLUB_DEFS: ReadonlyArray<{ name: string; short: string; color: string }> = [
   { name: "Northport FC", short: "NOR", color: "#2ED573" },
@@ -173,7 +174,9 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     transferLog: [],
     training: { unit: "balanced", intensity: "normal" },
     setpieces: defaultSetPieces(),
-    scouting: initScouting(seed, finances[chosen].transfer),
+    scouting: initScouting(seed, finances[chosen]?.transfer ?? 1_000_000),
+    history: emptyHistory(),
+    awards: emptyAwards(),
     devNews: []
   };
 }
