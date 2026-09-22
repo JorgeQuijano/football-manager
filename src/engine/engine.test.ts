@@ -17,8 +17,9 @@ import {
 import { builtinFormation, clampToZone, resolveFormation, roleTemplate, scratchSlots, SLOT_ZONES, validateFormation, validateTemplate } from "./formations";
 import { defaultRoleFor, laneFits, roleFinish, ROLE_DEFS, ROLE_GROUPS } from "./roles";
 import { motionFor, ROLE_MOTION } from "./motion";
+import { decideIntent, INTENT_IDS, type IntentCtx, type GamePhase } from "./intents";
 import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
-import type { Player, Position, SaveGame, Stroke } from "./types";
+import type { Mentality, Player, Position, SaveGame, Stroke } from "./types";
 
 function playSeason(start: SaveGame): SaveGame {
   let save = start;
@@ -728,6 +729,160 @@ describe("motion", () => {
     expect(motionFor(p, "w", { x: 14, y: 48, pos: "MF" }).seed).toBe(
       motionFor(p, "w", { x: 50, y: 48, pos: "MF" }).seed
     );
+  });
+});
+
+describe("decisions", () => {
+  const mkP = (pos: Position, pace: number, physical = 60): Player => ({
+    id: `d-${pos}-${pace}-${physical}`,
+    clubId: "c1",
+    name: "D",
+    age: 24,
+    pos,
+    attrs: {
+      pace,
+      shooting: 60,
+      passing: 60,
+      defending: 60,
+      physical,
+      reflexes: 50,
+      handling: 50
+    },
+    condition: 100,
+    injuredWeeks: 0,
+    suspension: 0,
+    apps: 0,
+    goals: 0,
+    assists: 0
+  });
+  const ctx = (phase: GamePhase, ball = { x: 55, y: 55 }, slot = { x: 50, y: 30 }): IntentCtx => ({
+    phase,
+    mentality: "bal",
+    slot,
+    ball,
+    prog: 1 - ball.y / 100
+  });
+  const n = 400;
+  const countId = (
+    prof: ReturnType<typeof motionFor>,
+    c: IntentCtx,
+    id: string,
+    salt = "x"
+  ) => {
+    let k = 0;
+    for (let i = 0; i < n; i++) {
+      if (decideIntent(prof, c, mulberry32(hashSeed(salt, i))).id === id) k++;
+    }
+    return k;
+  };
+
+  it("is deterministic per rng stream", () => {
+    const prof = motionFor(mkP("FW", 80), "af", { x: 50, y: 25, pos: "FW" });
+    const c = ctx("in");
+    const a = mulberry32(99);
+    const b = mulberry32(99);
+    for (let i = 0; i < 50; i++) {
+      expect(decideIntent(prof, c, a).id).toBe(decideIntent(prof, c, b).id);
+    }
+  });
+
+  it("produces varied picks across streams (nobody moves in lockstep)", () => {
+    const prof = motionFor(mkP("MF", 70), "cm", { x: 50, y: 45, pos: "MF" });
+    const c = ctx("in");
+    const ids = new Set<string>();
+    for (let i = 0; i < n; i++) {
+      ids.add(decideIntent(prof, c, mulberry32(hashSeed("s", i))).id);
+    }
+    expect(ids.size).toBeGreaterThanOrEqual(3);
+  });
+
+  it("forwards choose runs far more often than centre-backs", () => {
+    const fwd = motionFor(mkP("FW", 88), "af", { x: 50, y: 22, pos: "FW" });
+    const cb = motionFor(mkP("DF", 70), "ncb", { x: 50, y: 78, pos: "DF" });
+    const ball = { x: 55, y: 55 };
+    const fCtx = ctx("in", ball, { x: 50, y: 22 });
+    const cCtx = ctx("in", ball, { x: 50, y: 78 });
+    expect(countId(fwd, fCtx, "run_behind")).toBeGreaterThan(countId(cb, cCtx, "run_behind") * 2);
+  });
+
+  it("mentality shifts the decision mix", () => {
+    const fwd = motionFor(mkP("FW", 80), "af", { x: 50, y: 25, pos: "FW" });
+    const att = countId(fwd, { ...ctx("in", undefined, { x: 50, y: 25 }), mentality: "att" }, "run_behind");
+    const def = countId(fwd, { ...ctx("in", undefined, { x: 50, y: 25 }), mentality: "def" }, "run_behind");
+    expect(att).toBeGreaterThan(def);
+    const cb = motionFor(mkP("DF", 60), "ncb", { x: 50, y: 75, pos: "DF" });
+    const oCtx = ctx("out", { x: 50, y: 45 }, { x: 50, y: 75 });
+    const dropDef = countId(cb, { ...oCtx, mentality: "def" }, "drop_deep");
+    const dropAtt = countId(cb, { ...oCtx, mentality: "att" }, "drop_deep");
+    expect(dropDef).toBeGreaterThan(dropAtt);
+  });
+
+  it("high-press roles press more than playmakers", () => {
+    const bwm = motionFor(mkP("MF", 65), "bwm", { x: 50, y: 45, pos: "MF" });
+    const pm = motionFor(mkP("MF", 65), "playmaker", { x: 50, y: 40, pos: "MF" });
+    const ball = { x: 55, y: 42 };
+    expect(countId(bwm, ctx("out", ball, { x: 50, y: 45 }), "press_ball")).toBeGreaterThan(
+      countId(pm, ctx("out", ball, { x: 50, y: 40 }), "press_ball")
+    );
+  });
+
+  it("only offers phase-appropriate intents", () => {
+    const sets: Record<GamePhase, string[]> = {
+      in: ["hold", "support", "come_short", "drift_wide", "run_behind", "overlap"],
+      out: ["hold_line", "press_ball", "cover", "drop_deep"],
+      break: ["counter", "spread", "support"],
+      recover: ["sprint_back", "delay", "press_ball"]
+    };
+    for (const phase of ["in", "out", "break", "recover"] as GamePhase[]) {
+      const prof = motionFor(mkP("MF", 70), "cm", { x: 30, y: 45, pos: "MF" });
+      for (let i = 0; i < 80; i++) {
+        const pick = decideIntent(prof, ctx(phase), mulberry32(hashSeed(phase, i)));
+        expect(sets[phase]).toContain(pick.id);
+        expect(INTENT_IDS).toContain(pick.id);
+      }
+    }
+  });
+
+  it("goalkeepers stay home", () => {
+    const gk = motionFor(mkP("GK", 60), "keeper", { x: 50, y: 90, pos: "GK" });
+    const phases: GamePhase[] = ["in", "out", "break", "recover"];
+    for (const phase of phases) {
+      for (let i = 0; i < 120; i++) {
+        const pick = decideIntent(
+          gk,
+          ctx(phase, { x: 60, y: 40 }, { x: 50, y: 90 }),
+          mulberry32(hashSeed("gk", phase, i))
+        );
+        expect(["hold", "hold_line", "come_short"]).toContain(pick.id);
+      }
+    }
+  });
+
+  it("targets make sense", () => {
+    const prof = motionFor(mkP("FW", 85), "af", { x: 50, y: 25, pos: "FW" });
+    const ball = { x: 55, y: 60 };
+    const picks = Array.from({ length: 300 }, (_, i) =>
+      decideIntent(prof, ctx("in", ball), mulberry32(hashSeed("t", i)))
+    );
+    const run = picks.find((r) => r.id === "run_behind");
+    if (run) expect(run.target.y).toBeLessThan(ball.y);
+    for (let i = 0; i < 100; i++) {
+      const p2 = decideIntent(
+        motionFor(mkP("MF", 70), "bwm", { x: 50, y: 45, pos: "MF" }),
+        ctx("out", ball),
+        mulberry32(hashSeed("t2", i))
+      );
+      if (p2.id === "press_ball") {
+        expect(Math.abs(p2.target.y - ball.y)).toBeLessThan(1);
+        expect(Math.abs(p2.target.x - ball.x)).toBeLessThan(1);
+      }
+    }
+    for (const r of picks) {
+      expect(r.seconds).toBeGreaterThanOrEqual(0.7);
+      expect(r.seconds).toBeLessThanOrEqual(4.3);
+      expect(r.mix).toBeGreaterThanOrEqual(0.35);
+      expect(r.mix).toBeLessThanOrEqual(0.85);
+    }
   });
 });
 

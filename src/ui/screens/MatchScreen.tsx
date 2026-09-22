@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MatchState, Mentality, MotionProfile, RoleId } from "@/engine";
-import { motionFor, T, finalizeLive, laneFits, matchStats, ROLE_DEFS, ROLE_GROUPS } from "@/engine";
+import type { GamePhase, IntentPick, MatchState, Mentality, MotionProfile, RoleId, Rng } from "@/engine";
+import {
+  decideIntent,
+  hashSeed,
+  motionFor,
+  mulberry32,
+  T,
+  finalizeLive,
+  laneFits,
+  matchStats,
+  ROLE_DEFS,
+  ROLE_GROUPS
+} from "@/engine";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -140,6 +151,8 @@ function LiveMatchScreen() {
     transT: 0,
     transSide: null as null | Side,
     stage: null as null | StageInfo,
+    intents: new Map<string, { pick: IntentPick; phase: GamePhase; until: number }>(),
+    intentRngs: new Map<string, Rng>(),
     phases: null as null | Phase[],
     anim: new Map<string, { x: number; y: number }>(),
     flashT: 0,
@@ -275,6 +288,48 @@ function LiveMatchScreen() {
       return put(r2 % 2 === 0 ? rr2[0] - 9 : rr2[0] + 9, rr2[1]);
     };
 
+    // ---- player decisions (engine/intents.ts): each player picks their own
+    // intent every few seconds from role/attribute/mentality/situation weights,
+    // on their own seeded RNG stream — nobody moves in lockstep.
+    const MATCH_KEY = (() => {
+      const lv = liveRef.current;
+      return `${lv.state.homeId}:${lv.state.awayId}`;
+    })();
+    const ownBall = (side: Side) => {
+      const up = attacksUp(side);
+      const m = sideMirror(side);
+      return { x: m ? 100 - C.ballX : C.ballX, y: up ? C.ballY : 100 - C.ballY };
+    };
+    const screenFromOwn = (side: Side, pt: { x: number; y: number }) => {
+      const up = attacksUp(side);
+      const m = sideMirror(side);
+      return { x: m ? 100 - pt.x : pt.x, y: up ? pt.y : 100 - pt.y };
+    };
+    const decideFor = (side: Side, slot: number, phase: GamePhase) => {
+      const sd = sideOf(side);
+      const key = side + ":" + slot;
+      let rng = C.intentRngs.get(key);
+      if (!rng) {
+        rng = mulberry32(hashSeed(MATCH_KEY, side, slot));
+        C.intentRngs.set(key, rng);
+      }
+      const prof = profRef.current.get(key) ?? DEFAULT_PROFILE;
+      const ball = ownBall(side);
+      const cd = sd.coords[slot];
+      const pick = decideIntent(
+        prof,
+        {
+          phase,
+          mentality: sd.mentality,
+          slot: { x: cd[0], y: cd[1] },
+          ball,
+          prog: 1 - ball.y / 100
+        },
+        rng
+      );
+      C.intents.set(key, { pick, phase, until: C.time + pick.seconds });
+    };
+
     /** in possession · out of possession · the 2.5 s after a turnover */
     const phaseOf = (side: Side): "in" | "out" | "break" | "recover" => {
       if (C.transT > 0 && C.transSide) return side === C.transSide ? "break" : "recover";
@@ -310,6 +365,9 @@ function LiveMatchScreen() {
       else if (phase === "in") depth = prof.push * (0.5 + 0.5 * prog);
       else if (phase === "recover") depth = -prof.drop - prof.recovery * 9;
       else depth = -prof.drop * (0.5 + 0.5 * (1 - prog));
+      // team mentality shifts the whole block: attacking sits higher, defensive deeper
+      if (sd.mentality === "att") depth += 4;
+      else if (sd.mentality === "def") depth -= 5;
       y += dir * depth * (prof.gk ? 0.25 : 1);
       // role width: hold the line or come inside
       const sideSign = base.x >= 50 ? 1 : -1;
@@ -333,6 +391,13 @@ function LiveMatchScreen() {
       }
       x += (bx - x) * pull;
       y += (by - y) * pull;
+      // blend in this player's own decision for this moment (engine/intents.ts)
+      const ent = C.intents.get(side + ":" + slot);
+      if (ent) {
+        const t = screenFromOwn(side, ent.pick.target);
+        x += (t.x - x) * ent.pick.mix;
+        y += (t.y - y) * ent.pick.mix;
+      }
       // individual wandering — sized by the role's roaming and the player's
       // stamina, offset per player so no two move in lockstep
       const w1 = Math.sin(C.time * 0.35 + prof.seed * 6.283) * prof.roam * 0.35;
@@ -434,6 +499,10 @@ function LiveMatchScreen() {
         const phase = phaseOf(side);
         const hurry =
           (phase === "break" || phase === "recover" ? 1.2 : 1) * (C.stage ? 1.5 : 1);
+        for (let i = 0; i < 11; i++) {
+          const ent = C.intents.get(side + ":" + i);
+          if (!ent || ent.until <= C.time || ent.phase !== phase) decideFor(side, i, phase);
+        }
         for (let i = 0; i < 11; i++) {
           const key = side + ":" + i;
           const prof = profRef.current.get(key) ?? DEFAULT_PROFILE;
@@ -547,6 +616,11 @@ function LiveMatchScreen() {
             ball: { x: Math.round(C.ballX * 10) / 10, y: Math.round(C.ballY * 10) / 10 },
             phase: { home: phaseOf("home"), away: phaseOf("away") },
             stage: C.stage ? C.stage.kind : null,
+            intents: (() => {
+              const m: Record<string, string> = {};
+              for (const [k, v] of C.intents) m[k] = v.pick.id;
+              return m;
+            })(),
             pos
           };
         }
