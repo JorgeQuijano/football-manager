@@ -40,7 +40,8 @@ import {
   T
 } from "@/engine";
 import type { BidResponse } from "@/engine";
-import type { AttrKey, TrainingPlan } from "@/engine";
+import type { AttrKey, CornerRoutine, FreeKickRoutine, TrainingPlan } from "@/engine";
+import { cleanSetPieces } from "@/engine";
 import { loadSave, persistSave } from "./save";
 
 export type Screen =
@@ -51,6 +52,7 @@ export type Screen =
   | "league"
   | "transfers"
   | "training"
+  | "setpieces"
   | "match"
   | "seasonEnd"
   | "builder";
@@ -95,6 +97,8 @@ interface AppState {
   cancelDeal: () => void;
   setTraining: (patch: Partial<TrainingPlan>) => void;
   setFocus: (playerId: string, focus: AttrKey | null) => void;
+  setRoutine: (kind: "corner" | "freekick", routine: string) => void;
+  setTaker: (kind: "corner" | "freekick" | "penalty", playerId: string | null) => void;
   resetGame: () => void;
   importSave: (save: SaveGame) => void;
 }
@@ -528,6 +532,33 @@ export const useGame = create<AppState>()((set, get) => ({
     const save: SaveGame = {
       ...game,
       players: game.players.map((p) => (p.id === playerId ? { ...p, focus } : p))
+    };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  setRoutine: (kind, routine) => {
+    const { game } = get();
+    if (!game) return;
+    const plan = structuredClone(game.setpieces);
+    if (kind === "corner") plan.corner = routine as CornerRoutine;
+    else plan.freekick = routine as FreeKickRoutine;
+    const save: SaveGame = {
+      ...game,
+      setpieces: cleanSetPieces(plan, new Set(game.players.map((p) => p.id)))
+    };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  setTaker: (kind, playerId) => {
+    const { game } = get();
+    if (!game) return;
+    const plan = structuredClone(game.setpieces);
+    plan.takers[kind] = playerId;
+    const save: SaveGame = {
+      ...game,
+      setpieces: cleanSetPieces(plan, new Set(game.players.map((p) => p.id)))
     };
     set({ game: save });
     schedulePersist(save);

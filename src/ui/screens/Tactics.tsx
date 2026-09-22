@@ -4,8 +4,11 @@ import {
   attackStrength,
   autoLineup,
   builtinFormation,
+  CORNER_ROUTINES,
   defenseStrength,
   defaultRoleFor,
+  familiarityOf,
+  FK_ROUTINES,
   FORMATION_IDS,
   isAvailable,
   overallFor,
@@ -264,6 +267,26 @@ export function Tactics() {
           </button>
         ))}
       </div>
+
+      <button
+        data-testid="setpieces-link"
+        onClick={() => setScreen("setpieces")}
+        className="flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-3 text-left"
+      >
+        <span className="min-w-0">
+          <span className="block text-sm font-bold">Set pieces</span>
+          <span className="block truncate text-[11px] text-muted-foreground">
+            {CORNER_ROUTINES[game.setpieces.corner].label} corners ·{" "}
+            {FK_ROUTINES[game.setpieces.freekick].label} free kicks ·{" "}
+            {Math.min(
+              familiarityOf(game.setpieces, "corner", game.setpieces.corner),
+              familiarityOf(game.setpieces, "freekick", game.setpieces.freekick)
+            )}
+            % familiar
+          </span>
+        </span>
+        <span className="shrink-0 text-sm font-bold text-primary">›</span>
+      </button>
 
       <Card>
         <CardContent className="space-y-2 p-3 text-xs">

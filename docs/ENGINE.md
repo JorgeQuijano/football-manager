@@ -35,6 +35,7 @@ src/engine/
   transfers.ts   Contracts, wages, market values, transfer windows, bids/terms negotiation, AI churn, contract rollover
   training.ts    Per-round development (age/minutes/focus/intensity), potential peaks, trait learning, academy intake
   planner.ts     Squad planner: career stages, contract states, per-line depth levels, next-season projection
+  setpieces.ts   Set-piece routines, nominated takers, familiarity growth, per-club plans (AI + user)
   index.ts       Barrel export
 ```
 
@@ -305,3 +306,27 @@ FM23-style depth planning, derived entirely from existing save data (no schema a
 - **`squadPlan(save, "now" | "next")`** returns per-line groups (GK/DF/MF/FW in that order) with the formation's slots + roles for that line, the line's players ranked by their best `slotScoreFor` across those slots (ties: overall, then id), plus stage/status/leaving flags. `view: "next"` projects the post-rollover squad: ages +1, expiring/retiring players flagged `leaving` and excluded from `kept`/depth, and `wageBillKept` reports the wages that walk free. The summary carries the stage counts, `total`/`kept`, `avgAge` and both wage figures.
 - UI: `src/ui/Planner.tsx` (`PlannerView`) mounted as the second tab of the Squad screen (`squad-tab-squad` / `squad-tab-planner`); view toggle `planner-toggle-now|next`, stats `plan-stat-players` / `plan-stat-wage`, `plan-expiring-note`, stage rows `stage-<stage>`, per-line badges `depth-<POS>`, player rows `plan-row-<id>` (two-line layout: name+age+OVR/POT, then stage/status chips - verified no truncation at 320px, 44px+ rows), and a scouting CTA `scout-<POS>` on gap/thin lines that jumps to the Transfer centre.
 - Tests (`describe("planner")`, 7): stage boundaries, contract states, depth mapping, formation-driven groups + ranking order, gap detection after gutting a line, next-season projection (leavers, +1 age, wages), summary integrity + determinism.
+
+## 19. Set-piece creator (`setpieces.ts`)
+
+FM24-style authorship over the set-piece engine: routines, nominated takers and routine familiarity.
+
+**Plan** — `SaveGame.setpieces: SetPiecePlan` = `{ corner, freekick, takers: { corner, freekick, penalty }, familiarity }`. `defaultSetPieces()` = far-post corners + direct free kicks at 60% familiarity, no nominated takers. `cleanSetPieces(plan, playerIds)` validates everything (unknown routine -> default, stale taker ids -> null, familiarity clamped 0-100) and seeds a 25% entry for the active routines; `normalizeSave` runs it on every load. `aiSetPieces(save, clubId)` gives each AI club a deterministic routine per season (hash of seed+club+season, 60% familiar); `planForClub(save, clubId)` picks the user's plan or the AI's.
+
+**Routines and their match effects** (`CORNER_ROUTINES` / `FK_ROUTINES`; wired in `resolveCorner` / `resolveFreeKick`):
+- `near_post` — goal x1.3, second phases x0.75, delivery targets the best physical header.
+- `far_post` — the balanced default (x1.0 / x1.0).
+- `short` — goal x0.35, second phases x1.9 (the move keeps going).
+- `edge` — goal x0.6, second phases x1.4, targets the best shooter.
+- FK `direct` — the classic shot (x1.0 of `fkGoalBase`).
+- FK `crossed` — a headed delivery: uses the corner formula (x1.1) with the best physical attacker; the taker gets the assist.
+- FK `short` — x0.2, almost never a direct threat.
+Every routine scales by `familiarityFactor(fam)` = 0.9 + 0.1 x fam/100 (never trained -> 0.9, fully grooved -> 1.0). `growFamiliarity(save)` runs each round from `completeRound`: +4 for the active routines, +7 when the training unit is `setpieces`, capped at 100; switching routines leaves the old routine's value intact and starts the new one at 25.
+
+**Takers** — `plan.takers.<kind>` holds a player id (null = auto). `prefTaker(list, id)` in `match.ts` uses the nominated player whenever he is on the pitch, otherwise falls back to the existing weighted pick (best shooter for penalties/direct FKs, best crosser for corners/crossed FKs).
+
+**Strokes** carry `spr` (the routine used) alongside `sp`/`tg`, so the 2D view stages routine-aware shapes: `stageSpots(kind, routine, left)` in `MatchScreen.tsx` (authored with the flag on the left, mirrored for right-side corners) — near-post cluster / far-post cluster / two short options at the flag / edge-of-the-box pull-back, plus crossed-FK box loading and short-FK players over the ball. Defenders still man-mark the staged attackers by rank, so the defensive response follows the routine too.
+
+**UI** — `src/ui/screens/SetPieces.tsx` (screen `setpieces`, opened from the Set-pieces card on Tactics, `setpieces-link`): routine radio rows with blurbs and familiarity bars (`sp-corner-*`, `sp-fk-*`), three taker selects (`sp-taker-*`, options sorted by Dead-Ball Specialist then ability, star-marked), and a familiarity explainer.
+
+**Tests** (`describe("set piece creator")`, 10): metadata/defaults, familiarity growth + per-routine memory, nominated taker used when playing, fallback when benched, corner routine goal-rate and second-phase ordering, FK crossed > short, `spr` tags in strokes, plan determinism, AI routine variety, plan normalisation.

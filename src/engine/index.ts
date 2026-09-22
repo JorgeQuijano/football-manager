@@ -8,6 +8,7 @@ export * from "./traits";
 export * from "./transfers";
 export * from "./training";
 export * from "./planner";
+export * from "./setpieces";
 export * from "./formations";
 export * from "./ratings";
 export * from "./league";

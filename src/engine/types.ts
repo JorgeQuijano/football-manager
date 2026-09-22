@@ -197,6 +197,21 @@ export type StrokeOut = "turnover" | "out" | "foul" | "goal" | "save" | "block" 
 /** Set-piece tags: staging + commentary hints for the 2D view. */
 export type SetPiece = "corner" | "freekick" | "penalty" | "goalkick" | "throw";
 
+/** Attacking corner routines (set-piece creator). */
+export type CornerRoutine = "near_post" | "far_post" | "short" | "edge";
+/** Attacking free-kick routines. */
+export type FreeKickRoutine = "direct" | "crossed" | "short";
+
+/** The club's set-piece plan: routines, nominated takers and routine familiarity. */
+export interface SetPiecePlan {
+  corner: CornerRoutine;
+  freekick: FreeKickRoutine;
+  /** explicit taker ids per discipline (null = auto, best available) */
+  takers: { corner: string | null; freekick: string | null; penalty: string | null };
+  /** `corner:near_post` → familiarity 0-100 (grows with match practice + set-piece training) */
+  familiarity: Partial<Record<string, number>>;
+}
+
 /** One possession phase rendered on the 2D pitch: a pass chain + how it ended. */
 export interface Stroke {
   m: number; // minute
@@ -207,6 +222,7 @@ export interface Stroke {
   b?: number; // other-side slot involved: keeper (save), blocker (block), interceptor (turnover)
   r?: number; // index into `events` this stroke produced
   sp?: SetPiece; // set-piece tag (staging + commentary)
+  spr?: string; // set-piece routine used (e.g. "near_post", "crossed") — staging detail
   tg?: [number, number]; // staged target point in the attacking side's frame (corners / penalties)
 }
 
@@ -220,6 +236,7 @@ export interface MatchSideState {
   coords: [number, number][]; // formation x/y per slot (x: 0-100 L→R, y: 0-100 opp goal→own goal)
   bench: string[]; // player ids still available to come on
   mentality: Mentality;
+  plan: SetPiecePlan; // set-piece routines, takers and familiarity
   goals: number;
   subs: number; // substitutions used (max T.maxSubs)
   windows: number; // in-match substitution windows used (max T.subWindowsMax)
@@ -324,6 +341,8 @@ export interface SaveGame {
   pending?: { playerId: string; fee: number; fromClubId: string };
   /** human-readable transfer feed, newest first (capped) */
   transferLog: string[];
+  /** the user club's set-piece plan (routines, takers, familiarity) — engine/setpieces.ts */
+  setpieces: SetPiecePlan;
   /** the user club's training plan (engine/training.ts) */
   training: TrainingPlan;
   /** training/development news lines (trait learning, academy intake…), newest first */
