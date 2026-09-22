@@ -463,3 +463,23 @@ The club now has a public: a press conference before every round, a rolling news
 **UI** — `src/ui/Press.tsx`: the **MediaCard** on Home (`media-card`) shows the pending conference with a `press-open` button, the Fans/Press meters (`fansTone`/`respectTone` labels: Delirious → Turned; Trusted → Under fire) and the latest three headlines; `PressSheet` asks the questions (`press-q`, `press-answer-0|1|2`, `press-effects` for the reaction, `press-next`, `press-skip`); `NewsSheet` (`news-open`) is the full paper — meters, an amber "You owe them" band for live promises, and every headline with a `kind` chip (Report/Rumour/Terrace/Press/Promise) and its season/round.
 
 **Tests** (`describe("media & press")`, 13): the opening conference, pool questions keyed to situation (unrest/crisis) and three answers each, answering applying effects + finishing + the back-pages headline, the targeted player taking the morale hit hardest, promises kept and broken, results moving fans and writing reports, the capped newest-first feed, per-round scheduling determinism, skipping, rumours naming real players, the morale factor + gate receipts, season determinism, and the normalizeSave backfill/repair.
+
+## 26. Calendar: the season's dates (`calendar.ts`)
+
+The save finally has dates. One round = one week: **season 1 kicks off Saturday 8 August 2026** and every season after starts a year later, so round R's match day is `seasonStart + (R − 1) weeks` and the training week runs Mon–Fri ahead of it. Nothing is stored — the whole calendar is derived arithmetic from `(season, round)`, so old saves get it for free.
+
+**Dates without `Date`** — pure civil-date helpers (Hinnant's `days_from_civil`/`civil_from_days`): `serial`, `fromSerial`, `addDays`, `diffDays`, `dayOfWeek` (0 = Sunday), `daysInMonth` (leap-aware), `sameDay`, `fmtShort` ("Sat 19 Sep") and `fmtLong`. No timezone, no locale, no mutable state: the same save always renders the same calendar.
+
+**One day** — `dayFor(save, date)` classifies a date inside the season span (the Monday before round 1 → the Sunday after the last round; outside it returns `null`):
+
+- **match day** (Saturday) — `{ round, oppId, home, played, gf, ga, result }` from the fixture list
+- **training day** (Mon–Fri) — the week's unit and intensity, labelled (`"Attacking · Hard"`)
+- **rest day** (Sunday) — nothing
+- **events** — `Season opener`, `Final day`, `Summer window opens/closes` (after rounds 1/3), `Winter window opens/closes` (rounds 9/10), on match day only
+- **currentWeek** — true inside the week of `save.round` (falls back to the final round once the season is done)
+
+**A month** — `calendarMonth(save, y, m)` returns a 6×7 grid with every day in its weekday column (out-of-season days keep their slot as `null`, so the grid never slides), plus the flat `days` list. `seasonMonths(save)` gives the paged month list (August → December for an 18-round season), and `upcoming(save, n)` lists the next `n` unplayed fixtures with their dates and the week's training focus.
+
+**UI** — `src/ui/Calendar.tsx`: `CalendarView` is the **Diary** tab on the League screen (Table · Fixtures · **Diary** · Scorers · History). Month header with ‹ › paging (44px buttons), a Sunday-first 7-column grid where each 44px cell shows the day, the opponent's short code on match days (tinted green/red by result, bold when played), a dot on training days, an amber corner dot on event days, and a ring on the current week; below it a **Matches this month** list (date, round, opponent, score) and a **Dates to note** list. Tapping any day opens `DaySheet` (`day-sheet`): the long date, the fixture with home/away and full-time score, the training block with an **Open training** shortcut, the day's events, or "a rest day". The Home next-match card now carries the date too (`Next · Round 7 of 18 · Sat 19 Sep`).
+
+**Tests** (`describe("calendar")`, 9): the civil arithmetic (serial round trip over 400 days, leap years, known weekdays, 8 Aug 2026 = Saturday), the week-by-week season layout and month paging, match/training/rest classification, results in the past vs open fixtures ahead, window and bookend markers (on match day only), the month grid's weekday alignment checked across every month of the season, "this week" following the round, `upcoming()` order and shift after a round, and determinism (identical grids, save untouched).

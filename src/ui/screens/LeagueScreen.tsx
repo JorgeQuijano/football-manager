@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
+import { CalendarView } from "@/ui/Calendar";
 
 export function LeagueScreen() {
   const game = useGame((s) => s.game)!;
@@ -34,6 +35,7 @@ export function LeagueScreen() {
         <TabsList className="h-11! w-full">
           <TabsTrigger className="h-11!" value="table">Table</TabsTrigger>
           <TabsTrigger className="h-11!" value="fixtures">Fixtures</TabsTrigger>
+          <TabsTrigger className="h-11!" value="calendar">Diary</TabsTrigger>
           <TabsTrigger className="h-11!" value="scorers">Scorers</TabsTrigger>
           <TabsTrigger className="h-11!" value="history">History</TabsTrigger>
         </TabsList>
@@ -75,6 +77,10 @@ export function LeagueScreen() {
               </table>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="calendar">
+          <CalendarView />
         </TabsContent>
 
         <TabsContent value="fixtures">
