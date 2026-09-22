@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Settings } from "lucide-react";
+import { Bell, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -11,7 +11,8 @@ import {
   roundDate,
   seasonRounds,
   userFixtureForRound,
-  weatherOf
+  weatherOf,
+  inboxUnread
 } from "@/engine";
 import { useGame } from "@/state/store";
 import { formColor, initials, ordinal } from "@/ui/format";
@@ -23,6 +24,7 @@ export function Home() {
   const advance = useGame((s) => s.advance);
   const setScreen = useGame((s) => s.setScreen);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const unread = inboxUnread(game);
 
   const club = game.clubs.find((c) => c.id === game.userClubId)!;
   const table = computeTable(game.fixtures, game.clubs);
@@ -60,6 +62,22 @@ export function Home() {
             {ordinal(mine.position)} · {mine.pts} pts · Season {game.season}
           </div>
         </div>
+        <button
+          data-testid="inbox-link"
+          onClick={() => setScreen("inbox")}
+          className="relative grid size-11 place-items-center rounded-full bg-secondary text-muted-foreground"
+          aria-label={unread > 0 ? `Inbox, ${unread} unread` : "Inbox"}
+        >
+          <Bell size={17} />
+          {unread > 0 && (
+            <span
+              data-testid="inbox-badge"
+              className="absolute -right-0.5 -top-0.5 grid min-w-[18px] place-items-center rounded-full bg-[#FF6B6B] px-1 text-[10px] font-extrabold text-white"
+            >
+              {unread > 9 ? "9+" : unread}
+            </span>
+          )}
+        </button>
         <button
           data-testid="settings"
           onClick={() => setSettingsOpen(true)}

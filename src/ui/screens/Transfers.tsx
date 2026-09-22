@@ -25,6 +25,7 @@ import {
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
 import { ScoutingView, Stars } from "@/ui/Scouting";
+import { PlayerSearch } from "@/ui/Search";
 import { PlayerDetailSheet } from "@/ui/sheets";
 import {
   ContractDepth,
@@ -101,7 +102,7 @@ export function Transfers() {
   const others = game.clubs.filter((c) => c.id !== game.userClubId);
   const [browseId, setBrowseId] = useState(others[0]?.id ?? "");
   const [deal, setDeal] = useState<Deal | null>(null);
-  const [tab, setTab] = useState<"market" | "scouting">("market");
+  const [tab, setTab] = useState<"market" | "scouting" | "search">("market");
   const [detailId, setDetailId] = useState<string | null>(null);
   const [scoutNote, setScoutNote] = useState<{ text: string; bad: boolean } | null>(null);
   const scoutPlayer = useGame((s) => s.scoutPlayer);
@@ -335,8 +336,8 @@ export function Transfers() {
         </span>
       </header>
 
-      <div className="grid grid-cols-2 gap-1.5">
-        {(["market", "scouting"] as const).map((t) => (
+      <div className="grid grid-cols-3 gap-1.5">
+        {(["market", "scouting", "search"] as const).map((t) => (
           <button
             key={t}
             data-testid={`transfers-tab-${t}`}
@@ -347,7 +348,7 @@ export function Transfers() {
                 : "border border-border bg-card text-muted-foreground"
             }`}
           >
-            {t === "market" ? "Market" : "Scouting"}
+            {t === "market" ? "Market" : t === "scouting" ? "Scouting" : "Search"}
           </button>
         ))}
       </div>
@@ -360,6 +361,8 @@ export function Transfers() {
 
       {tab === "scouting" ? (
         <ScoutingView onOpenPlayer={setDetailId} />
+      ) : tab === "search" ? (
+        <PlayerSearch onOpenPlayer={setDetailId} />
       ) : (
         <>
       <MarketBar />

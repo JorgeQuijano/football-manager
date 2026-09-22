@@ -10,6 +10,7 @@ import { hashSeed, mulberry32, pick } from "./rng";
 import { overallFor, squadOf } from "./ratings";
 import { marketValue, money, transferWindow, wageBill, wageDemand, wageHeadroom } from "./transfers";
 import { pushNews } from "./training";
+import { pushInbox } from "./inbox";
 
 /**
  * The business side of the market: what the board will sanction, what a player
@@ -95,10 +96,12 @@ export function policyPayoff(save: SaveGame): void {
   if (!costly && !tooOld && !overWage) {
     const bonus = young ? 900_000 : 600_000;
     fin.transfer += bonus;
+    pushInbox(save, { kind: "board", title: `Board pleased: +${money(bonus)}`, body: policy.label, screen: "transfers" });
     pushNews(save, `The board are pleased with the window — ${money(bonus)} added to the budget ("${policy.label}").`);
   } else {
     const cut = 500_000;
     fin.transfer = Math.max(0, fin.transfer - cut);
+    pushInbox(save, { kind: "board", title: `Board unhappy: −${money(cut)}`, body: `${policy.label} was not followed.`, screen: "transfers" });
     pushNews(
       save,
       `The board are unconvinced: ${money(spend)} spent${tooOld ? " and the squad got older" : overWage ? " and the wage bill leapt" : ""} — "${policy.label}" was not followed.`

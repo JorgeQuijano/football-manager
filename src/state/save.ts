@@ -122,6 +122,10 @@ export function normalizeSave(save: SaveGame): SaveGame {
     if (typeof p.lastTalk !== "number" || !Number.isFinite(p.lastTalk)) delete p.lastTalk;
     if (p.talkKind !== "praise" && p.talkKind !== "warn") delete p.talkKind;
   }
+  // inbox (v0.26)
+  if (!Array.isArray(save.inbox)) save.inbox = [];
+  save.inbox = save.inbox.filter((i) => i && typeof i.title === "string" && typeof i.id === "string").slice(0, 60);
+  save.inboxSeq = typeof save.inboxSeq === "number" ? save.inboxSeq : save.inbox.length;
   // player detail (v0.25): match sharpness, wear, caps, retraining, moves, targets, armband
   if (!Array.isArray(save.discipline)) save.discipline = [];
   if (save.captain && !save.players.some((x) => x.id === save.captain && x.clubId === save.userClubId)) save.captain = undefined;
@@ -252,6 +256,83 @@ export function normalizeSave(save: SaveGame): SaveGame {
     return r && ROLE_GROUPS[slot].includes(r) ? r : defaultRoleFor(slot);
   });
   return save;
+}
+
+// --- save slots (v0.26) -------------------------------------------------------------------
+// The live save stays in `fm-save-v1` (so nothing about the existing flow changes); slots are
+// extra copies with a small index the Settings screen reads.
+
+export interface SlotMeta {
+  n: number; // 0 = autosave, 1..3 = manual slots
+  name: string;
+  clubName: string;
+  season: number;
+  round: number;
+  updatedAt: number;
+  seed: number;
+  auto: boolean;
+}
+
+const SLOT_KEY = (n: number): string => `fm-slot-${n}`;
+const SLOT_INDEX = "fm-slots";
+export const SLOT_COUNT = 4; // 0 autosave + 3 manual
+
+const metaOf = (n: number, save: SaveGame, name?: string): SlotMeta => ({
+  n,
+  name: name ?? (n === 0 ? "Autosave" : `Slot ${n}`),
+  clubName: save.clubs.find((c) => c.id === save.userClubId)?.name ?? "?",
+  season: save.season,
+  round: save.round,
+  updatedAt: Date.now(),
+  seed: save.seed,
+  auto: n === 0
+});
+
+export async function listSlots(): Promise<SlotMeta[]> {
+  try {
+    const idx = (await get<SlotMeta[]>(SLOT_INDEX)) ?? [];
+    return idx.slice().sort((a, b) => a.n - b.n);
+  } catch {
+    return [];
+  }
+}
+
+export async function saveToSlot(n: number, save: SaveGame, name?: string): Promise<SlotMeta | null> {
+  try {
+    const meta = metaOf(n, save, name);
+    await set(SLOT_KEY(n), save);
+    const idx = ((await get<SlotMeta[]>(SLOT_INDEX)) ?? []).filter((m) => m.n !== n);
+    idx.push(meta);
+    await set(SLOT_INDEX, idx);
+    return meta;
+  } catch {
+    return null;
+  }
+}
+
+export async function loadSlot(n: number): Promise<SaveGame | null> {
+  try {
+    const raw = await get<SaveGame>(SLOT_KEY(n));
+    if (!raw || raw.saveVersion !== 1 || !Array.isArray(raw.players)) return null;
+    return normalizeSave(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteSlot(n: number): Promise<void> {
+  try {
+    await del(SLOT_KEY(n));
+    const idx = ((await get<SlotMeta[]>(SLOT_INDEX)) ?? []).filter((m) => m.n !== n);
+    await set(SLOT_INDEX, idx);
+  } catch {
+    // nothing to do
+  }
+}
+
+/** Keep the autosave current — called on every round change, throttled by the caller. */
+export async function autosave(save: SaveGame): Promise<void> {
+  await saveToSlot(0, save);
 }
 
 export async function loadSave(): Promise<SaveGame | null> {

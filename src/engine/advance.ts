@@ -19,6 +19,7 @@ import { applyPreContracts, payAddons, payTransferAddons, policyFor, settleDebts
 import { loanRollover } from "./loans";
 import { internationalTick, jadedTick, sharpnessTick } from "./physical";
 import { moveTick, retrainTick, settleTargets } from "./individual";
+import { pushInbox } from "./inbox";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -190,6 +191,16 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
   const mine = save.lastResults.find((r) => r.homeId === save.userClubId || r.awayId === save.userClubId);
   if (mine) {
     const h = mine.homeId === save.userClubId;
+    // the inbox gets the result the moment it lands
+    const gf = h ? mine.homeGoals : mine.awayGoals;
+    const ga = h ? mine.awayGoals : mine.homeGoals;
+    const opp = save.clubs.find((c) => c.id === (h ? mine.awayId : mine.homeId));
+    pushInbox(save, {
+      kind: "match",
+      title: `${gf > ga ? "Win" : gf === ga ? "Draw" : "Defeat"} ${gf}–${ga} ${h ? "v" : "at"} ${opp?.short ?? "?"}`,
+      body: `Round ${mine.round} · ${gf > ga ? "three points in the bag" : gf === ga ? "a point apiece" : "a result to forget"}.`,
+      screen: "league"
+    });
     save.recentResults = [
       {
         season: save.season,
@@ -210,6 +221,22 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
     if (p.suspension > 0 && !playedIds.has(p.id)) p.suspension--;
     const rec = weeklyRecovery(p) * (p.clubId === save.userClubId ? intensityRec : 1);
     p.condition = Math.min(100, p.condition + rec);
+  }
+
+  // a sending-off is a decision waiting for you — put it in the inbox
+  if (userResult) {
+    for (const u of userResult.updates) {
+      if (!u.red) continue;
+      const p = save.players.find((x) => x.id === u.playerId);
+      if (!p || p.clubId !== save.userClubId) continue;
+      pushInbox(save, {
+        kind: "discipline",
+        title: `${p.name} was sent off`,
+        body: "Decide: fine him, warn him, or let it go — the Squad screen has the buttons.",
+        playerId: p.id,
+        screen: "squad"
+      });
+    }
   }
 
   // Training: every player develops a little each round (age × minutes × focus × intensity).

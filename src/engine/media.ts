@@ -4,6 +4,7 @@ import { computeTable } from "./league";
 import { overallFor, squadOf } from "./ratings";
 import { formOf } from "./stats";
 import { pushNews } from "./training";
+import { pushInbox } from "./inbox";
 
 export const FANS_START = 55;
 export const RESPECT_START = 55;

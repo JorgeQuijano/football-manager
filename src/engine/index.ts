@@ -21,6 +21,7 @@ export * from "./market";
 export * from "./loans";
 export * from "./physical";
 export * from "./individual";
+export * from "./inbox";
 export * from "./formations";
 export * from "./ratings";
 export * from "./league";

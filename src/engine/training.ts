@@ -11,6 +11,7 @@ import type {
 import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
 import { overallFor, squadOf } from "./ratings";
 import { hasTrait, TRAITS } from "./traits";
+import { pushInbox as inboxPush } from "./inbox";
 
 export const ATTR_KEYS: AttrKey[] = [
   "pace",
@@ -312,6 +313,8 @@ export function developRound(input: SaveGame, minutesById: Record<string, number
 export const pushNews = (save: SaveGame, line: string): void => {
   save.devNews.unshift(line);
   if (save.devNews.length > 12) save.devNews.length = 12;
+  // …and the inbox keeps the whole story (engine/inbox.ts)
+  inboxPush(save, { kind: "club", title: line });
 };
 
 /** Units that can teach a trait, and the attribute bar a player must clear to learn it. */
