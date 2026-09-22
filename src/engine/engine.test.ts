@@ -5794,6 +5794,12 @@ describe("attributes on the 1–20 scale (v0.33.0)", () => {
     // a middling value lands in the middle
     const mid = save.players.map((p) => p.attrs.pace).sort((a, b) => a - b)[Math.floor(save.players.length / 2)];
     expect(["average", "good", "poor"]).toContain(attrBand(save, "pace", mid));
+    // keepers are judged against keepers: the best and worst of them read apart
+    const keepers = save.players.filter((p) => p.pos === "GK");
+    const bestKeeper = [...keepers].sort((a, b) => b.attrs.reflexes - a.attrs.reflexes)[0];
+    const worstKeeper = [...keepers].sort((a, b) => a.attrs.reflexes - b.attrs.reflexes)[0];
+    expect(attrBand(save, "reflexes", bestKeeper.attrs.reflexes)).toBe("elite");
+    expect(["poor", "weak"]).toContain(attrBand(save, "reflexes", worstKeeper.attrs.reflexes));
   });
 
   it("an unscouted range reads as a range in 1–20, and collapses when exact", () => {

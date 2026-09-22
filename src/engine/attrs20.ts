@@ -72,7 +72,12 @@ function thresholds(save: SaveGame): Record<string, number[]> {
   if (hit) return hit;
   const out: Record<string, number[]> = {};
   for (const k of ATTR_KEYS) {
-    const vals = save.players.map((p) => p.attrs[k as AttrKey] ?? 0).sort((a, b) => b - a);
+    // keepers are ranked against keepers: an outfielder's unused handling (a 20-24
+    // filler) would otherwise drag the whole scale down and make every keeper elite
+    const keeperAttr = k === "reflexes" || k === "handling";
+    const pool = save.players.filter((p) => (keeperAttr ? p.pos === "GK" : p.pos !== "GK"));
+    const pop = pool.length >= 5 ? pool : save.players;
+    const vals = pop.map((p) => p.attrs[k as AttrKey] ?? 0).sort((a, b) => b - a);
     const at = (frac: number) => vals[Math.min(vals.length - 1, Math.floor(vals.length * frac))] ?? 0;
     // [elite, good, poor, weak] cut points, high to low (values sorted descending)
     out[k] = [at(0.1), at(0.3), at(0.7), at(0.9)];
