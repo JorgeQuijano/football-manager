@@ -12,6 +12,7 @@ import { growFamiliarity, planForClub } from "./setpieces";
 import { recordMatch } from "./stats";
 import { scoutingBudgetFor, scoutingTick } from "./scouting";
 import { payPrize, recordSeason, roundAwards } from "./history";
+import { moraleTick, MORALE_START } from "./morale";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -177,6 +178,23 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
 
   // awards & records for this round: player of the round, biggest win
   roundAwards(save);
+  // morale: minutes, results, wages, contracts, form → mood (+ transfer requests)
+  moraleTick(save, save.lastResults);
+  const mine = save.lastResults.find((r) => r.homeId === save.userClubId || r.awayId === save.userClubId);
+  if (mine) {
+    const h = mine.homeId === save.userClubId;
+    save.recentResults = [
+      {
+        season: save.season,
+        round: mine.round,
+        oppId: h ? mine.awayId : mine.homeId,
+        h,
+        gf: h ? mine.homeGoals : mine.awayGoals,
+        ga: h ? mine.awayGoals : mine.homeGoals
+      },
+      ...(save.recentResults ?? [])
+    ].slice(0, 8);
+  }
 
   // Between rounds: players who sat out recover / serve bans.
   const intensityRec = INTENSITIES[(save.training?.intensity ?? "normal") as keyof typeof INTENSITIES].recovery;
@@ -246,6 +264,10 @@ export function nextSeason(input: SaveGame): SaveGame {
     p.condition = 100;
     p.injuredWeeks = 0;
     p.suspension = 0;
+    // pre-season: a clean slate — mood drifts back toward neutral, minutes window resets
+    p.morale = Math.round(MORALE_START + ((p.morale ?? MORALE_START) - MORALE_START) * 0.5);
+    p.recentMin = [];
+    p.unhappyRounds = 0;
     p.apps = 0;
     p.goals = 0;
     p.assists = 0;

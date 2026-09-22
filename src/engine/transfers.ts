@@ -247,8 +247,20 @@ export function renewContract(input: SaveGame, playerId: string, wage: number): 
   const p = input.players.find((x) => x.id === playerId);
   if (!p || p.clubId !== input.userClubId) return { save: input, resp: resp("rejected", "He's not your player.") };
   const demand = wageDemand(p) * 0.95; // renewal discount
+  const morale = p.morale ?? 60;
+  // an unhappy player won't sit down at all unless you make it worth his while
+  if (morale < 30 && wage < wageDemand(p) * 1.3) {
+    return {
+      save: input,
+      resp: resp(
+        "rejected",
+        `${p.name} won't discuss terms — he's too unhappy with how things are going. Fix his mood (minutes, praise), or offer silly money.`
+      )
+    };
+  }
+  const goodFaith = morale >= 75 ? 0.92 : morale < 40 ? 1.08 : 1; // happy players sign cheaper
   const rng = rngFor(input, "renew", playerId, wage);
-  const want = demand * (0.97 + rng() * 0.06);
+  const want = demand * (0.97 + rng() * 0.06) * goodFaith;
   const extra = wage - (p.contract?.wage ?? 0);
   const headroom = wageHeadroom(input, input.userClubId);
   if (extra > headroom + 1) {
@@ -376,10 +388,12 @@ export function windowTick(input: SaveGame): SaveGame {
     aiMove(save, target, buyer.id, fee, wageDemand(target), save.season + 2 + Math.floor(rng() * 3));
   }
 
-  // --- incoming offers for the user's players ---
+  // --- incoming offers for the user's players (a transfer request draws bids) ---
   const userP = squadOf(save.players, save.userClubId).filter((p) => marketValue(p) >= 400_000);
-  if (userP.length && save.offers.length < 3 && rng() < 0.45) {
-    const sorted = userP.slice().sort((a, b) => overallFor(b) - overallFor(a));
+  const wantsOut = userP.filter((p) => p.transferRequest);
+  const offerChance = wantsOut.length ? 0.75 : 0.45;
+  if (userP.length && save.offers.length < 3 && rng() < offerChance) {
+    const sorted = (wantsOut.length ? wantsOut : userP).slice().sort((a, b) => overallFor(b) - overallFor(a));
     const target = sorted[Math.floor(rng() * Math.min(4, sorted.length))];
     if (!save.offers.some((o) => o.playerId === target.id)) {
       const bidders = save.clubs
@@ -387,7 +401,8 @@ export function windowTick(input: SaveGame): SaveGame {
         .sort((a, b) => b.strength - a.strength);
       if (bidders.length) {
         const bidder = pick(rng, bidders.slice(0, 4));
-        const fee = roundTo(marketValue(target) * (0.8 + rng() * 0.5), 10_000);
+        // an unsettled player goes cheaper
+        const fee = roundTo(marketValue(target) * (target.transferRequest ? 0.7 + rng() * 0.35 : 0.8 + rng() * 0.5), 10_000);
         const offer: TransferOffer = {
           id: `of-${save.season}-${save.round}-${save.offers.length}`,
           playerId: target.id,
@@ -472,6 +487,7 @@ export function makeFreeAgent(season: number, idx: number): Player {
     traits: [],
     contract: { wage: 0, until: 0 },
     peak: 0,
+    morale: 60,
     dev: {},
     devSeason: {},
     focus: null,

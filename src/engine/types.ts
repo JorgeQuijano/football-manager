@@ -173,6 +173,18 @@ export interface Player {
   form: number[];
   /** recent matches for the user's players, newest first (capped) */
   history: PlayerMatch[];
+  /** morale 0-100 (60 = neutral); drives match edge, training gain and contract talks */
+  morale?: number;
+  /** minutes of the last up-to-8 league rounds, newest first — the playing-time window */
+  recentMin?: number[];
+  /** consecutive rounds spent miserable (transfer-request countdown) */
+  unhappyRounds?: number;
+  /** he has asked to leave */
+  transferRequest?: boolean;
+  /** absolute round (season*1000+round) of the last individual chat */
+  lastTalk?: number;
+  /** what was said last */
+  talkKind?: "praise" | "warn";
   /** career league totals per club (folded in each pre-season) — club record books */
   totals?: Record<string, ClubTotals>;
   /** league titles won (honours) */
@@ -497,6 +509,8 @@ export interface SaveGame {
   history: HistoryState;
   /** this season's live awards: player of the round feed + biggest win */
   awards: AwardState;
+  /** the user club's recent league results, newest first (atmosphere / last-5 strip) */
+  recentResults?: { season: number; round: number; oppId: string; h: boolean; gf: number; ga: number }[];
   /** training/development news lines (trait learning, academy intake…), newest first */
   devNews: string[];
 }

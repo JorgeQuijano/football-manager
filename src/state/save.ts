@@ -9,6 +9,7 @@ import {
   ensureDev,
   emptyAwards,
   emptyHistory,
+  MORALE_START,
   freshFinances,
   hashSeed,
   initScouting,
@@ -106,7 +107,20 @@ export function normalizeSave(save: SaveGame): SaveGame {
   for (const p of save.players) {
     if (p.totals !== undefined && (typeof p.totals !== "object" || p.totals === null)) delete p.totals;
     if (p.titles !== undefined && (typeof p.titles !== "number" || !Number.isFinite(p.titles))) delete p.titles;
+    // morale & mood state (v0.18): old saves start neutral
+    if (typeof p.morale !== "number" || !Number.isFinite(p.morale)) p.morale = MORALE_START;
+    p.morale = Math.max(5, Math.min(100, p.morale));
+    if (!Array.isArray(p.recentMin)) p.recentMin = [];
+    p.recentMin = p.recentMin.filter((n) => typeof n === "number" && Number.isFinite(n)).slice(0, 8);
+    if (typeof p.unhappyRounds !== "number" || !Number.isFinite(p.unhappyRounds)) delete p.unhappyRounds;
+    if (p.transferRequest !== true) delete p.transferRequest;
+    if (typeof p.lastTalk !== "number" || !Number.isFinite(p.lastTalk)) delete p.lastTalk;
+    if (p.talkKind !== "praise" && p.talkKind !== "warn") delete p.talkKind;
   }
+  if (!Array.isArray(save.recentResults)) save.recentResults = [];
+  save.recentResults = save.recentResults
+    .filter((r) => r && typeof r.round === "number" && typeof r.oppId === "string")
+    .slice(0, 8);
   if (!Array.isArray(save.offers)) save.offers = [];
   save.offers = save.offers.filter(
     (o) =>

@@ -81,6 +81,34 @@ describe("normalizeSave", () => {
     expect(fixed2.live).toBeUndefined();
   });
 
+  it("backfills morale state for old saves", () => {
+    const save = newGame(56);
+    const old = JSON.parse(JSON.stringify(save)) as typeof save;
+    for (const p of old.players) {
+      delete (p as { morale?: unknown }).morale;
+      delete (p as { recentMin?: unknown }).recentMin;
+    }
+    (old as unknown as Record<string, unknown>).recentResults = "junk";
+    const fixed = normalizeSave(old);
+    expect(fixed.players.every((p) => p.morale === 60)).toBe(true);
+    expect(fixed.players.every((p) => Array.isArray(p.recentMin) && p.recentMin.length === 0)).toBe(true);
+    expect(fixed.recentResults).toEqual([]);
+
+    // junk mood state is repaired and clamped
+    const s2 = newGame(57);
+    s2.players[0].morale = 999;
+    s2.players[1].morale = Number.NaN;
+    s2.players[2].recentMin = ["x", 90, null] as never;
+    s2.players[3].transferRequest = false as never;
+    s2.players[4].talkKind = "shout" as never;
+    const fixed2 = normalizeSave(s2);
+    expect(fixed2.players[0].morale).toBe(100);
+    expect(fixed2.players[1].morale).toBe(60);
+    expect(fixed2.players[2].recentMin).toEqual([90]);
+    expect(fixed2.players[3].transferRequest).toBeUndefined();
+    expect(fixed2.players[4].talkKind).toBeUndefined();
+  });
+
   it("backfills history & awards and repairs broken entries", () => {
     const save = newGame(54);
     const old = JSON.parse(JSON.stringify(save)) as typeof save;

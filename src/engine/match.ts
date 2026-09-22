@@ -26,6 +26,12 @@ import {
 } from "./ratings";
 import { defaultRoleFor, roleFinish, ROLE_DEFS } from "./roles";
 
+/**
+ * Morale edge (engine/morale.ts, inlined here to keep match.ts free of the
+ * morale module's imports): 1.0 at the neutral morale of 60, ±6% at the extremes.
+ */
+const moraleEdge = (p: Player): number => 1 + ((p.morale ?? 60) - 60) * 0.0015;
+
 export interface MatchInputs {
   round: number;
   homeClub: Club;
@@ -363,7 +369,8 @@ const possessionPhase = (
       dfn,
       (x) =>
         Math.pow(clamp(opp.coords[x.slot]?.[1] ?? 50, 0, 100) / 100, 1.4) *
-        (1 + x.p.attrs.defending / 150)
+        (1 + x.p.attrs.defending / 150) *
+        moraleEdge(x.p)
     );
     b = inter.slot;
   }
@@ -389,12 +396,13 @@ const resolveChance = (
       (x.p.pos === "FW" ? 4 : x.p.pos === "MF" ? 2.4 : 0.7) *
       (0.5 + x.p.attrs.shooting / 100) *
       ROLE_DEFS[x.role].shot *
-      (hasTrait(x.p, "shoots_on_sight") ? 1.25 : 1)
+      (hasTrait(x.p, "shoots_on_sight") ? 1.25 : 1) *
+      moraleEdge(x.p)
   );
   const chain = buildChain(atkSide, atk, rng, shooter.slot);
   const gk = dfn.find((x) => x.p.pos === "GK");
-  const finish = roleFinish(shooter.p, shooter.role) * ROLE_DEFS[shooter.role].finish;
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
+  const finish = roleFinish(shooter.p, shooter.role) * ROLE_DEFS[shooter.role].finish * moraleEdge(shooter.p);
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * moraleEdge(gk.p) : 50;
   let pGoal = T.conversionBase * (1 + (finish - 60) / 120) * (1 + (60 - gkSkill) / 160);
   pGoal = clamp(pGoal, 0.04, 0.3);
 
@@ -419,7 +427,8 @@ const resolveChance = (
             (x) =>
               x.p.attrs.passing *
               ROLE_DEFS[x.role].assist *
-              (hasTrait(x.p, "killer_balls") ? 1.3 : 1)
+              (hasTrait(x.p, "killer_balls") ? 1.3 : 1) *
+              moraleEdge(x.p)
           )
         : undefined;
     if (assister) {
@@ -457,9 +466,9 @@ const resolveChance = (
   } else {
     const blockers = dfn.filter((x) => x.p.pos !== "GK");
     const defMean =
-      dfn.reduce((acc, x) => acc + defenseScore(x.p, x.role), 0) / Math.max(1, dfn.length);
+      dfn.reduce((acc, x) => acc + defenseScore(x.p, x.role) * moraleEdge(x.p), 0) / Math.max(1, dfn.length);
     if (blockers.length > 0 && rng() < T.blockShare * clamp(defMean / 62, 0.6, 1.4)) {
-      const blocker = pickWeighted(rng, blockers, (x) => defenseScore(x.p, x.role));
+      const blocker = pickWeighted(rng, blockers, (x) => defenseScore(x.p, x.role) * moraleEdge(x.p));
       out = "block";
       b = blocker.slot;
       s.ratings[blocker.p.id] = clamp(s.ratings[blocker.p.id] + 0.15, 4, 10);
@@ -624,7 +633,7 @@ const resolvePenalty = (
         (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
     );
   const gk = proto(defSide, players).find((x) => x.p.pos === "GK");
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * moraleEdge(gk.p) : 50;
   const pGoal = clamp(
     T.penaltyGoalBase +
       (taker.p.attrs.shooting - gkSkill) / 300 +
@@ -708,11 +717,12 @@ const resolveFreeKick = (
         (eff.delivery
           ? x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20
           : x.p.attrs.shooting * 0.75 + roleFinish(x.p, x.role) * 0.25) *
-        (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
+        (hasTrait(x.p, "dead_ball") ? 1.4 : 1) *
+        moraleEdge(x.p)
     );
   const dfn = proto(defSide, players);
   const gk = dfn.find((x) => x.p.pos === "GK");
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * moraleEdge(gk.p) : 50;
   // a crossed routine is a headed delivery (corner-like); everything else is a shot
   const contenders = atk.filter((x) => x.p.id !== taker.p.id);
   const header =
@@ -846,7 +856,8 @@ const resolveCorner = (
       atk,
       (x) =>
         (x.p.attrs.passing * (1 + ROLE_DEFS[x.role].assist) * 0.6 + 20) *
-        (hasTrait(x.p, "dead_ball") ? 1.4 : 1)
+        (hasTrait(x.p, "dead_ball") ? 1.4 : 1) *
+        moraleEdge(x.p)
     );
   const flagX = rng() < 0.5 ? 2 : 98;
   const contenders = atk.filter((x) => x.p.id !== taker.p.id);
@@ -865,7 +876,7 @@ const resolveCorner = (
       : taker;
   const dfn = proto(defSide, players);
   const gk = dfn.find((x) => x.p.pos === "GK");
-  const gkSkill = gk ? defenseScore(gk.p, gk.role) : 50;
+  const gkSkill = gk ? defenseScore(gk.p, gk.role) * moraleEdge(gk.p) : 50;
   const pGoal = clamp(
     T.cornerGoalBase *
       eff.goal *

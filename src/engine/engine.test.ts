@@ -103,9 +103,23 @@ import {
   topScorers
 } from "./history";
 import {
+  atmosphere,
+  leaders,
+  minutesShare,
+  moodOf,
+  moraleDev,
+  moraleEdge,
+  moraleFactors,
+  moraleTick,
+  recentForm,
+  socialGroups,
+  squadStatus,
+  talkToPlayer
+} from "./morale";
+import {
   FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery
 } from "./tuning";
-import type { CornerRoutine, FreeKickRoutine, Intensity, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit } from "./types";
+import type { CornerRoutine, FreeKickRoutine, Intensity, MatchResult, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit } from "./types";
 import type { MatchStatCtx } from "./stats";
 
 function playSeason(start: SaveGame): SaveGame {
@@ -2448,6 +2462,297 @@ describe("history, records & awards", () => {
     const run = () => {
       const s = nextSeason(playSeason(newGame(82)));
       return JSON.stringify([s.history, s.awards]);
+    };
+    expect(run()).toBe(run());
+  });
+});
+
+describe("morale & squad dynamics", () => {
+  const mkResult = (save: SaveGame, gf: number, ga: number, home = true): MatchResult => ({
+    fixtureKey: "t",
+    round: save.round,
+    homeId: home ? save.userClubId : save.clubs[1].id,
+    awayId: home ? save.clubs[1].id : save.userClubId,
+    homeGoals: gf,
+    awayGoals: ga,
+    events: [],
+    ratings: {},
+    updates: [],
+    scorers: []
+  });
+  const fullSquad = (save: SaveGame) =>
+    squadOf(save.players, save.userClubId).map((p) => ({
+      playerId: p.id,
+      minutes: 90,
+      goals: 0,
+      assists: 0,
+      yellow: 0,
+      red: false,
+      injuredWeeks: 0,
+      conditionLoss: 0
+    }));
+
+  it("is exactly neutral at morale 60 (calibration safe) and moves ±6% at the ends", () => {
+    const s = newGame(90);
+    const p = s.players[0];
+    p.morale = 60;
+    expect(moraleEdge(p)).toBe(1);
+    p.morale = 100;
+    expect(moraleEdge(p)).toBeCloseTo(1.06, 6);
+    p.morale = 5;
+    expect(moraleEdge(p)).toBeCloseTo(1 - 55 * 0.0015, 6);
+    expect(moraleDev(60)).toBe(1);
+    expect(moraleDev(100)).toBeCloseTo(1.08, 6);
+    delete p.morale; // old saves / literals default to neutral
+    expect(moraleEdge(p)).toBe(1);
+  });
+
+  it("reads mood off the scale", () => {
+    expect(moodOf(95).label).toBe("Delighted");
+    expect(moodOf(75).label).toBe("Happy");
+    expect(moodOf(60).label).toBe("Content");
+    expect(moodOf(45).label).toBe("Unsettled");
+    expect(moodOf(30).label).toBe("Unhappy");
+    expect(moodOf(8).label).toBe("Miserable");
+  });
+
+  it("a star who never plays sulks; a fringe player who plays every week perks up", () => {
+    const s = newGame(101);
+    const squad = squadOf(s.players, s.userClubId).sort((a, b) => overallFor(b) - overallFor(a));
+    const star = squad[0];
+    const fringe = squad[squad.length - 2];
+    expect(squadStatus(s, star)).toBe("star");
+    expect(squadStatus(s, fringe)).not.toBe("star");
+    star.morale = 60;
+    fringe.morale = 60;
+    star.recentMin = [];
+    fringe.recentMin = [];
+    for (let r = 1; r <= 8; r++) {
+      s.round = r;
+      // nobody plays in this synthetic round: the star's expectations go unmet
+      moraleTick(s, [mkResult(s, 1, 1)]);
+    }
+    expect(star.morale).toBeLessThan(52);
+    expect(moraleFactors(s, star).some((f) => f.label === "Wants more minutes")).toBe(true);
+
+    // now the fringe man plays every minute of every round
+    const s2 = newGame(101);
+    const fringe2 = squadOf(s2.players, s2.userClubId).sort((a, b) => overallFor(b) - overallFor(a))[
+      squadOf(s2.players, s2.userClubId).length - 2
+    ];
+    fringe2.morale = 60;
+    fringe2.recentMin = [];
+    for (let r = 1; r <= 8; r++) {
+      s2.round = r;
+      const res = mkResult(s2, 2, 1);
+      res.updates = [{ playerId: fringe2.id, minutes: 90, goals: 0, assists: 0, yellow: 0, red: false, injuredWeeks: 0, conditionLoss: 0 }];
+      moraleTick(s2, [res]);
+    }
+    expect(fringe2.morale).toBeGreaterThan(62);
+    expect(minutesShare(fringe2.recentMin)).toBe(1);
+  });
+
+  it("results move the whole dressing room", () => {
+    const run = (gf: number, ga: number, n: number) => {
+      const s = newGame(102);
+      for (let r = 1; r <= n; r++) {
+        s.round = r;
+        const res = mkResult(s, gf, ga);
+        res.updates = fullSquad(s);
+        moraleTick(s, [res]);
+      }
+      const club = squadOf(s.players, s.userClubId);
+      return club.reduce((a, p) => a + (p.morale ?? 60), 0) / club.length;
+    };
+    const winning = run(3, 0, 6);
+    const losing = run(0, 3, 6);
+    expect(winning - losing).toBeGreaterThan(15); // a winning run is worth a lot of goodwill
+    expect(winning).toBeGreaterThan(70);
+    expect(losing).toBeLessThan(70);
+  });
+
+  it("money, contracts, injuries and form all show up as reasons", () => {
+    const s = newGame(103);
+    const p = squadOf(s.players, s.userClubId)[3];
+    p.contract.wage = Math.round(wageDemand(p) * 0.5);
+    expect(moraleFactors(s, p).some((f) => f.label === "Feels badly underpaid")).toBe(true);
+    p.contract.wage = Math.round(wageDemand(p) * 1.6);
+    expect(moraleFactors(s, p).some((f) => f.label === "Well rewarded")).toBe(true);
+    p.contract.until = s.season;
+    expect(moraleFactors(s, p).some((f) => f.label === "Contract expires this season")).toBe(true);
+    p.injuredWeeks = 4;
+    expect(moraleFactors(s, p).some((f) => f.label === "Frustrated by injury")).toBe(true);
+    p.form = [7.6, 7.5, 7.8];
+    expect(moraleFactors(s, p).some((f) => f.label === "In fine form")).toBe(true);
+    p.form = [5.1, 5.2];
+    expect(moraleFactors(s, p).some((f) => f.label === "Struggling for form")).toBe(true);
+
+    // and they actually move the number
+    const s2 = newGame(103);
+    const q = squadOf(s2.players, s2.userClubId)[3];
+    q.morale = 60;
+    q.contract.wage = Math.round(wageDemand(q) * 0.5);
+    s2.round = 1;
+    moraleTick(s2, [mkResult(s2, 1, 1)]);
+    expect(q.morale).toBeLessThan(58);
+  });
+
+  it("the dressing room follows its leaders", () => {
+    const s = newGame(104);
+    const club = squadOf(s.players, s.userClubId);
+    const lead = leaders(s, s.userClubId);
+    expect(lead).toHaveLength(3);
+    const leadIds = new Set(lead.map((l) => l.id));
+    for (const p of club) p.morale = leadIds.has(p.id) ? 95 : 45;
+    s.round = 1;
+    // draws, nobody plays — only the leader pull acts
+    moraleTick(s, [mkResult(s, 1, 1)]);
+    const follower = club.find((p) => !leadIds.has(p.id))!;
+    expect(follower.morale).toBeGreaterThan(45); // pulled up toward the leaders
+    expect(follower.morale).toBeLessThan(68);
+    // a toxic leadership drags everyone down
+    const s2 = newGame(104);
+    const club2 = squadOf(s2.players, s2.userClubId);
+    const leadIds2 = new Set(leaders(s2, s2.userClubId).map((l) => l.id));
+    for (const p of club2) p.morale = leadIds2.has(p.id) ? 15 : 60;
+    s2.round = 1;
+    moraleTick(s2, [mkResult(s2, 1, 1)]);
+    expect(club2.find((p) => !leadIds2.has(p.id))!.morale).toBeLessThan(60);
+  });
+
+  it("miserable players hand in transfer requests — and withdraw them when it clears up", () => {
+    const s = newGame(105);
+    const p = squadOf(s.players, s.userClubId)[5];
+    p.morale = 10;
+    p.recentMin = [0, 0, 0, 0, 0, 0, 0, 0];
+    for (let r = 1; r <= 4; r++) {
+      s.round = r;
+      moraleTick(s, [mkResult(s, 0, 2)]);
+    }
+    expect(p.transferRequest).toBe(true);
+    expect(s.devNews.some((n) => n.includes("transfer request"))).toBe(true);
+    // an unsettled player attracts bids, and is sold cheap
+    expect(moraleFactors(s, p).some((f) => f.label === "Wants to leave")).toBe(true);
+
+    // fix his mood: the request goes away
+    p.morale = 70;
+    s.round = 6;
+    moraleTick(s, [mkResult(s, 2, 0)]);
+    expect(p.transferRequest).toBe(false);
+    expect(s.devNews.some((n) => n.includes("withdrawn his transfer request"))).toBe(true);
+  });
+
+  it("individual chats land differently depending on form", () => {
+    const s = newGame(106);
+    const squad = squadOf(s.players, s.userClubId);
+    const hot = squad.find((p) => !hasTrait(p, "leader"))!;
+    hot.form = [7.5, 7.2, 7.9];
+    hot.morale = 50;
+    const praised = talkToPlayer(s, hot.id, "praise");
+    expect("delta" in praised && praised.delta).toBe(7);
+    expect(hot.morale).toBe(57);
+    // cooldown
+    const again = talkToPlayer(s, hot.id, "praise");
+    expect("error" in again).toBe(true);
+    // a leader takes praise even better
+    const boss = squad.find((p) => hasTrait(p, "leader"));
+    if (boss) {
+      boss.form = [7.5, 7.2];
+      boss.morale = 50;
+      const big = talkToPlayer(s, boss.id, "praise");
+      expect("delta" in big && big.delta).toBe(9);
+    }
+    // criticising your best performer backfires
+    const s2 = newGame(106);
+    const hot2 = squadOf(s2.players, s2.userClubId).find((p) => !hasTrait(p, "leader"))!;
+    hot2.form = [7.5, 7.2];
+    hot2.morale = 50;
+    const warned = talkToPlayer(s2, hot2.id, "warn");
+    expect("delta" in warned && warned.delta).toBeLessThan(0);
+    // ...but the same words land with a struggler
+    const s3 = newGame(106);
+    const cold = squadOf(s3.players, s3.userClubId).find((p) => !hasTrait(p, "leader"))!;
+    cold.form = [5.0, 5.2];
+    cold.morale = 50;
+    const told = talkToPlayer(s3, cold.id, "warn");
+    expect("delta" in told && told.delta).toBeGreaterThan(0);
+    expect("morale" in told ? told.morale : -1).toBe(56);
+    // a struggling player shrugs off praise
+    const s4 = newGame(106);
+    const cold2 = squadOf(s4.players, s4.userClubId).find((p) => !hasTrait(p, "leader"))!;
+    cold2.form = [5.0, 5.2];
+    cold2.morale = 50;
+    const soft = talkToPlayer(s4, cold2.id, "praise");
+    expect("delta" in soft && soft.delta).toBe(1);
+    // not your player
+    const rival = s4.players.find((x) => x.clubId !== s4.userClubId)!;
+    expect("error" in talkToPlayer(s4, rival.id, "praise")).toBe(true);
+  });
+
+  it("an unhappy player won't discuss a new deal (unless you overpay)", () => {
+    const s = newGame(107);
+    const p = squadOf(s.players, s.userClubId).find((x) => x.contract.until > s.season)!;
+    p.morale = 12;
+    const refused = renewContract(s, p.id, Math.round(wageDemand(p)));
+    expect(refused.resp.kind).toBe("rejected");
+    expect(refused.resp.message).toMatch(/unhappy|won't discuss/i);
+    const silly = renewContract(s, p.id, Math.round(wageDemand(p) * 1.6));
+    expect(silly.resp.kind).not.toBe("rejected");
+    // a happy player is cheaper than a grumpy one
+    const s2 = newGame(107);
+    const q = squadOf(s2.players, s2.userClubId).find((x) => x.contract.until > s2.season)!;
+    q.morale = 85;
+    const happy = renewContract(s2, q.id, Math.round(wageDemand(q) * 0.95));
+    expect(["accepted", "counter"]).toContain(happy.resp.kind);
+  });
+
+  it("morale reaches the pitch: happy squads outperform miserable ones", () => {
+    const outcome = (seed: number, mood: number) => {
+      const s = newGame(seed);
+      for (const p of s.players) if (p.clubId === s.userClubId) p.morale = mood;
+      const { save } = playRound(s);
+      const m = save.lastUserMatch!;
+      const us = m.homeId === s.userClubId ? m.homeGoals : m.awayGoals;
+      const them = m.homeId === s.userClubId ? m.awayGoals : m.homeGoals;
+      return { diff: us - them, us, them };
+    };
+    let happy = 0;
+    let sad = 0;
+    let differing = 0;
+    for (let i = 1; i <= 60; i++) {
+      const h = outcome(i * 13, 100);
+      const l = outcome(i * 13, 5);
+      happy += h.diff;
+      sad += l.diff;
+      if (h.us !== l.us || h.them !== l.them) differing++;
+    }
+    expect(differing).toBeGreaterThan(0); // morale genuinely changes matches
+    expect(happy).toBeGreaterThan(sad);
+  });
+
+  it("builds the dressing-room view: atmosphere, groups, leaders", () => {
+    const s = newGame(108);
+    const club = squadOf(s.players, s.userClubId);
+    club[0].morale = 95;
+    club[1].morale = 10;
+    const a = atmosphere(s);
+    expect(a.avg).toBeGreaterThan(50);
+    expect(a.avg).toBeLessThan(70);
+    expect(a.counts.reduce((x, c) => x + c.n, 0)).toBe(club.length);
+    expect(a.unhappy.some((p) => p.id === club[1].id)).toBe(true);
+    expect(a.happy.some((p) => p.id === club[0].id)).toBe(true);
+    const groups = socialGroups(s);
+    expect(groups.length).toBeGreaterThanOrEqual(2);
+    expect(groups.reduce((x, g) => x + g.players.length, 0)).toBe(club.length);
+    expect(leaders(s, s.userClubId)).toHaveLength(3);
+    expect(recentForm(s)).toEqual([]);
+  });
+
+  it("is deterministic", () => {
+    const run = () => {
+      let s = newGame(109);
+      for (let r = 1; r <= 6; r++) s = playRound(s).save;
+      return JSON.stringify(s.players.map((p) => [p.id, p.morale, p.recentMin]));
     };
     expect(run()).toBe(run());
   });

@@ -237,8 +237,9 @@ export function developPlayer(p: Player, plan: TrainingPlan, minutes: number, rn
   // --- growth (steered by the training unit + the player's individual focus) ---
   if (ag > 0 && room > 0) {
     const taper = Math.min(1, room / 4); // the last couple of points are hard
+    const mood = 1 + ((p.morale ?? 60) - 60) * 0.002; // moraleDev (engine/morale.ts) — inline to avoid an import cycle
     const gain =
-      BASE * ag * minutesFactor(minutes) * conditionFactor(p.condition) * intensity.growth * taper;
+      BASE * ag * minutesFactor(minutes) * conditionFactor(p.condition) * intensity.growth * taper * mood;
     const w = { ...UNITS[plan.unit].weights[p.pos] };
     if (p.focus) w[p.focus] = (w[p.focus] ?? 0) + 0.6;
     const nw = normWeights(w);
@@ -390,6 +391,7 @@ export function makeYouth(save: SaveGame, clubId: string, idx: number): Player {
     traits: [],
     contract: { wage: 500, until: season + 3 },
     peak: 0,
+    morale: 60,
     dev: {},
     devSeason: {},
     focus: null,

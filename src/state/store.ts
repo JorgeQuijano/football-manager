@@ -48,6 +48,7 @@ import {
   dismissScout as dismissScoutEngine,
   hireScout as hireScoutEngine,
   scoutPlayer as scoutPlayerEngine,
+  talkToPlayer as talkToPlayerEngine,
   toggleShortlist as toggleShortlistEngine,
   topUpScouting as topUpScoutingEngine
 } from "@/engine";
@@ -116,6 +117,8 @@ interface AppState {
   dismissScout: (id: string) => void;
   toggleShortlist: (playerId: string) => void;
   topUpScouting: (amount: number) => string | null;
+  /** praise or warn a player; returns an error string or the reaction */
+  talk: (playerId: string, kind: "praise" | "warn") => string | { message: string; delta: number };
   resetGame: () => void;
   importSave: (save: SaveGame) => void;
 }
@@ -650,6 +653,17 @@ export const useGame = create<AppState>()((set, get) => ({
     set({ game: save });
     schedulePersist(save);
     return null;
+  },
+
+  talk: (playerId, kind) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const save = structuredClone(game);
+    const res = talkToPlayerEngine(save, playerId, kind);
+    if ("error" in res) return res.error;
+    set({ game: save });
+    schedulePersist(save);
+    return { message: res.message, delta: res.delta };
   },
 
   resetGame: () => {

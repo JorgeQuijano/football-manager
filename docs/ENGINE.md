@@ -391,3 +391,32 @@ A save now remembers every season it has played through.
 **UI** — the League screen gained **Scorers** (this season's top 15: goals/assists/apps/avg, `scorers-tab`) and **History** (`history-tab`) tabs next to Table/Fixtures, and every played round in the Fixtures tab shows its Player of the Round (`potr-<round>`). The History tab shows your record card (`hist-titles`: titles, seasons, career W-D-L, prize money), the season list — each expandable (`hist-season-<n>` / `hist-detail-<n>`) to runner-up, biggest win and the full Team of the Season — the all-time **Records** card (`hist-records`) and this season's Player-of-the-Round feed (`hist-awards`). The player sheet gained a **Career** block (`player-career`): career apps/goals/assists, the same numbers for your club, the club trail when he has moved, and honours (`career-honours`). The Training screen's news card carries the season/prize lines. `topScorers(save, limit)` backs the Scorers tab and is empty pre-season (stats reset).
 
 **Tests** (`describe("history, records & awards")`, 11 + a normalizeSave repair case): one-time folding of career totals + season reset, the full SeasonRecord (vs `computeTable`), prize payment + news, champion titles and user-only title counting, all-time record updates across seasons, Player of the Round (recomputed from `lastResults`), season/all-time biggest win, per-club vs career totals, four-season run with retirements, prize/ordinal rules, mid-season state (no history yet) and determinism.
+
+## 23. Morale & squad dynamics (`morale.ts`)
+
+Every player carries a mood (`Player.morale`, 0-100, **60 = neutral**) that moves with football reality and feeds back into the match engine, training, contract talks and the transfer market.
+
+**Drivers** — `moraleFactors(save, p)` is the single source of truth: it returns one entry per live factor (label + per-round delta) and `moraleTick` just sums them:
+
+- **Playing time** (the big one) — squad status comes from `squadStatus` (rank by overall within the club: `star` ≤3, `rotation` ≤11, `fringe` ≤17, `youth`; kids ≤20 are capped at `rotation`). Expectation `STATUS_WANT` = star 0.7 / rotation 0.45 / fringe 0.22 / youth 0.1 start-share; actual share from `minutesShare(p.recentMin)` (last 8 rounds' minutes, ≥55 min = a start, ≥15 = a cameo). Under by >0.18 → −4/round, under by >0.05 → −1.6, over by >0.25 → +2. Fewer than 3 rounds of data reads "Settling into the season" (+0.5) so nobody is judged before he has played.
+- **Wages** — `wage / wageDemand(p)`: <0.7 → −3, <0.85 → −1.6, >1.4 → +1.
+- **Contract** — expiring this season → −2. **Injury** (≥3 weeks) → −1.5. **Suspension** → −1.5. **Form** — `formOf` ≥7.3 → +1.5, ≤5.9 → −1.5. **Transfer request** → −1.
+- **Results** — the club's result each round: win +1.8, draw 0, loss −1.8, applied to everyone who was at the club that round.
+- **The dressing room** — after the individual pass, everyone else is pulled toward the average mood of the club's **leaders** (`leaders(save, clubId)` = top 3 by overall + 9 for the `leader` trait + 4 for 30+): `(leadAvg − morale) × 0.06`, clamped ±2 per round. A sulking leadership poisons the squad; a happy one lifts it.
+
+**Transfer requests** — three consecutive rounds below 25 (`MORALE_REQUEST`) and a *user-club* player hands in a transfer request (+5 morale, news line); a request is withdrawn once he is back above 50 (`MORALE_RECONCILE`) — also news. Unsettled players are **bid for more often** ((`windowTick` ups the per-round offer chance to 0.75 and bids 0.7–1.05× value instead of 0.8–1.3×)), so the market punishes neglect.
+
+**Consequences** — the mood must matter, so it lands in five places:
+1. **Match edge** — `moraleEdge(p)` = 1 + (morale − 60) × 0.0015 (±6% at the extremes, exactly 1.0 at neutral so the calibration is untouched). Applied in `match.ts` to the shooter pick, the assist pick, the open-play finishing term, the interception/block/defence weights and **all four GK-skill sites** (open play, penalty, free kick, corner) plus the FK/corner taker picks.
+2. **Training** — `developRound` scales growth by `1 + (morale − 60) × 0.002` (inline in training.ts to avoid an import cycle).
+3. **Contract talks** — `renewContract` refuses outright (`MORALE_TALKS` = 30) unless the offer is ≥ 1.3× the demand ("offer silly money"), demands ±8% by mood (`goodFaith`), so happy players are cheaper to keep.
+4. **The market** — see transfer requests above.
+5. **The dressing room view** — the Squad screen's **Dynamics** tab.
+
+**Interaction** — `talkToPlayer(save, id, kind)` (praise/warn) with a `TALK_COOLDOWN` of 4 rounds (stored as `lastTalk` = season × 1000 + round). Praise: +7 in form (≥6.8), +1 when struggling (≤5.8), +4 otherwise; warn: +6 when struggling (he agrees), −8 in form (resentment), −4 otherwise; a `leader` gets +2 on praise and shrugs off 40% of a bollocking.
+
+**Rollover** — `nextSeason` pulls every mood halfway back to neutral, clears `recentMin` and `unhappyRounds` (a clean slate), and keeps standing transfer requests.
+
+**UI** — `src/ui/Dynamics.tsx`, mounted as the third tab on the Squad screen (`squad-tab-dynamics`, Roster/Planner/Dynamics in a 3-col row): atmosphere card (`atmo-card`, `atmo-label`, distribution chips, the club's last-5 W/D/L strip from `SaveGame.recentResults`, and a transfer-request line), the leaders card (`leaders-card`), social groups (`group-young|core|vets` — ≤21 / 22–29 / 30+, each with average mood, its key man and a tinted bar), and the happiness list (`happiness-list`, worst first) with squad status, the top reason and Praise/Warn buttons (`talk-praise-<id>`, `talk-warn-<id>`, disabled during cooldown). Roster rows carry a mood dot (`mood-<id>`); the player sheet has a **Mood** block (`player-morale`) with the mood chip, the full factor list, the transfer-request line and its own Praise/Warn buttons.
+
+**Tests** (`describe("morale & squad dynamics")`, 12 + a normalizeSave backfill case): neutral-at-60 edges, mood bands, star-vs-fringe playing time, winning/losing runs, every factor label plus its numeric effect, the leader pull (both directions), transfer requests in and out, every chat reaction (in form / out of form / leader / cooldown / not your player), the unhappy-player renewal refusal (and the overpay escape hatch), the on-pitch effect over 60 seeded matches, the dressing-room view builders, and determinism.
