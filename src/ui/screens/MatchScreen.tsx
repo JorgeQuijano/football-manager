@@ -901,7 +901,7 @@ function LiveMatchScreen() {
         <Button
           data-testid="pb-play"
           variant="secondary"
-          className="h-10 font-bold"
+          className="h-11 font-bold"
           onClick={togglePlay}
           disabled={ftReady}
         >
@@ -910,7 +910,7 @@ function LiveMatchScreen() {
         <Button
           data-testid="pb-changes"
           variant="secondary"
-          className="h-10 font-bold"
+          className="h-11 font-bold"
           onClick={openChanges}
           disabled={ftReady}
         >
@@ -931,7 +931,7 @@ function LiveMatchScreen() {
               data-testid={`pb-speed-${n}`}
               onClick={() => setSpeedTo(n)}
               aria-pressed={speed === n}
-              className={`h-9 flex-1 rounded-lg text-[12px] font-bold tnum ${
+              className={`h-11 flex-1 rounded-lg text-[12px] font-bold tnum ${
                 speed === n ? "bg-primary/15 text-primary" : "text-muted-foreground"
               }`}
             >
@@ -942,7 +942,7 @@ function LiveMatchScreen() {
         <Button
           data-testid="pb-ht"
           variant="secondary"
-          className="h-10 px-2 text-[11px] font-bold"
+          className="h-11 px-2 text-[11px] font-bold"
           onClick={onSkipHT}
           disabled={live.half === 2 || htReady || ftReady}
         >
@@ -951,7 +951,7 @@ function LiveMatchScreen() {
         <Button
           data-testid="pb-ft"
           variant="secondary"
-          className="h-10 px-2 text-[11px] font-bold"
+          className="h-11 px-2 text-[11px] font-bold"
           onClick={onSkipFT}
           disabled={ftReady}
         >
