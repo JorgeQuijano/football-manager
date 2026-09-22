@@ -391,6 +391,10 @@ export interface MatchState {
   awayId: string;
   minute: number; // last simulated minute (0 = not started)
   total: number; // 90 + stoppage
+  /** in-match stamina per player on the pitch (0-100) — drifts down as legs go */
+  stamina: Record<string, number>;
+  /** stamina lost per minute, per player on the pitch (engine/match.ts) */
+  staminaRate: Record<string, number>;
   /** weather, referee and pitch for this match (engine/conditions.ts) */
   cond: MatchConditions;
   rngState: number;

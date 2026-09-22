@@ -152,6 +152,43 @@ export function finalizeLive(live: LiveMatch): MatchResult {
   return finalizeMatch(live.state);
 }
 
+/** Live stamina band — the label the UI puts next to a player's legs. */
+export function staminaTint(st: number): { label: string; tint: string } {
+  if (st >= 80) return { label: "Fresh", tint: "#2ED573" };
+  if (st >= 62) return { label: "Okay", tint: "#7BE495" };
+  if (st >= 45) return { label: "Tiring", tint: "#FFB020" };
+  return { label: "Running on empty", tint: "#FF6B6B" };
+}
+
+export interface RosterView {
+  /** ids currently on the pitch, in slot order */
+  on: string[];
+  /** ids on the bench who can still come on */
+  bench: string[];
+  /** ids who came on as a sub, with the minute */
+  cameOn: { id: string; minute: number }[];
+  /** ids who went off (subbed or sent off), with the minute — none can return */
+  wentOff: { id: string; minute: number }[];
+}
+
+/** Who is on, who is left, who has already been used — for the match-day panel. */
+export function matchRoster(state: MatchState, sideKey: "home" | "away"): RosterView {
+  const side = state[sideKey];
+  const sideNo = sideKey === "home" ? 0 : 1;
+  const on = side.slots.filter((x): x is string => !!x);
+  const cameOn: { id: string; minute: number }[] = [];
+  const wentOff: { id: string; minute: number }[] = [];
+  for (const [id, minute] of Object.entries(state.entryMinute)) {
+    if (minute > 0 && state.pin[id]?.s === sideNo) cameOn.push({ id, minute });
+  }
+  for (const [id, minute] of Object.entries(state.exitMinute)) {
+    if (state.pin[id]?.s === sideNo) wentOff.push({ id, minute });
+  }
+  cameOn.sort((a, b) => a.minute - b.minute || a.id.localeCompare(b.id));
+  wentOff.sort((a, b) => a.minute - b.minute || a.id.localeCompare(b.id));
+  return { on, bench: [...side.bench], cameOn, wentOff };
+}
+
 export interface MatchStats {
   possHome: number;
   shotsHome: number;

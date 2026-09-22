@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { mulberry32, hashSeed } from "./rng";
 import { newGame } from "./generate";
 import { nextSeason, playRound, resolveSide, seasonRounds } from "./advance";
-import { simulateMatch, startMatch, advanceTo, finalizeMatch } from "./match";
-import { addLiveChange, finalizeLive, matchStats, playersById, resumeSecondHalf, startLive, userFixture } from "./live";
+import { applySubstitution, simulateMatch, staminaAt, staminaDrainPerMinute, staminaStart, startMatch, advanceTo, finalizeMatch } from "./match";
+import { addLiveChange, finalizeLive, matchRoster, matchStats, playersById, resumeSecondHalf, startLive, staminaTint, userFixture } from "./live";
+import { staminaFactor } from "./match";
 import { computeTable } from "./league";
 import {
   attackScore,
@@ -2750,7 +2751,8 @@ describe("morale & squad dynamics", () => {
     }
     expect(differing).toBeGreaterThan(0); // morale genuinely changes matches
     expect(happy).toBeGreaterThan(sad);
-  });
+    // 120 matches through the full engine — the default 5s timeout is not enough under load
+  }, 30000);
 
   it("builds the dressing-room view: atmosphere, groups, leaders", () => {
     const s = newGame(108);
@@ -3399,6 +3401,226 @@ describe("calendar", () => {
     expect(JSON.stringify(save)).toBe(before);
     // and identical across two saves from the same seed
     expect(JSON.stringify(calendarMonth(newGame(508), 2026, 9))).toBe(a);
+  });
+});
+
+describe("match legs (stamina) & the bench", () => {
+  function inputsFor(save: SaveGame, fx: { homeId: string; awayId: string }) {
+    const home = resolveSide(save, fx.homeId);
+    const away = resolveSide(save, fx.awayId);
+    return {
+      round: save.round,
+      homeClub: save.clubs.find((c) => c.id === fx.homeId)!,
+      awayClub: save.clubs.find((c) => c.id === fx.awayId)!,
+      homeXI: home.xi,
+      awayXI: away.xi,
+      homeBench: home.bench,
+      awayBench: away.bench,
+      homeMentality: home.mentality,
+      awayMentality: away.mentality,
+      homeRoles: home.roles,
+      awayRoles: away.roles,
+      homeCoords: home.coords,
+      awayCoords: away.coords,
+      homePoss: home.poss,
+      awayPoss: away.poss,
+      homePlan: planForClub(save, fx.homeId),
+      awayPlan: planForClub(save, fx.awayId),
+      conditions: conditionsFor(save, save.round),
+      rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId))
+    };
+  }
+
+  it("starts from condition, drains through the game and never goes below zero", () => {
+    const save = newGame(601);
+    const fx = userFixture(save)!;
+    const base = inputsFor(save, fx);
+    const xi = (fx.homeId === save.userClubId ? base.homeXI : base.awayXI).slice(0, 11);
+    const s0 = startMatch(base);
+    for (const p of xi) expect(s0.stamina[p.id]).toBe(Math.max(40, Math.min(100, p.condition)));
+
+    const mid = advanceTo(s0, 60, playersById(save));
+    const stMid = mid.stamina[xi[0].id];
+    expect(stMid).toBeLessThan(s0.stamina[xi[0].id]);
+    expect(stMid).toBeGreaterThan(20);
+
+    const full = advanceTo(s0, s0.total, playersById(save));
+    for (const p of xi) {
+      const st = full.stamina[p.id];
+      expect(st).toBeGreaterThanOrEqual(0);
+      expect(st).toBeLessThan(100);
+    }
+    // a 90-minute match leaves a fresh starter with something left in the tank
+    const mean = xi.reduce((a, p) => a + full.stamina[p.id], 0) / xi.length;
+    expect(mean).toBeGreaterThan(35);
+    expect(mean).toBeLessThan(80);
+  });
+
+  it("fitter, younger players drain slower", () => {
+    const save = newGame(602);
+    const [a, b] = squadOf(save.players, save.userClubId).slice(0, 2);
+    a.age = 22;
+    b.age = 34;
+    a.attrs.physical = 92;
+    b.attrs.physical = 18;
+    expect(staminaStart(a)).toBe(Math.max(40, Math.min(100, a.condition)));
+    expect(staminaDrainPerMinute(a)).toBeLessThan(staminaDrainPerMinute(b) * 0.8);
+    // and it adds up over a match: same start, the old and unfit man ends much lower
+    const save2 = newGame(602);
+    const fx = userFixture(save2)!;
+    const base = inputsFor(save2, fx);
+    const isHome = fx.homeId === save2.userClubId;
+    const xi = (isHome ? base.homeXI : base.awayXI).slice(0, 11);
+    xi.forEach((p, i) => {
+      p.condition = 100;
+      p.age = 22;
+      p.attrs.physical = i % 2 === 0 ? 90 : 30;
+    });
+    const s0 = startMatch(base);
+    const legs = advanceTo(s0, 70, playersById(save2)).stamina;
+    const avg = (arr: typeof xi) => arr.reduce((sum, p) => sum + legs[p.id], 0) / arr.length;
+    const fit = xi.filter((_, i) => i % 2 === 0);
+    const unfit = xi.filter((_, i) => i % 2 === 1);
+    expect(avg(fit)).toBeGreaterThan(avg(unfit) + 1.5);
+  });
+
+  it("the half-time break gives something back", () => {
+    const save = newGame(603);
+    const fx = userFixture(save)!;
+    const base = inputsFor(save, fx);
+    const xi = (fx.homeId === save.userClubId ? base.homeXI : base.awayXI).slice(0, 11);
+    const s0 = startMatch(base);
+    const at44 = advanceTo(s0, 44, playersById(save));
+    const at45 = advanceTo(at44, 45, playersById(save));
+    const p = xi[0].id;
+    // minute 45 = one more minute of drain + the break
+    expect(at45.stamina[p]).toBeGreaterThan(at44.stamina[p] + 4);
+  });
+
+  it("a sub arrives fresh and the man he replaces keeps his number", () => {
+    const save = newGame(604);
+    const fx = userFixture(save)!;
+    const base = inputsFor(save, fx);
+    const s0 = startMatch(base);
+    const out = (fx.homeId === save.userClubId ? base.homeXI : base.awayXI)[3];
+    const incoming = (fx.homeId === save.userClubId ? base.homeBench : base.awayBench)[0];
+    const at60 = advanceTo(s0, 60, playersById(save));
+    const tiredOut = at60.stamina[out.id];
+    const after = applySubstitution(at60, playersById(save), "home", out.id, incoming.id);
+    expect(after.stamina[incoming.id]).toBe(Math.max(40, Math.min(100, incoming.condition)));
+    expect(after.stamina[incoming.id]).toBeGreaterThan(tiredOut);
+    expect(after.stamina[out.id]).toBe(tiredOut); // his legs stay where he left them
+    const full = advanceTo(after, after.total, playersById(save));
+    expect(full.stamina[incoming.id]).toBeLessThan(after.stamina[incoming.id]);
+    expect(full.stamina[incoming.id]).toBeGreaterThan(full.stamina[out.id]);
+  });
+
+  it("tired legs cost the game — exhausted sides perform worse", () => {
+    const run = (condition: number) => {
+      let gf = 0;
+      let ga = 0;
+      for (let seed = 610; seed < 650; seed++) {
+        const save = newGame(seed);
+        const fx = userFixture(save)!;
+        const base = inputsFor(save, fx);
+        for (const p of base.awayXI) p.condition = condition;
+        const r = simulateMatch({ ...base, rng: mulberry32(hashSeed(seed, "match", save.season, save.round, fx.homeId, fx.awayId)) });
+        const awayIsHome = fx.homeId !== save.userClubId ? false : true;
+        gf += awayIsHome ? r.awayGoals : r.homeGoals; // the away side's goals
+        ga += awayIsHome ? r.homeGoals : r.awayGoals;
+      }
+      return { gf, ga, diff: gf - ga };
+    };
+    const fresh = run(100);
+    const knackered = run(45);
+    expect(knackered.gf).toBeLessThan(fresh.gf);
+    expect(knackered.diff).toBeLessThan(fresh.diff);
+  }, 30000);
+
+  it("staminaFactor is neutral when fresh and monotonic", () => {
+    expect(staminaFactor(100)).toBe(1);
+    expect(staminaFactor(60)).toBeLessThan(1);
+    expect(staminaFactor(10)).toBeGreaterThan(staminaFactor(0));
+    expect(staminaFactor(0)).toBeGreaterThan(0.8);
+  });
+
+  it("staminaAt rewinds the state to the playback minute", () => {
+    const save = newGame(607);
+    const fx = userFixture(save)!;
+    const base = inputsFor(save, fx);
+    const s0 = startMatch(base);
+    const at45 = advanceTo(s0, 45, playersById(save));
+    const id = base.homeXI[0].id;
+    expect(staminaAt(at45, id, 30)).toBeGreaterThan(at45.stamina[id]);
+    expect(staminaAt(at45, id, 45)).toBeCloseTo(at45.stamina[id], 6);
+    expect(staminaAt(at45, id, 0)).toBeLessThanOrEqual(100);
+    // a keeper who never tires is the sanity case; a player off the pitch is frozen
+    const subbed = applySubstitution(at45, playersById(save), "home", id, base.homeBench[0].id);
+    expect(staminaAt(subbed, id, 10)).toBe(subbed.stamina[id]);
+    // and the rewind can never exceed a full tank
+    expect(staminaAt(at45, id, -5)).toBeLessThanOrEqual(100);
+  });
+
+  it("staminaTint bands the legs", () => {
+    expect(staminaTint(95).label).toBe("Fresh");
+    expect(staminaTint(70).label).toBe("Okay");
+    expect(staminaTint(50).label).toBe("Tiring");
+    expect(staminaTint(20).label).toBe("Running on empty");
+  });
+
+  it("the roster knows who is on, who is left and who has been used", () => {
+    const save = newGame(605);
+    const fx = userFixture(save)!;
+    const base = inputsFor(save, fx);
+    const s0 = startMatch(base);
+    // the user's own side, so nothing happens without us asking
+    const isHome = fx.homeId === save.userClubId;
+    const sideKey: "home" | "away" = isHome ? "home" : "away";
+    const xi = (isHome ? base.homeXI : base.awayXI).slice(0, 11);
+    const bench = isHome ? base.homeBench : base.awayBench;
+    let r = matchRoster(s0, sideKey);
+    expect(r.on).toHaveLength(11);
+    expect(r.bench).toHaveLength(bench.length);
+    expect(r.cameOn).toEqual([]);
+    expect(r.wentOff).toEqual([]);
+
+    // two subs, in different windows
+    const a = advanceTo(s0, 55, playersById(save));
+    const first = applySubstitution(a, playersById(save), sideKey, xi[5].id, bench[0].id);
+    const b = advanceTo(first, 70, playersById(save));
+    const second = applySubstitution(b, playersById(save), sideKey, xi[7].id, bench[1].id);
+    r = matchRoster(second, sideKey);
+    expect(r.on).toHaveLength(11);
+    expect(r.on).toContain(bench[0].id);
+    expect(r.on).not.toContain(xi[5].id);
+    expect(r.cameOn.map((x) => x.id)).toContain(bench[0].id);
+    expect(r.cameOn.map((x) => x.id)).toContain(bench[1].id);
+    expect(r.cameOn.find((x) => x.id === bench[0].id)!.minute).toBe(55);
+    expect(r.cameOn.find((x) => x.id === bench[1].id)!.minute).toBe(70);
+    expect(r.wentOff.map((x) => x.id)).toContain(xi[5].id);
+    expect(r.wentOff.map((x) => x.id)).toContain(xi[7].id);
+    expect(r.bench).not.toContain(bench[0].id);
+    // the other side is untouched by our changes
+    const other: "home" | "away" = isHome ? "away" : "home";
+    expect(matchRoster(second, other).cameOn.some((x) => bench.some((p) => p.id === x.id))).toBe(false);
+  });
+
+  it("the half-time split reproduces stamina exactly", () => {
+    const save = newGame(606);
+    const fx = userFixture(save)!;
+    const base = inputsFor(save, fx);
+    const userSide = fx.homeId === save.userClubId ? "home" : "away";
+    const one = simulateMatch({
+      ...base,
+      rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)),
+      userSide
+    });
+    const live = startLive(save)!;
+    const second = resumeSecondHalf(live, playersById(save));
+    const split = finalizeLive(second);
+    expect(split.homeGoals).toBe(one.homeGoals);
+    const oneShot = advanceTo(startMatch({ ...base, userSide, rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)) }), 1000, playersById(save));
+    expect(second.state.stamina).toEqual(oneShot.stamina);
   });
 });
 

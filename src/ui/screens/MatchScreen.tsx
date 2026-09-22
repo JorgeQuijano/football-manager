@@ -17,11 +17,14 @@ import {
   T,
   finalizeLive,
   laneFits,
+  matchRoster,
   matchStats,
+  staminaAt,
   pitchOf,
   refOf,
   ROLE_DEFS,
   ROLE_GROUPS,
+  staminaTint,
   weatherOf
 } from "@/engine";
 import { Button } from "@/components/ui/button";
@@ -35,6 +38,20 @@ import {
 import { useGame } from "@/state/store";
 import { posChip } from "@/ui/format";
 import { drawFrame, slotScreen, type Frame, type FramePlayer } from "@/ui/matchPitch";
+
+/** A little row of dots: filled = used. */
+function Dots({ used, total }: { used: number; total: number }) {
+  return (
+    <span className="flex gap-1" aria-label={`${used} of ${total} used`}>
+      {Array.from({ length: total }, (_, i) => (
+        <span
+          key={i}
+          className={`size-1.5 rounded-full ${i < used ? "bg-primary" : "bg-muted-foreground/40"}`}
+        />
+      ))}
+    </span>
+  );
+}
 
 const eventClass: Record<string, string> = {
   goal: "text-primary font-bold",
@@ -738,7 +755,18 @@ function LiveMatchScreen() {
         for (let i = 0; i < 11; i++) {
           const key = side + ":" + i;
           const cur = C.anim.get(key);
-          if (cur) players.push({ x: cur.x, y: cur.y, num: i + 1, side, ring: key === ringKey });
+          if (cur) {
+            const pid = stateRef.current[side].slots[i];
+            const legs = pid ? staminaAt(stateRef.current, pid, C.minute) : undefined;
+            players.push({
+              x: cur.x,
+              y: cur.y,
+              num: i + 1,
+              side,
+              ring: key === ringKey,
+              legs
+            });
+          }
         }
       }
       return {
@@ -855,6 +883,12 @@ function LiveMatchScreen() {
   const byId = (id: string | null | undefined) =>
     id ? game.players.find((p) => p.id === id) : undefined;
   const possPct = Math.round(stats.possHome * 100);
+  // who is on, who is left on the bench, who has already been used
+  const roster = matchRoster(st, userSide);
+  const cameOnAt = new Map(roster.cameOn.map((x) => [x.id, x.minute] as const));
+  const sentOff = new Set(
+    st.events.filter((e) => e.type === "red" && e.playerId).map((e) => e.playerId as string)
+  );
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col px-4 pb-6 pt-4">
@@ -1084,7 +1118,7 @@ function LiveMatchScreen() {
                       liveMentality(m);
                       afterLiveChange();
                     }}
-                    className={`rounded-lg border px-2 py-2.5 text-[11px] font-bold uppercase ${
+                    className={`min-h-11 rounded-lg border px-2 py-2.5 text-[11px] font-bold uppercase ${
                       side.mentality === m
                         ? "border-primary bg-primary/15 text-primary"
                         : "border-border text-muted-foreground"
@@ -1097,20 +1131,50 @@ function LiveMatchScreen() {
             </div>
 
             <div>
-              <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                Substitutions {pendingOut ? "· pick the player coming on" : "· pick who comes off"}
+              <div className="mb-1.5 flex items-baseline justify-between text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                <span>Substitutions</span>
+                <span className="normal-case tracking-normal">
+                  {pendingOut ? `off: ${byId(pendingOut)?.name ?? ""} — pick who comes on` : "pick who comes off"}
+                </span>
               </div>
+
+              <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-3 py-2">
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase text-muted-foreground">Subs</span>
+                  <Dots used={side.subs} total={T.maxSubs} />
+                  <span className="tnum text-[11px] font-semibold">
+                    {side.subs}/{T.maxSubs}
+                  </span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase text-muted-foreground">Windows</span>
+                  <Dots used={side.windows} total={T.subWindowsMax} />
+                  <span className="tnum text-[11px] font-semibold">
+                    {side.windows}/{T.subWindowsMax}
+                  </span>
+                </span>
+              </div>
+              <p className="mb-2 text-[10px] leading-snug text-muted-foreground">
+                <span className="font-semibold text-foreground">Legs</span> = stamina left in this match ·{" "}
+                <span className="font-semibold text-foreground">Cond</span> = freshness going into it. Half time is a
+                free window, and anyone who has gone off cannot come back on.
+              </p>
+
               {subErr && (
                 <p className="mb-1.5 rounded-lg border border-[#FFB020]/40 bg-[#FFB020]/10 px-2 py-1.5 text-[11px] text-[#FFB020]" data-testid="ch-err">
                   {subErr}
                 </p>
               )}
-              <div className="space-y-1">
+              <div className="space-y-1" data-testid="ch-subs">
                 {pendingOut === null
                   ? side.slots.map((id, i) => {
                       if (!id) return null;
                       const p = byId(id);
                       if (!p) return null;
+                      const legs = staminaAt(st, id, live.playhead);
+                      const band = staminaTint(legs);
+                      const onAt = cameOnAt.get(id);
+                      const booked = (st.yellows[id] ?? 0) > 0;
                       return (
                         <button
                           key={id}
@@ -1119,14 +1183,30 @@ function LiveMatchScreen() {
                             setSubErr(null);
                             setPendingOut(id);
                           }}
-                          className="flex w-full items-center gap-2 rounded-lg border border-border px-2 py-2 text-left text-[12px]"
+                          className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-border px-2 py-2 text-left text-[12px]"
                         >
                           <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${posChip[side.poss[i]]}`}>
                             {side.poss[i]}
                           </span>
-                          <span className="flex-1 truncate font-semibold">{p.name}</span>
-                          <span className="tnum text-[10px] text-muted-foreground">
-                            {ROLE_DEFS[side.roles[i]].short} · {p.condition}%
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5">
+                              <span className="truncate font-semibold">{p.name}</span>
+                              {onAt !== undefined && (
+                                <span className="rounded bg-secondary px-1 text-[8px] font-bold text-muted-foreground">
+                                  ON {onAt}&apos;
+                                </span>
+                              )}
+                              {booked && <span className="size-1.5 rounded-sm bg-amber-400" title="Booked" />}
+                            </span>
+                            <span className="mt-1 block h-1 w-full overflow-hidden rounded-full bg-secondary">
+                              <span
+                                className="block h-full rounded-full"
+                                style={{ width: `${Math.round(legs)}%`, background: band.tint }}
+                              />
+                            </span>
+                          </span>
+                          <span className="tnum text-[10px] font-bold" style={{ color: band.tint }}>
+                            {Math.round(legs)}%
                           </span>
                         </button>
                       );
@@ -1139,13 +1219,13 @@ function LiveMatchScreen() {
                           key={id}
                           data-testid={`ch-in-${id}`}
                           onClick={() => applySub(id)}
-                          className="flex w-full items-center gap-2 rounded-lg border border-primary/50 bg-primary/5 px-2 py-2 text-left text-[12px]"
+                          className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-primary/50 bg-primary/5 px-2 py-2 text-left text-[12px]"
                         >
                           <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${posChip[p.pos]}`}>
                             {p.pos}
                           </span>
                           <span className="flex-1 truncate font-semibold">{p.name}</span>
-                          <span className="tnum text-[10px] text-muted-foreground">{p.condition}%</span>
+                          <span className="tnum text-[10px] text-muted-foreground">Cond {p.condition}%</span>
                         </button>
                       );
                     })}
@@ -1157,6 +1237,36 @@ function LiveMatchScreen() {
                 >
                   Cancel — {byId(pendingOut)?.name} stays on
                 </button>
+              )}
+
+              {(roster.cameOn.length > 0 || roster.wentOff.length > 0) && (
+                <details className="mt-2 rounded-xl border border-border px-3 py-2" data-testid="ch-used">
+                  <summary className="cursor-pointer text-[11px] font-semibold">
+                    Already used · {roster.cameOn.length} on · {roster.wentOff.length} off
+                  </summary>
+                  <ul className="mt-2 space-y-1 text-[11px]">
+                    {roster.cameOn.map((x) => (
+                      <li key={x.id} className="flex items-center justify-between gap-2">
+                        <span className="truncate">
+                          {byId(x.id)?.name ?? x.id}{" "}
+                          <span className="text-[10px] text-muted-foreground">{byId(x.id)?.pos}</span>
+                        </span>
+                        <span className="tnum shrink-0 font-semibold text-primary">on {x.minute}&apos;</span>
+                      </li>
+                    ))}
+                    {roster.wentOff.map((x) => (
+                      <li key={x.id} className="flex items-center justify-between gap-2 text-muted-foreground">
+                        <span className="truncate">
+                          {byId(x.id)?.name ?? x.id}{" "}
+                          <span className="text-[10px]">{byId(x.id)?.pos}</span>
+                        </span>
+                        <span className="tnum shrink-0">
+                          {sentOff.has(x.id) ? `sent off ${x.minute}'` : `off ${x.minute}'`}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               )}
             </div>
 
