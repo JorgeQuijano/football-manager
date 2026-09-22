@@ -9,6 +9,7 @@ import { Inbox } from "@/ui/screens/Inbox";
 import { LeagueScreen } from "@/ui/screens/LeagueScreen";
 import { MatchScreen } from "@/ui/screens/MatchScreen";
 import { NewGame } from "@/ui/screens/NewGame";
+import { Welcome } from "@/ui/screens/Welcome";
 import { SeasonEnd } from "@/ui/screens/SeasonEnd";
 import { SetPieces } from "@/ui/screens/SetPieces";
 import { Squad } from "@/ui/screens/Squad";
@@ -35,6 +36,7 @@ export default function App() {
   }
 
   if (!game || screen === "new") return <NewGame />;
+  if (screen === "welcome") return <Welcome />;
   if (screen === "match") return <MatchScreen />;
   if (screen === "seasonEnd") return <SeasonEnd />;
   if (screen === "builder") return <Builder />;

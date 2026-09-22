@@ -693,3 +693,23 @@ The simulation was never the problem — the *picture* was. Players were drawn a
 **Measured on a live match (320px viewport, 1× speed, 3 s of play):** five distinct gait bands (stand 4% · walk 14% · jog 24% · run 36% · sprint 23%), 254 distinct headings across 22 bodies, minimum body separation 1.4 units, the nearest defender closing to **1.6 units** of the ball, and a steady **60 fps** (worst frame 18.7 ms).
 
 **Tests:** eight pure-function tests in `src/ui/motion.test.ts` pin the physics — easing in, the speed caps, arc turns, arrival, the jockey stand-off, separation, ball-facing, and the gait bands.
+
+## 37. Manager onboarding: choosing a club with the fog on (`onboarding.ts`, `screens/NewGame.tsx`, `screens/Welcome.tsx`)
+
+A new career no longer starts with ten bare club names. You **generate the league first**, then choose from real data — with the fog of a candidate's eye-view.
+
+**Public record (exact).** `CLUB_LORE` gives every club a city, a founding year, a ground, a title count and a one-line identity (*"Sleeping giant with a big ground and a budget that never quite matches it."*). The **stadium capacity** comes from the v0.30 facilities, so the number on the brief is the number you inherit.
+
+**Between the lines (fogged).** Money, squad quality and the campus are **words, not numbers** (`bandFor` ranks a club against the division in five bands):
+
+| Read | Words |
+|---|---|
+| Wealth | Very wealthy · Wealthy · Comfortable · Careful with money · Shoestring |
+| Squad | Title favourites · Top-four calibre · Solid mid-table · A battle ahead · Survival scrappers |
+| Training / Academy / Medical | Elite · Strong · Good · Modest · Limited |
+
+**The board will want** follows the squad band (`expectationFor` — *"Win the league."* down to *"Be competitive. Anything else is a bonus."*) and a **job difficulty** label (Easy / Fair / Hard / Brutal) reads the same way. `clubBrief(save, clubId)` returns all of it, deterministically, for any club.
+
+**The first day (`screens/Welcome.tsx`).** Taking the job replaces the guesses with facts: a two-page briefing — the board's written expectation, squad size, your best player and the first league fixture, then **the accounts** (transfer budget, wage ceiling, club account), a line on what the shirt is worth (`sponsorHint`, ranked not numeric), and `wagePressure` — whether you are near the ceiling before you start. "Let's go" sets `save.onboarded` and drops you on the Home screen, which now carries the board's expectation under the club header, so the brief stays in view all season. The screen never blocks: "Skip the briefing" is one tap away.
+
+**Save shape.** `SaveGame.preview` (a generated world, held in the store while you shop), `SaveGame.onboarded` (backfilled `true` for old saves so returning players are not lectured). `prepareWorld(seed?)` lets the selection screen — and QA — build the league deterministically before the choice is made.

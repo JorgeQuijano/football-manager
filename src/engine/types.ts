@@ -865,6 +865,8 @@ export interface SaveGame {
   builds?: Build[];
   /** your main-shirt deal */
   sponsor?: SponsorDeal;
+  /** the first-day briefing has been seen (engine/onboarding.ts, v0.32) */
+  onboarded?: boolean;
   /** offers on the shirt waiting for an answer */
   sponsorOffers?: SponsorOffer[];
   /** incoming offers for the user's players, pending a decision */
