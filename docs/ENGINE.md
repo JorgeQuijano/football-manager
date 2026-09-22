@@ -499,3 +499,30 @@ Players tire *during* the match now, and the match-day panel says plainly who is
 **UI** — the **Changes** sheet (`ch-sheet`): a dots meter for `Subs x/5` and `Windows y/3` (`Dots`), a one-line legend ("Legs = stamina left in this match · Cond = freshness going into it"), the on-pitch list with a **leg bar** per player (tinted by band, `%` in the same colour, `ON 45'` tag for men who came on, an amber square for a booking), the bench list with `Cond %`, and an **Already used** section (`ch-used`) listing everyone who came on and everyone who went off with their minute ("off 63'", "sent off 71'"). On the pitch itself, `matchPitch.drawFrame` draws a **legs gauge** — a ring arc around a player's dot, draining clockwise with his stamina, green → amber → red.
 
 **Tests** (`describe("match legs (stamina) & the bench")`, 10): start value from condition, drain over the match with the mean in a sane band, fitter/younger draining slower (plus the on-pitch spread), the half-time recovery, a sub arriving fresh while the man he replaced keeps his number, exhausted sides performing worse over 40 seeds, `staminaFactor` neutrality and monotonicity, the tint bands, the roster through two substitutions (and the other side untouched), `staminaAt` rewinding and freezing, and the half-time split reproducing stamina exactly.
+
+## 28. Match-day levers: instructions, talks, shouts, the assistant (`talks.ts`)
+
+Everything the manager can say and change during the 90 minutes, all of it folding into the same weights the rest of the engine uses — and all of it journaled, so a replayed half lands on identical numbers.
+
+**Opposition instructions** (`MatchSideState.oi`, keyed by the *opponent's* player ids) — four levers with a real trade:
+
+- **Marking** tight/loose — tight cuts his involvement to 0.76 and hurries him (quality 0.95) at the cost of fouls (×1.1); loose invites him (1.1) but cleans up your tackling
+- **Pressing** often/never — often 0.84 involvement, 0.96 quality, 1.14 fouls; never 1.12 / 1.02 / 0.88
+- **Tackling** hard/easy — 0.9 / 0.97 / 1.28 against 1.06 / 1.0 / 0.78
+- **Show** inside/outside — which of his weapons you live with (0.95 quality forcing him inside, 1.03 cutting in on the outside)
+
+`oiPressure(side)` also chokes that side's **supply**: the geometric mean of the involvements, scaled by how much of their XI you singled out, multiplies their attack strength (0.86–1.05) — so pressing two men costs them chances *as a team*, and the effect compounds the more of them you mark. Aggression then shows up where it should: the foul *side* weighting uses a damped version (×0.35), while the **card** roll uses the full scale — marking their two best was measured at −6 goals for them and +75% bookings for you over 120 matches.
+
+**Player instructions** (`MatchSideState.pi`, your own ids) — shooting often/rarely (1.35 shots but 0.95 quality), passing direct/safe (1.2 assists, 1.12 turnover risk against 0.85/0.85), freedom roam/hold (attack vs shape, 0.94–1.08 defence).
+
+**Team talks** (`PRE_TALKS`, `htTalks(gf, ga)`, `FT_TALKS`) — four pre-match ways to send them out, three or four at half time depending on the score, three at full time. Each carries `fire`/`shape` (a match-scoped edge: "I expect nothing less than a win" is +4.5% attack) and a **tone**: `push` lands harder the happier a player is (`2.2 × (1 + mood)`, so a struggler flinches) and `soothe` does the opposite; leaders carry it 1.25×, kids take it 0.85×. The dressing-room half is permanent — `applyTeamTalk` moves every player's morale and returns the effects for the UI. One talk per stage, replayable from the state (`talkDefFor`), and the AI always gives a quiet "encourage" so both sides start level.
+
+**Touchline shouts** — encourage / demand more / tighten up / calm down, each with `fire`/`shape`/`morale`, and `shoutScale(n)`: full effect, then 0.6, then 0.3, then **−0.15** — one too many and the players *stop listening*. "Calm down" also sets `side.calm`, which takes 15% off your foul rate.
+
+**The assistant** — `assistantAdvice(state, side, players, ctx)` watches legs (<45%), bookings, the opponent's danger man (with a nudge to set an instruction), a keeper making saves, a foul-ridden referee and possession without bite; `halfTimeReport` adds the talk prompt ("You are behind — the players need to hear something"). The UI shows these as amber nudges in the match panel with a badge on the Subs tab.
+
+**Knockouts** — `MatchInputs.knockout` plays **extra time** and then a **penalty shootout** (`resolveKnockout`, `shootout`): five takers by shooting+physical, scored against the keeper's reflexes/handling (`p = 0.74 + (skill − gloves)/320`, clamped 0.45–0.93), with kick-by-kick events, sudden death, and `MatchResult.pens` / `.aet` for the UI ("After extra time · 4–3 on penalties"). Dormant until a cup exists — the engine and UI are ready for it.
+
+**UI** — `src/ui/MatchLevers.tsx` + the Changes sheet: a four-way segmented control (**Subs · Mine · Theirs · Talk**), the assistant's nudges under it, per-player instruction rows that expand into native selects, their XI with the same treatment (marking / pressing / tackling / show), and a Talk panel with the Fire/Shape meters, the stage's talk options and the shout grid (with a warning once they've heard it all). The **half-time overlay** carries the assistant's report plus the half-time talks inline; the **full-time panel** carries the last word.
+
+**Tests** (`describe("match-day levers")`, 14): both instruction tables and their labels, marking their danger man over 80 matches (his goals down, their shots down), tackling hard filling the book, talk receptivity by mood/age/leaders, the dressing-room move, shouts fading then grating, all four lever kinds replaying byte-identically, a second talk refused, an instruction for a benched player refused, the assistant's nudges and the half-time report, the AI's own instructions, extra time + penalties (and league matches never reaching them), and determinism with levers in play.

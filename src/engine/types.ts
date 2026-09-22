@@ -279,6 +279,10 @@ export interface MatchResult {
   ratings: Record<string, number>;
   updates: PlayerUpdate[];
   scorers: { playerId: string; name: string; clubId: string; minute: number }[];
+  /** knockout ties only: decided after extra time */
+  aet?: boolean;
+  /** knockout ties only: penalty shootout score */
+  pens?: { home: number; away: number };
 }
 
 // --- live match (pauseable, resumable, renderable) ---------------------------------
@@ -369,6 +373,43 @@ export interface Stroke {
   vr?: "stands" | "overturned" | "restored";
 }
 
+// --- match-day levers (v0.23): opposition instructions, player instructions, talks, shouts ----
+
+/** What you tell your players to do about one opponent (engine/talks.ts). */
+export interface OppInstruction {
+  mark?: "tight" | "loose";
+  press?: "often" | "never";
+  tackle?: "hard" | "easy";
+  show?: "inside" | "outside";
+}
+
+/** What you tell one of your own players to do (engine/talks.ts). */
+export interface PlayerInstruction {
+  shooting?: "often" | "rarely";
+  passing?: "direct" | "safe";
+  freedom?: "roam" | "hold";
+}
+
+export type TalkStage = "pre" | "ht" | "ft";
+export type TalkKind = "praise" | "encourage" | "demand" | "warn" | "relax" | "none";
+export type ShoutKind = "encourage" | "demand" | "tighten" | "calm";
+
+/** How one opponent instruction bends his game. */
+export interface OiEffect {
+  involve: number;
+  quality: number;
+  fouls: number;
+}
+
+/** How one player instruction bends his game. */
+export interface PiEffect {
+  shot: number;
+  shotQuality: number;
+  assist: number;
+  turnover: number;
+  defense: number;
+}
+
 export interface MatchSideState {
   clubId: string;
   name: string;
@@ -383,6 +424,19 @@ export interface MatchSideState {
   goals: number;
   subs: number; // substitutions used (max T.maxSubs)
   windows: number; // in-match substitution windows used (max T.subWindowsMax)
+  /** instructions set on the OPPONENT's players, keyed by their ids */
+  oi: Record<string, OppInstruction>;
+  /** instructions for this side's own players, keyed by their ids */
+  pi: Record<string, PlayerInstruction>;
+  /** attacking edge from talks & shouts (0 = neutral, ±0.05 typical) */
+  fire: number;
+  /** defensive edge from talks & shouts */
+  shape: number;
+  /** shouts used this match — they lose their effect */
+  shouts: number;
+  /** "calm down" — fewer fouls from here on */
+  calm: boolean;
+  talks: Partial<Record<TalkStage, TalkKind>>;
 }
 
 export interface MatchState {
@@ -417,13 +471,21 @@ export interface MatchState {
 /** A manager action applied mid-match; replayed deterministically when re-simulating. */
 export interface LiveChange {
   minute: number;
-  kind: "sub" | "mentality" | "role";
+  kind: "sub" | "mentality" | "role" | "oi" | "pi" | "talk" | "shout";
   side: "home" | "away";
   outId?: string;
   inId?: string;
   mentality?: Mentality;
   slot?: number;
   role?: RoleId;
+  /** oi/pi: the player the instruction is about */
+  targetId?: string;
+  oi?: OppInstruction;
+  pi?: PlayerInstruction;
+  /** talk: which stage of the match the words were said */
+  stage?: TalkStage;
+  talk?: TalkKind;
+  shout?: ShoutKind;
 }
 
 export interface LiveMatch {

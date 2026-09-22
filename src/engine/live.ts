@@ -7,6 +7,7 @@ import type {
   SaveGame
 } from "./types";
 import { hashSeed, mulberry32 } from "./rng";
+import { shoutBy, shoutScale, talkDefFor } from "./talks";
 import {
   advanceTo,
   applySubstitution,
@@ -85,6 +86,42 @@ const applyChange = (
   const s: MatchState = structuredClone(state);
   if (c.kind === "mentality") {
     s[c.side].mentality = c.mentality!;
+    return { state: s };
+  }
+  if (c.kind === "oi") {
+    const target = c.targetId;
+    if (!target) return { state, error: "Pick the opponent first." };
+    if (!c.oi || Object.keys(c.oi).length === 0) delete s[c.side].oi[target];
+    else s[c.side].oi[target] = c.oi;
+    return { state: s };
+  }
+  if (c.kind === "pi") {
+    const target = c.targetId;
+    if (!target) return { state, error: "Pick your player first." };
+    if (!s[c.side].slots.includes(target)) return { state, error: "He is not on the pitch." };
+    if (!c.pi || Object.keys(c.pi).length === 0) delete s[c.side].pi[target];
+    else s[c.side].pi[target] = c.pi;
+    return { state: s };
+  }
+  if (c.kind === "talk") {
+    const side = s[c.side];
+    const stage = c.stage ?? "ht";
+    if (side.talks[stage]) return { state, error: "You have already had your say for this part of the match." };
+    const opp = c.side === "home" ? s.away : s.home;
+    const def = talkDefFor(c.talk ?? "none", side.goals, opp.goals, stage);
+    side.fire += def.fire;
+    side.shape += def.shape;
+    side.talks[stage] = def.kind;
+    return { state: s };
+  }
+  if (c.kind === "shout") {
+    const side = s[c.side];
+    const def = shoutBy(c.shout ?? "encourage");
+    const k = shoutScale(side.shouts);
+    side.fire += def.fire * k;
+    side.shape += def.shape * k;
+    if (def.kind === "calm") side.calm = true;
+    side.shouts += 1;
     return { state: s };
   }
   const slot = c.slot!;
