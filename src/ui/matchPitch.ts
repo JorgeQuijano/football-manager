@@ -8,6 +8,8 @@ export interface FramePlayer {
   ring?: boolean;
   /** live stamina (0-100); a gauge ring is drawn when legs are going */
   legs?: number;
+  /** the armband: a small "C" badge on his shoulder */
+  cap?: boolean;
 }
 
 export interface Frame {
@@ -117,6 +119,20 @@ export function drawFrame(
       ctx.strokeStyle = "rgba(255,255,255,0.8)";
       ctx.lineWidth = 2;
       ctx.stroke();
+    }
+    if (p.cap) {
+      // the armband: a small amber badge on his shoulder
+      const bx = px + R * 0.85;
+      const by = py - R * 0.85;
+      ctx.beginPath();
+      ctx.arc(bx, by, 5.5, 0, Math.PI * 2);
+      ctx.fillStyle = "#FFB020";
+      ctx.fill();
+      ctx.fillStyle = "#0E1318";
+      ctx.font = "bold 8px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("C", bx, by + 0.5);
     }
     ctx.beginPath();
     ctx.arc(px, py, R, 0, Math.PI * 2);

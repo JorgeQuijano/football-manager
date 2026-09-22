@@ -133,15 +133,20 @@ export function atmosphere(save: SaveGame, clubId = save.userClubId): Atmos {
 }
 
 /** The dressing-room leaders: ability, seniority and the Leader trait. */
+/** The armband, a leader trait and experience all count towards a voice in the room. */
+const leaderScore = (p: Player, captain?: string, vice?: string): number =>
+  overallFor(p) +
+  (hasTrait(p, "leader") ? 9 : 0) +
+  (p.age >= 28 ? 4 : 0) +
+  (p.id === captain ? 14 : p.id === vice ? 6 : 0);
+
 export function leaders(save: SaveGame, clubId: string): Player[] {
+  const club = clubId;
+  const captain = save.captain && save.players.some((p) => p.id === save.captain && p.clubId === club) ? save.captain : undefined;
+  const vice = save.vice && save.players.some((p) => p.id === save.vice && p.clubId === club) ? save.vice : undefined;
   return [...save.players]
-    .filter((p) => p.clubId === clubId)
-    .sort(
-      (a, b) =>
-        overallFor(b) + (hasTrait(b, "leader") ? 9 : 0) + (b.age >= 28 ? 4 : 0) -
-        (overallFor(a) + (hasTrait(a, "leader") ? 9 : 0) + (a.age >= 28 ? 4 : 0)) ||
-        (a.id < b.id ? -1 : 1)
-    )
+    .filter((p) => p.clubId === club)
+    .sort((a, b) => leaderScore(b, captain, vice) - leaderScore(a, captain, vice) || (a.id < b.id ? -1 : 1))
     .slice(0, 3);
 }
 

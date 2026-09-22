@@ -17,6 +17,8 @@ import { conditionsFor } from "./conditions";
 import { mediaGate, mediaTick, makePress } from "./media";
 import { applyPreContracts, payAddons, payTransferAddons, policyFor, settleDebts, policyPayoff } from "./market";
 import { loanRollover } from "./loans";
+import { internationalTick, jadedTick, sharpnessTick } from "./physical";
+import { moveTick, retrainTick, settleTargets } from "./individual";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -215,6 +217,13 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
   for (const r of save.lastResults)
     for (const u of r.updates) minutesById[u.playerId] = (minutesById[u.playerId] ?? 0) + u.minutes;
   const withDev = developRound(save, minutesById);
+  // bodies: match sharpness rises and falls, wear accumulates, learners learn
+  sharpnessTick(withDev, minutesById);
+  jadedTick(withDev, minutesById);
+  retrainTick(withDev, minutesById);
+  moveTick(withDev, minutesById);
+  // international week: the best go away and come back with a cap and tired legs
+  internationalTick(withDev);
   growFamiliarity(withDev); // set-piece routines get groovier every round
   scoutingTick(withDev); // scouts work their assignments (knowledge, discovery, decay)
 
@@ -263,6 +272,8 @@ export function nextSeason(input: SaveGame): SaveGame {
   save.offers = [];
   save.pending = undefined;
   save.fixtures = buildFixtures(save.clubs, save.season, save.seed);
+  // season-end: did he hit the personal target you set him? (before anything resets)
+  settleTargets(save);
   // season-end: trait learning reads last season's minutes; then reset trackers + intake
   learnTraits(save);
   resetSeasonDev(save);
@@ -271,6 +282,9 @@ export function nextSeason(input: SaveGame): SaveGame {
     p.condition = 100;
     p.injuredWeeks = 0;
     p.suspension = 0;
+    // pre-season: legs rested, sharpness back to base, wear reset
+    p.jaded = 0;
+    p.sharpness = 85;
     // pre-season: a clean slate — mood drifts back toward neutral, minutes window resets
     p.morale = Math.round(MORALE_START + ((p.morale ?? MORALE_START) - MORALE_START) * 0.5);
     p.recentMin = [];

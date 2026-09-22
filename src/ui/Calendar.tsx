@@ -7,8 +7,7 @@ import {
   seasonMonths,
   seasonRoundsOf,
   upcoming,
-  type CalDay
-} from "@/engine";
+  type CalDay, isInternationalRound } from "@/engine";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -102,6 +101,11 @@ export function CalendarView() {
                     </span>
                   )}
                   {!m && day.training && <span className="mt-0.5 size-1 rounded-full bg-muted-foreground" />}
+                  {m && isInternationalRound(m.round) && (
+                    <span className="text-[7px] font-bold leading-none text-[#7EC8FF]" data-testid={`cal-int-${m.round}`}>
+                      INT
+                    </span>
+                  )}
                   {day.events.length > 0 && (
                     <span className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-400" />
                   )}
@@ -116,6 +120,7 @@ export function CalendarView() {
         <span>Green = match day (opponent shown)</span>
         <span>· dot = training</span>
         <span>· amber = window or date to note</span>
+        <span>· INT = international week</span>
       </div>
 
       {matchDays.length > 0 && (

@@ -26,6 +26,40 @@ import {
 } from "./market";
 import { LOAN, bidForLoan, exerciseLoanOption, loanAsk, loanRollover, loanCount, loaneesIn, loaneesOut, sendOnLoan } from "./loans";
 import { dealCost, dealValue, termsDemand } from "./transfers";
+import {
+  INTL_ROUNDS,
+  internationalTick,
+  isInternationalRound,
+  injuryKindFor,
+  injuryLine,
+  jadedFactor,
+  jadedOf,
+  jadedTick,
+  pronenessOf,
+  sharpnessFactor,
+  sharpnessOf,
+  sharpnessTick
+} from "./physical";
+import { leaders as roomLeaders } from "./morale";
+import {
+  applyDiscipline,
+  armbandIn,
+  canRetrain,
+  clearTarget,
+  disciplinaryCases,
+  moveOptions,
+  retrainOptions,
+  retrainTick,
+  moveTick,
+  setArmband,
+  setTarget,
+  settleTargets,
+  startMove,
+  startRetrain,
+  targetLine,
+  targetOptions,
+  targetSoFar
+} from "./individual";
 import { staminaFactor } from "./match";
 import { computeTable } from "./league";
 import {
@@ -4422,6 +4456,342 @@ describe("the market, granular: deals, loans, contracts & the board", () => {
     expect(run(919)).toBe(run(919));
     expect(run(919)).not.toBe(run(920));
   });
+});
+
+describe("individual players: bodies, targets, retraining, moves, discipline & the armband", () => {
+  const mine = (save: SaveGame, i = 3) => squadOf(save.players, save.userClubId)[i];
+  const fresh = () => newGame(901);
+
+  it("sharpness rises with minutes, falls with rust, and only ever helps when match-fit", () => {
+    const save = fresh();
+    const p = mine(save);
+    expect(sharpnessOf(p)).toBe(85);
+    expect(sharpnessFactor(p)).toBe(1);
+    // a full game sharpens
+    sharpnessTick(save, { [p.id]: 90 });
+    expect(sharpnessOf(p)).toBe(91);
+    // sitting out dulls, and a rusty player is worse
+    for (let i = 0; i < 4; i++) sharpnessTick(save, {});
+    expect(sharpnessOf(p)).toBeLessThan(85);
+    expect(sharpnessFactor(p)).toBeLessThan(1);
+    expect(sharpnessFactor(p)).toBeGreaterThanOrEqual(0.93);
+    // the floor holds however long he is out
+    for (let i = 0; i < 40; i++) sharpnessTick(save, {});
+    expect(sharpnessOf(p)).toBeGreaterThanOrEqual(20);
+    expect(sharpnessFactor(p)).toBeGreaterThanOrEqual(0.93);
+  });
+
+  function inputsForLocal(save: SaveGame, fx: { homeId: string; awayId: string }) {
+    const home = resolveSide(save, fx.homeId);
+    const away = resolveSide(save, fx.awayId);
+    return {
+      round: save.round,
+      homeClub: save.clubs.find((c) => c.id === fx.homeId)!,
+      awayClub: save.clubs.find((c) => c.id === fx.awayId)!,
+      homeXI: home.xi,
+      awayXI: away.xi,
+      homeBench: home.bench,
+      awayBench: away.bench,
+      homeMentality: home.mentality,
+      awayMentality: away.mentality,
+      homeRoles: home.roles,
+      awayRoles: away.roles,
+      homeCoords: home.coords,
+      awayCoords: away.coords,
+      homePoss: home.poss,
+      awayPoss: away.poss,
+      homePlan: planForClub(save, fx.homeId),
+      awayPlan: planForClub(save, fx.awayId),
+      conditions: conditionsFor(save, save.round)
+    };
+  }
+
+  it("rust costs you the game — a cold side performs worse", () => {
+    const run = (sharp: number) => {
+      let gf = 0;
+      let ga = 0;
+      for (let seed = 640; seed < 720; seed++) {
+        const save = newGame(seed);
+        const fx = userFixture(save)!;
+        const base = inputsForLocal(save, fx);
+        const userSide = fx.homeId === save.userClubId ? "home" : "away";
+        const oppXI = userSide === "home" ? base.awayXI : base.homeXI;
+        for (const p of oppXI) p.sharpness = sharp;
+        const r = simulateMatch({
+          ...base,
+          rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)),
+          userSide
+        });
+        gf += userSide === "home" ? r.awayGoals : r.homeGoals;
+        ga += userSide === "home" ? r.homeGoals : r.awayGoals;
+      }
+      return gf - ga;
+    };
+    expect(run(40)).toBeLessThan(run(85));
+  }, 30_000);
+
+  it("wear builds when a tired or older player keeps starting, and clears with rest", () => {
+    const save = fresh();
+    const kid = mine(save, 2);
+    kid.age = 22;
+    kid.condition = 90;
+    const vet = mine(save, 3);
+    vet.age = 32;
+    vet.condition = 50;
+    expect(jadedOf(kid)).toBe(0);
+    jadedTick(save, { [kid.id]: 90 });
+    jadedTick(save, { [vet.id]: 90 });
+    expect(jadedOf(vet)).toBeGreaterThan(jadedOf(kid));
+    expect(jadedFactor(kid)).toBe(1);
+    for (let i = 0; i < 10; i++) jadedTick(save, { [vet.id]: 90 });
+    expect(jadedOf(vet)).toBeGreaterThan(60);
+    expect(jadedFactor(vet)).toBeLessThan(1);
+    // a week off is the cure
+    const heavy = jadedOf(vet);
+    jadedTick(save, {});
+    expect(jadedOf(vet)).toBeLessThan(heavy);
+    expect(jadedOf(vet)).toBeGreaterThanOrEqual(0);
+  });
+
+  it("injuries read as real problems, and prone players pick up more of them", () => {
+    expect(injuryKindFor(1)).toBe("Knock");
+    expect(injuryKindFor(5)).toBe("Hamstring");
+    expect(injuryKindFor(12)).toBe("Broken foot");
+    const save = fresh();
+    const young = mine(save, 1);
+    young.age = 21;
+    young.attrs.physical = 85;
+    const old = mine(save, 4);
+    old.age = 34;
+    old.attrs.physical = 45;
+    old.jaded = 80;
+    old.sharpness = 40;
+    expect(pronenessOf(old)).toBeGreaterThan(pronenessOf(young) * 1.5);
+    expect(injuryLine(old)).toBeNull();
+    old.injuredWeeks = 3;
+    expect(injuryLine(old)).toBe("Muscle strain · 3w out");
+  });
+
+  it("international weeks take the best players away and hand out caps", () => {
+    const save = fresh();
+    const best = squadOf(save.players, save.userClubId).sort((a, b) => overallFor(b) - overallFor(a))[0];
+    const before = { cond: best.condition, sharp: sharpnessOf(best), caps: best.caps ?? 0, morale: best.morale ?? 60 };
+    expect(isInternationalRound(save.round)).toBe(false);
+    expect(internationalTick(save)).toHaveLength(0);
+    // snapshot first — the tick mutates the players in place
+    const snapshot = new Map(save.players.map((p) => [p.id, { caps: p.caps ?? 0, cond: p.condition, sharp: sharpnessOf(p), morale: p.morale ?? 60 }]));
+    const s2 = structuredClone(save);
+    s2.round = INTL_ROUNDS[0];
+    const called = internationalTick(s2);
+    expect(called.length).toBeGreaterThan(0);
+    const mineCalled = called.filter((id) => s2.players.find((p) => p.id === id)!.clubId === save.userClubId);
+    expect(mineCalled.length).toBeGreaterThan(0);
+    const after = s2.players.find((p) => p.id === mineCalled[0])!;
+    const was = snapshot.get(after.id)!;
+    expect(after.caps ?? 0).toBe(was.caps + 1);
+    expect(after.condition).toBeLessThan(was.cond);
+    expect(sharpnessOf(after)).toBeGreaterThanOrEqual(was.sharp);
+    expect(after.morale ?? 60).toBeGreaterThanOrEqual(was.morale);
+    void best;
+    // and the round after has nobody away
+    expect(internationalTick({ ...save, round: INTL_ROUNDS[0] + 1 })).toHaveLength(0);
+  });
+
+  it("you can set a player a target and it is judged at the season end", () => {
+    const save = fresh();
+    const fw = squadOf(save.players, save.userClubId).filter((p) => p.pos === "FW").sort((a, b) => overallFor(b) - overallFor(a))[0];
+    const opts = targetOptions(fw);
+    expect(opts.some((o) => o.kind === "goals")).toBe(true);
+    expect(opts.some((o) => o.ambitious)).toBe(true);
+    const modest = opts.find((o) => o.kind === "goals" && !o.ambitious)!;
+    const set = setTarget(save, fw.id, "goals", modest.value);
+    expect(set.resp.ok).toBe(true);
+    expect(set.save.players.find((x) => x.id === fw.id)!.target?.value).toBe(modest.value);
+    // progress reads live
+    const pp = set.save.players.find((x) => x.id === fw.id)!;
+    const nextSeasonSave: SaveGame = { ...set.save, season: set.save.season + 1 };
+    pp.goals = Math.max(1, modest.value - 1);
+    const so = targetSoFar(pp)!;
+    expect(so.current).toBe(Math.max(1, modest.value - 1));
+    expect(so.pct).toBeLessThan(1);
+    expect(targetLine(pp)).toMatch(/goals/);
+    // met: delighted
+    pp.goals = modest.value + 2;
+    const moraleBefore = pp.morale ?? 60;
+    settleTargets(nextSeasonSave);
+    const done = nextSeasonSave.players.find((x) => x.id === fw.id)!;
+    expect(done.target).toBeUndefined();
+    expect(done.morale ?? 60).toBeGreaterThan(moraleBefore);
+    // missed (ambitious) stings more than missed (modest)
+    const ambitious = opts.find((o) => o.kind === "goals" && o.ambitious)!;
+    const b1 = setTarget(save, fw.id, "goals", ambitious.value);
+    const b1Next: SaveGame = { ...b1.save, season: b1.save.season + 1 };
+    const before1 = b1Next.players.find((x) => x.id === fw.id)!.morale ?? 60;
+    settleTargets(b1Next);
+    const miss1 = (b1Next.players.find((x) => x.id === fw.id)!.morale ?? 60) - before1;
+    const b2 = setTarget(save, fw.id, "goals", modest.value);
+    const b2Next: SaveGame = { ...b2.save, season: b2.save.season + 1 };
+    const before2 = b2Next.players.find((x) => x.id === fw.id)!.morale ?? 60;
+    settleTargets(b2Next);
+    const miss2 = (b2Next.players.find((x) => x.id === fw.id)!.morale ?? 60) - before2;
+    expect(miss1).toBeLessThan(miss2);
+    // a rival's target is not yours to set
+    const rival = save.players.find((p) => p.clubId !== save.userClubId && p.clubId !== "")!;
+    expect(setTarget(save, rival.id, "goals", 5).resp.ok).toBe(false);
+  });
+
+  it("a player can learn a second position over a run of games", () => {
+    const save = fresh();
+    const mf = squadOf(save.players, save.userClubId).find((p) => p.pos === "MF")!;
+    expect(retrainOptions(mf)).toContain("DF");
+    const started = startRetrain(save, mf.id, "DF");
+    expect(started.resp.ok).toBe(true);
+    const pp = started.save.players.find((x) => x.id === mf.id)!;
+    expect(pp.retrain?.pos).toBe("DF");
+    // a month of football
+    for (let i = 0; i < 14; i++) retrainTick(started.save, { [mf.id]: 90 });
+    const done = started.save.players.find((x) => x.id === mf.id)!;
+    expect(done.altPos).toContain("DF");
+    expect(done.retrain).toBeUndefined();
+    // second position maxes him out
+    const again = startRetrain(started.save, mf.id, "FW");
+    expect(again.resp.ok).toBe(true);
+    for (let i = 0; i < 20; i++) retrainTick(again.save, { [mf.id]: 90 });
+    const final = again.save.players.find((x) => x.id === mf.id)!;
+    expect(final.altPos).toHaveLength(2);
+    expect(canRetrain(final)).toBe(false);
+    // keepers stay keepers
+    const gk = squadOf(save.players, save.userClubId).find((p) => p.pos === "GK")!;
+    expect(retrainOptions(gk)).toHaveLength(0);
+  });
+
+  it("a player can learn a move if the coach thinks he has the tools", () => {
+    const save = fresh();
+    const p = squadOf(save.players, save.userClubId).find(
+      (x) => x.pos === "MF" && x.attrs.passing >= 62 && x.traits.length < 2
+    )!;
+    expect(p).toBeTruthy();
+    const opts = moveOptions(p);
+    expect(opts).toContain("killer_balls");
+    const started = startMove(save, p.id, "killer_balls");
+    expect(started.resp.ok).toBe(true);
+    const pp = started.save.players.find((x) => x.id === p.id)!;
+    expect(pp.moveProgress?.trait).toBe("killer_balls");
+    // the right training unit teaches it faster
+    const slow = started.save;
+    const fast: SaveGame = { ...structuredClone(started.save), training: { unit: "passing", intensity: "normal" } };
+    moveTick(slow, { [p.id]: 90 });
+    moveTick(fast, { [p.id]: 90 });
+    expect(fast.players.find((x) => x.id === p.id)!.moveProgress!.progress).toBeGreaterThan(
+      slow.players.find((x) => x.id === p.id)!.moveProgress!.progress
+    );
+    for (let i = 0; i < 30; i++) moveTick(fast, { [p.id]: 90 });
+    const learned = fast.players.find((x) => x.id === p.id)!;
+    expect(learned.traits).toContain("killer_balls");
+    expect(learned.moveProgress).toBeUndefined();
+    // a player without the tools is refused
+    const weak = squadOf(save.players, save.userClubId).find((x) => x.attrs.passing < 55 && x.pos === "DF")!;
+    if (weak) expect(startMove(save, weak.id, "killer_balls").resp.ok).toBe(false);
+  });
+
+  it("discipline: a sending-off is yours to deal with", () => {
+    const save = fresh();
+    const p = mine(save, 5);
+    const result: MatchResult = {
+      fixtureKey: `${save.round}:${save.userClubId}:c2`,
+      round: save.round,
+      homeId: save.userClubId,
+      awayId: "c2",
+      homeGoals: 1,
+      awayGoals: 0,
+      ratings: {},
+      scorers: [],
+      updates: [
+        { playerId: p.id, minutes: 70, goals: 0, assists: 0, yellow: 0, red: true, injuredWeeks: 0, conditionLoss: 20 }
+      ],
+      events: []
+    };
+    const withMatch: SaveGame = { ...save, lastUserMatch: result };
+    const cases = disciplinaryCases(withMatch);
+    expect(cases.some((c) => c.playerId === p.id && c.kind === "red")).toBe(true);
+    const budgetBefore = withMatch.finances[withMatch.userClubId].transfer;
+    const moraleBefore = p.morale ?? 60;
+    const fined = applyDiscipline(withMatch, p.id, "fine");
+    expect(fined.resp.ok).toBe(true);
+    expect(fined.save.finances[fined.save.userClubId].transfer).toBe(budgetBefore + p.contract.wage * 2);
+    expect(fined.save.players.find((x) => x.id === p.id)!.morale!).toBeLessThan(moraleBefore);
+    expect(fined.save.discipline?.[0].kind).toBe("fine");
+    // letting him off keeps him happy but the press notice
+    const lenient = applyDiscipline(withMatch, p.id, "none");
+    expect(lenient.save.players.find((x) => x.id === p.id)!.morale!).toBeGreaterThan(moraleBefore);
+    expect(lenient.save.media!.respect).toBeLessThan(withMatch.media!.respect);
+  });
+
+  it("the armband: the captain leads the room and wears it on the pitch", () => {
+    const save = fresh();
+    const squad = squadOf(save.players, save.userClubId);
+    const kid = squad.sort((a, b) => a.age - b.age)[0];
+    const vet = squad.sort((a, b) => b.age - a.age)[0];
+    const made = setArmband(save, kid.id, "captain");
+    expect(made.resp.ok).toBe(true);
+    expect(made.save.captain).toBe(kid.id);
+    expect(made.save.players.find((x) => x.id === kid.id)!.morale!).toBeGreaterThan(kid.morale ?? 60);
+    // the armband lifts him up the pecking order in the dressing room
+    const without = roomLeaders(save, save.userClubId);
+    const rankWithout = without.findIndex((x) => x.id === kid.id);
+    const room = roomLeaders(made.save, made.save.userClubId);
+    expect(room).toHaveLength(3);
+    expect(room.some((x) => x.id === kid.id)).toBe(true);
+    expect(room.findIndex((x) => x.id === kid.id)).toBeLessThan(rankWithout === -1 ? 99 : rankWithout);
+    // handing it over hurts the man who loses it
+    const swapped = setArmband(made.save, vet.id, "captain");
+    expect(swapped.save.captain).toBe(vet.id);
+    expect(swapped.save.players.find((x) => x.id === kid.id)!.morale!).toBeLessThan(
+      made.save.players.find((x) => x.id === kid.id)!.morale!
+    );
+    // the vice wears it when the captain is off the pitch
+    const withVice = setArmband(swapped.save, squad[4].id, "vice");
+    expect(armbandIn(withVice.save, [squad[4].id])).toBe(squad[4].id);
+    expect(armbandIn(withVice.save, [vet.id])).toBe(vet.id);
+    expect(armbandIn(withVice.save, [squad[9].id])).toBeUndefined();
+  });
+
+  it("old saves get the new body and development fields", () => {
+    const save = fresh();
+    const players = save.players.map((p, i) =>
+      i === 0
+        ? ({ ...p, sharpness: undefined, jaded: undefined, caps: undefined, target: { kind: "nonsense" as never, value: 5, season: 1 } } as unknown as Player)
+        : i === 1
+          ? ({ ...p, retrain: { pos: "XX" as never, progress: 5 } } as unknown as Player)
+          : p
+    );
+    const broken: SaveGame = { ...save, players, captain: "ghost-id", vice: "ghost-2", discipline: undefined as never };
+    const fixed = normalizeSave(broken);
+    expect(fixed.players[0].sharpness).toBe(85);
+    expect(fixed.players[0].jaded).toBe(0);
+    expect(fixed.players[0].caps).toBe(0);
+    expect(fixed.players[0].target).toBeUndefined();
+    expect(fixed.players[1].retrain).toBeUndefined();
+    expect(fixed.captain).toBeUndefined();
+    expect(fixed.vice).toBeUndefined();
+    expect(Array.isArray(fixed.discipline)).toBe(true);
+  });
+
+  it("is deterministic through a whole season of bodies and learning", () => {
+    const run = () => {
+      let save = { ...newGame(902), round: 4 };
+      for (let r = 4; r <= 12; r++) {
+        const out = playRound(save);
+        save = out.save;
+      }
+      return JSON.stringify([
+        save.players.map((p) => [p.id, p.sharpness, p.jaded, p.caps]),
+        save.players.filter((p) => p.retrain).map((p) => [p.id, Math.round(p.retrain!.progress)]),
+        save.players.filter((p) => p.moveProgress).map((p) => [p.id, Math.round(p.moveProgress!.progress)])
+      ]);
+    };
+    expect(run()).toBe(run());
+  }, 30_000);
 });
 
 describe("save", () => {

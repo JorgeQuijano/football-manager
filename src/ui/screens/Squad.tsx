@@ -14,6 +14,7 @@ import {
 import { useGame } from "@/state/store";
 import { posChip } from "@/ui/format";
 import { PlannerView } from "@/ui/Planner";
+import { CaptainCard, DisciplineCard } from "@/ui/Individual";
 import { Dynamics } from "@/ui/Dynamics";
 import { PlayerDetailSheet } from "@/ui/sheets";
 
@@ -60,6 +61,10 @@ export function Squad() {
         </div>
       ) : (
         <>
+          <div className="mt-3 space-y-2">
+            <CaptainCard />
+            <DisciplineCard />
+          </div>
           <div className="mt-3">
             <label className="sr-only" htmlFor="squad-sort">
               Sort players
@@ -102,6 +107,12 @@ export function Squad() {
                         <span className="text-[#FFB020]"> · injured ({p.injuredWeeks})</span>
                       )}
                       {p.suspension > 0 && <span className="text-[#FF6157]"> · suspended</span>}
+                      {(p.sharpness ?? 85) < 70 && (
+                        <span className="text-[#FFB020]" data-testid={`rusty-${p.id}`}> · rusty</span>
+                      )}
+                      {(p.jaded ?? 0) > 60 && (
+                        <span className="text-[#FFB020]" data-testid={`jaded-${p.id}`}> · heavy legs</span>
+                      )}
                     </span>
                   </span>
                   <span className="flex shrink-0 flex-col items-end gap-1">

@@ -42,6 +42,7 @@ import {
 import { exportSaveFile, parseSaveFile } from "@/state/save";
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
+import { ArmbandCard, BodyCard, LearnerCard, TargetCard } from "@/ui/Individual";
 import { Stars } from "@/ui/Scouting";
 
 export function SettingsSheet({
@@ -616,6 +617,15 @@ export function PlayerDetailSheet({
                 <p className="text-[11px] text-muted-foreground" data-testid="traits-unknown">
                   Traits and personality stay hidden until you have an extensive report.
                 </p>
+              )}
+
+              {isOwn && (
+                <>
+                  <BodyCard player={p} />
+                  <TargetCard player={p} />
+                  <LearnerCard player={p} />
+                  <ArmbandCard player={p} />
+                </>
               )}
 
               {fogged && !est.attrs ? (

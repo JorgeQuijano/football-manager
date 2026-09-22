@@ -195,6 +195,28 @@ export interface Player {
   totals?: Record<string, ClubTotals>;
   /** league titles won (honours) */
   titles?: number;
+  /** match fitness 0-100 (85 = match-fit) — rises with minutes, falls away when out */
+  sharpness?: number;
+  /** accumulated wear from being overplayed 0-100 — costs him late in games */
+  jaded?: number;
+  /** international caps won (honours) */
+  caps?: number;
+  /** secondary positions he can cover — engine/individual.ts (retraining) */
+  altPos?: Position[];
+  /** a position he is learning */
+  retrain?: { pos: Position; progress: number };
+  /** a move (trait) he is learning */
+  moveProgress?: { trait: TraitId; progress: number };
+  /** this season's personal target */
+  target?: PlayerTarget;
+}
+
+/** An individual target the manager has set for a player this season. */
+export interface PlayerTarget {
+  kind: "goals" | "apps" | "rating";
+  value: number;
+  season: number;
+  ambitious?: boolean;
 }
 
 /** A player's deal: weekly wage and the last season it covers. */
@@ -767,6 +789,11 @@ export interface SaveGame {
   policy?: BoardPolicy;
   /** free transfers agreed for the end of the season */
   preContracts?: PreContract[];
+  /** the armband — engine/individual.ts */
+  captain?: string;
+  vice?: string;
+  /** disciplinary decisions this season (newest first, capped) */
+  discipline?: { season: number; round: number; playerId: string; kind: "fine" | "warn" | "none" }[];
   /** every signing completed this season — the board judges the window on this */
   windowLog?: { season: number; playerId: string; age: number; wage: number; fee: number }[];
   /** the user club's set-piece plan (routines, takers, familiarity) — engine/setpieces.ts */

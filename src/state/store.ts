@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import type {
+  TraitId,
+  Position,
   FormationDef,
   Lineup,
   MatchResult,
@@ -46,6 +48,14 @@ import {
   applyTeamTalk,
   addFocus as addFocusEngine,
   askAgent as askAgentEngine,
+  applyDiscipline,
+  cancelMove as cancelMoveEngine,
+  cancelRetrain as cancelRetrainEngine,
+  clearTarget as clearTargetEngine,
+  setArmband as setArmbandEngine,
+  setTarget as setTargetEngine,
+  startMove as startMoveEngine,
+  startRetrain as startRetrainEngine,
   bidForLoan,
   cancelPreContract as cancelPreContractEngine,
   exerciseLoanOption,
@@ -71,7 +81,6 @@ import type {
   OppInstruction,
   PlayerInstruction,
   PressOutcome,
-  Position,
   ShoutKind,
   TalkKind,
   TalkStage
@@ -150,6 +159,15 @@ interface AppState {
   cancelPreContract: (playerId: string) => void;
   /** take up a club option in a contract */
   triggerExtension: (playerId: string) => string | null;
+  /** individual development & discipline (v0.25) */
+  setTarget: (playerId: string, kind: "goals" | "apps" | "rating", value: number) => string | null;
+  clearTarget: (playerId: string) => void;
+  startRetrain: (playerId: string, pos: Position) => string | null;
+  cancelRetrain: (playerId: string) => void;
+  startMove: (playerId: string, trait: TraitId) => string | null;
+  cancelMove: (playerId: string) => void;
+  finePlayer: (playerId: string, kind: "fine" | "warn" | "none") => string | null;
+  setArmband: (playerId: string, role: "captain" | "vice" | "none") => string | null;
   /** move money between the transfer budget and the wage ceiling */
   reallocate: (direction: "toWage" | "toTransfer", weekly: number) => string;
   setTraining: (patch: Partial<TrainingPlan>) => void;
@@ -711,6 +729,80 @@ export const useGame = create<AppState>()((set, get) => ({
     set({ game: r.save });
     schedulePersist(r.save);
     return null;
+  },
+
+  setTarget: (playerId, kind, value) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const r = setTargetEngine(game, playerId, kind, value);
+    if (!r.resp.ok) return r.resp.message;
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return null;
+  },
+
+  clearTarget: (playerId) => {
+    const { game } = get();
+    if (!game) return;
+    const save = clearTargetEngine(game, playerId);
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  startRetrain: (playerId, pos) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const r = startRetrainEngine(game, playerId, pos);
+    if (!r.resp.ok) return r.resp.message;
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return null;
+  },
+
+  cancelRetrain: (playerId) => {
+    const { game } = get();
+    if (!game) return;
+    const save = cancelRetrainEngine(game, playerId);
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  startMove: (playerId, trait) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const r = startMoveEngine(game, playerId, trait);
+    if (!r.resp.ok) return r.resp.message;
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return null;
+  },
+
+  cancelMove: (playerId) => {
+    const { game } = get();
+    if (!game) return;
+    const save = cancelMoveEngine(game, playerId);
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  finePlayer: (playerId, kind) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const r = applyDiscipline(game, playerId, kind);
+    if (!r.resp.ok) return r.resp.message;
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return r.resp.message;
+  },
+
+  setArmband: (playerId, role) => {
+    const { game } = get();
+    if (!game) return "No game loaded.";
+    const r = setArmbandEngine(game, playerId, role);
+    if (!r.resp.ok) return r.resp.message;
+    set({ game: r.save });
+    schedulePersist(r.save);
+    return r.resp.message;
   },
 
   reallocate: (direction, weekly) => {
