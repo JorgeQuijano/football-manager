@@ -105,6 +105,7 @@ export type Screen =
   | "training"
   | "setpieces"
   | "club"
+  | "welcome"
   | "match"
   | "inbox"
   | "help"
@@ -118,11 +119,17 @@ interface AppState {
   slots: SlotMeta[];
   game: SaveGame | null;
   screen: Screen;
+  /** the generated world shown on the club-selection screen (v0.32) */
+  preview: SaveGame | null;
   reveal: MatchResult | null;
   builderFor: string | null; // custom formation id being edited (null = creating)
 
   init: () => Promise<void>;
+  /** generate the league so the club choice can be made on real data (v0.32) */
+  prepareWorld: (seed?: number) => void;
   startNewGame: (clubId: string) => void;
+  /** close the first-day briefing */
+  dismissWelcome: () => void;
   advance: () => void;
   finishMatch: () => void;
   liveSub: (outId: string, inId: string) => string | null;
@@ -252,6 +259,7 @@ export const useGame = create<AppState>()((set, get) => ({
   loaded: false,
   slots: [],
   game: null,
+  preview: null,
   screen: "new",
   reveal: null,
   builderFor: null,
@@ -261,11 +269,32 @@ export const useGame = create<AppState>()((set, get) => ({
     set({ game: save, loaded: true, screen: save ? (save.live ? "match" : "home") : "new" });
   },
 
+  prepareWorld: (seed) => {
+    const s = seed ?? Math.floor(Math.random() * 1_000_000) + 1;
+    const world = newGame(s, "c1");
+    set({ preview: world });
+  },
+
   startNewGame: (clubId) => {
+    const { preview } = get();
+    if (preview) {
+      const game: SaveGame = { ...preview, userClubId: clubId, onboarded: false };
+      set({ game, preview: null, screen: "welcome", reveal: null, builderFor: null });
+      schedulePersist(game);
+      return;
+    }
     const seed = Math.floor(Math.random() * 1_000_000) + 1;
     const game = newGame(seed, clubId);
-    set({ game, screen: "home", reveal: null, builderFor: null });
+    set({ game, screen: "welcome", reveal: null, builderFor: null });
     schedulePersist(game);
+  },
+
+  dismissWelcome: () => {
+    const { game } = get();
+    if (!game) return;
+    const next: SaveGame = { ...game, onboarded: true };
+    set({ game: next, screen: "home" });
+    schedulePersist(next);
   },
 
   /** Play out the rest of pre-season in one go. */

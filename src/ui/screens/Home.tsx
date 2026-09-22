@@ -15,7 +15,10 @@ import {
   inboxUnread,
   friendlyDate,
   formOf,
-  squadOf
+  squadOf,
+  bandFor,
+  expectationFor,
+  squadValue
 } from "@/engine";
 import { useGame } from "@/state/store";
 import { formColor, initials, ordinal, shortName } from "@/ui/format";
@@ -76,6 +79,9 @@ export function Home() {
           <div className="truncate text-base font-bold">{club.name}</div>
           <div className="text-xs text-muted-foreground">
             {ordinal(mine.position)} · {mine.pts} pts · Season {game.season}
+          </div>
+          <div className="truncate text-[10px] text-muted-foreground/80" data-testid="board-expectation">
+            Board: {expectationFor(bandFor(squadValue(game, game.userClubId), game.clubs.map((c) => squadValue(game, c.id))))}
           </div>
         </div>
         <button

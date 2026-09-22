@@ -198,6 +198,7 @@ export function normalizeSave(save: SaveGame): SaveGame {
     const fin = save.finances[id];
     if (typeof fin.balance !== "number" || !Number.isFinite(fin.balance)) fin.balance = 4_000_000;
   }
+  if (typeof save.onboarded !== "boolean") save.onboarded = true; // old saves have already been welcomed
   if (!Array.isArray(save.recentResults)) save.recentResults = [];
   save.recentResults = save.recentResults
     .filter((r) => r && typeof r.round === "number" && typeof r.oppId === "string")

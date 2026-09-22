@@ -30,6 +30,15 @@ import { INBOX_CAP, inboxFor, inboxUnread, markAllInboxRead, openInboxItem, push
 import { PRE_ROUNDS, makeFriendlies, preseasonState } from "./preseason";
 import { fmtShort as fmtShortCal, friendlyDate } from "./calendar";
 import type { Facilities } from "./types";
+import {
+  CLUB_LORE,
+  bandFor,
+  clubBrief,
+  jobBrief,
+  sponsorHint,
+  wagePressure
+} from "./onboarding";
+import { squadValue as squadValueOf } from "./transfers";
 import { makeYouth } from "./training";
 import { formFactor, formFreshnessTick } from "./stats";
 import {
@@ -5641,6 +5650,91 @@ describe("the club: sponsorship, the account and the campus", () => {
     expect(end).toBeGreaterThan(start); // a mid club is cash-generative on this model
     expect(end).toBeLessThan(start + 40_000_000); // …but not silly
   }, 30_000);
+});
+
+describe("manager onboarding: the club brief and the first day", () => {
+  const fresh = () => newGame(997);
+
+  it("public facts are exact: the ground, the seats and the honours", () => {
+    const save = fresh();
+    const brief = clubBrief(save, "c1");
+    expect(brief.lore.city).toBe("Northport");
+    expect(brief.stadium).toBe("The Dockside");
+    expect(brief.capacity).toBe(capacityOf(facilitiesOf(save, "c1")));
+    expect(brief.titles).toBe(CLUB_LORE.c1.honours);
+    // every club has lore, a ground and a real capacity
+    for (const c of save.clubs) {
+      const b = clubBrief(save, c.id);
+      expect(b.name).toBe(c.name);
+      expect(b.capacity).toBeGreaterThanOrEqual(8_000);
+      expect(b.lore.city.length).toBeGreaterThan(2);
+    }
+  });
+
+  it("money and squads are words, never numbers", () => {
+    const save = fresh();
+    for (const c of save.clubs) {
+      const b = clubBrief(save, c.id);
+      expect(b.wealth).not.toMatch(/[0-9£]/);
+      expect(b.squad).not.toMatch(/[0-9£]/);
+      expect(b.expectation.length).toBeGreaterThan(6);
+      expect(["Easy", "Fair", "Hard", "Brutal"]).toContain(b.difficulty);
+    }
+  });
+
+  it("the big club reads rich and the small club reads like hard work", () => {
+    const save = fresh();
+    // the actual biggest and smallest by squad value (seeded clubs vary in order)
+    const byValue = [...save.clubs].sort((a, b) => squadValueOf(save, b.id) - squadValueOf(save, a.id));
+    const top = clubBrief(save, byValue[0].id);
+    const bottom = clubBrief(save, byValue[byValue.length - 1].id);
+    const wealthRank = ["Shoestring", "Careful with money", "Comfortable", "Wealthy", "Very wealthy"];
+    expect(wealthRank.indexOf(top.wealth)).toBeGreaterThan(wealthRank.indexOf(bottom.wealth));
+    const squadRank = ["Survival scrappers", "A battle ahead", "Solid mid-table", "Top-four calibre", "Title favourites"];
+    expect(squadRank.indexOf(top.squad)).toBeGreaterThan(squadRank.indexOf(bottom.squad));
+    expect(top.difficulty).toBe("Easy");
+    expect(["Hard", "Brutal"]).toContain(bottom.difficulty);
+    // and the expectation follows the squad, not the weather
+    expect(top.expectation).toMatch(/win the league/i);
+    expect(bottom.expectation).toMatch(/competitive|bonus/i);
+  });
+
+  it("the brief is deterministic for a given world", () => {
+    const save = fresh();
+    const a = JSON.stringify(clubBrief(save, "c4"));
+    const b = JSON.stringify(clubBrief(save, "c4"));
+    expect(a).toBe(b);
+    expect(a).toBe(JSON.stringify(clubBrief(newGame(997), "c4")));
+  });
+
+  it("the first-day briefing hands over the real numbers", () => {
+    const save = newGame(997, "c5");
+    const brief = jobBrief(save);
+    const fin = save.finances[save.userClubId];
+    expect(brief.club).toBe(save.clubs[4].name);
+    expect(brief.transfer).toBe(fin.transfer);
+    expect(brief.wageBudget).toBe(fin.wageBudget);
+    expect(brief.balance).toBe(fin.balance);
+    expect(brief.squadSize).toBe(squadOf(save.players, save.userClubId).length);
+    expect(brief.bestPlayer.name.length).toBeGreaterThan(2);
+    expect(brief.firstFixture).toMatch(/^(Home|Away) v /);
+    expect(brief.actions.length).toBeGreaterThanOrEqual(2);
+    expect(brief.kittyNote.length).toBeGreaterThan(10);
+  });
+
+  it("day-one advice reads the club it is given", () => {
+    const save = newGame(997, "c1");
+    const rich = sponsorHint(save, "c1");
+    const poor = sponsorHint(save, save.clubs[9].id);
+    expect(rich).not.toBe(poor);
+    expect(wagePressure(save, "c1").length).toBeGreaterThan(10);
+    expect(wagePressure(save, save.clubs[9].id).length).toBeGreaterThan(10);
+    // a band is always one of the five, for any value
+    const bands = new Set(["elite", "strong", "good", "modest", "limited"]);
+    for (const v of [0, 1, 5, 10, 50, 100]) {
+      expect(bands.has(bandFor(v, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))).toBe(true);
+    }
+  });
 });
 
 describe("save", () => {
