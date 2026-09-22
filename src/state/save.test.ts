@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newGame, startLive } from "../engine";
+import { emptyHistory } from "../engine/history";
 import { normalizeSave } from "./save";
 
 describe("normalizeSave", () => {
@@ -78,6 +79,34 @@ describe("normalizeSave", () => {
     save2.round += 1;
     const fixed2 = normalizeSave(save2);
     expect(fixed2.live).toBeUndefined();
+  });
+
+  it("backfills history & awards and repairs broken entries", () => {
+    const save = newGame(54);
+    const old = JSON.parse(JSON.stringify(save)) as typeof save;
+    delete (old as { history?: unknown }).history;
+    delete (old as { awards?: unknown }).awards;
+    const fixed = normalizeSave(old);
+    expect(fixed.history.seasons).toEqual([]);
+    expect(fixed.history.titles).toBe(0);
+    expect(fixed.history.allTime.topScorer).toBeNull();
+    expect(fixed.awards.rounds).toEqual([]);
+
+    // partially-written / broken states are repaired, junk is dropped
+    const s2 = newGame(55);
+    (s2 as unknown as Record<string, unknown>).history = { seasons: "nope", titles: "x", allTime: 5 };
+    s2.awards = { rounds: [{ bad: true }, { season: 1, round: 2, playerId: "p", name: "N", clubId: "c1", pos: "FW", rating: 7.1 }] as never, bestWin: undefined as never };
+    const p = s2.players[0];
+    (p as { totals?: unknown }).totals = "garbage";
+    (p as { titles?: unknown }).titles = "two";
+    const fixed2 = normalizeSave(s2);
+    expect(fixed2.history.seasons).toEqual([]);
+    expect(fixed2.history.titles).toBe(0);
+    expect(fixed2.history.allTime).toEqual(emptyHistory().allTime);
+    expect(fixed2.awards.rounds).toHaveLength(1);
+    expect(fixed2.awards.bestWin).toBeNull();
+    expect(fixed2.players[0].totals).toBeUndefined();
+    expect(fixed2.players[0].titles).toBeUndefined();
   });
 
   it("backfills the scouting department and drops dead assignments", () => {

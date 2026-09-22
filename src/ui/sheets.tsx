@@ -3,6 +3,7 @@ import type { FormationSlot, Player, Position, RoleId } from "@/engine";
 import {
   autoLineup,
   builtinFormation,
+  careerTotals,
   defaultRoleFor,
   estimateFor,
   isAvailable,
@@ -16,6 +17,7 @@ import {
   slotScoreFor,
   squadOf,
   suitability,
+  totalsFor,
   TRAITS
 } from "@/engine";
 import { ATTR_KEYS, ATTR_LABEL, ATTR_SHORT } from "@/engine";
@@ -418,6 +420,42 @@ export function PlayerDetailSheet({
                   </div>
                 )}
               </div>
+
+              {(() => {
+                const ct = careerTotals(p);
+                const mine = totalsFor(p, game.userClubId);
+                const clubIds = Object.keys(p.totals ?? {});
+                if (ct.apps === 0 && (p.titles ?? 0) === 0) return null;
+                return (
+                  <div className="space-y-1 rounded-lg border border-border bg-card p-3" data-testid="player-career">
+                    <div className="flex items-center justify-between text-xs font-semibold">
+                      <span className="text-muted-foreground">Career</span>
+                      <span className="tnum" data-testid="career-totals">
+                        {ct.apps} apps · {ct.goals} goals · {ct.assists} assists
+                      </span>
+                    </div>
+                    {mine.apps > 0 && (
+                      <div className="text-[11px] text-muted-foreground tnum">
+                        For {game.clubs.find((c) => c.id === game.userClubId)?.name}: {mine.apps} apps ·{" "}
+                        {mine.goals} goals · {mine.assists} assists
+                      </div>
+                    )}
+                    {clubIds.length > 1 && (
+                      <div className="text-[11px] text-muted-foreground">
+                        Clubs:{" "}
+                        {clubIds
+                          .map((id) => game.clubs.find((c) => c.id === id)?.short ?? "—")
+                          .join(" → ")}
+                      </div>
+                    )}
+                    {(p.titles ?? 0) > 0 && (
+                      <div className="text-[11px] font-semibold text-primary" data-testid="career-honours">
+                        Honours: {p.titles}× league champion
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div
                 className="space-y-2 rounded-lg border border-border bg-card p-3"

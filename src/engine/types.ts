@@ -173,6 +173,10 @@ export interface Player {
   form: number[];
   /** recent matches for the user's players, newest first (capped) */
   history: PlayerMatch[];
+  /** career league totals per club (folded in each pre-season) — club record books */
+  totals?: Record<string, ClubTotals>;
+  /** league titles won (honours) */
+  titles?: number;
 }
 
 /** A player's deal: weekly wage and the last season it covers. */
@@ -391,6 +395,76 @@ export interface TableRow {
   position: number;
 }
 
+// --- history, records & awards (engine/history.ts) -----------------------------------
+
+/** League totals for one player at one club. */
+export interface ClubTotals {
+  apps: number;
+  goals: number;
+  assists: number;
+}
+
+/** A single match result worth remembering. */
+export interface WinRecord {
+  homeId: string;
+  awayId: string;
+  hs: number;
+  as: number;
+  season: number;
+  round: number;
+}
+
+/** A Player-of-the-Round entry. */
+export interface RoundAward {
+  season: number;
+  round: number;
+  playerId: string;
+  name: string;
+  clubId: string;
+  pos: Position;
+  rating: number;
+}
+
+/** A record-book entry (all-time leaders). */
+export interface RecordEntry {
+  value: number;
+  playerId: string;
+  name: string;
+  clubId: string;
+  season: number;
+}
+
+/** One finished season, as it will always be remembered. */
+export interface SeasonRecord {
+  season: number;
+  champion: { clubId: string; name: string; points: number; gf: number; ga: number };
+  runnerUp: { clubId: string; name: string; points: number };
+  user: { pos: number; pts: number; w: number; d: number; l: number; prize: number };
+  topScorer: { playerId: string; name: string; clubId: string; goals: number } | null;
+  playerOfSeason: { playerId: string; name: string; clubId: string; rating: number; apps: number } | null;
+  teamOfSeason: { playerId: string; name: string; pos: Position; clubId: string }[];
+  biggestWin: WinRecord | null;
+}
+
+export interface HistoryState {
+  seasons: SeasonRecord[];
+  /** league titles won by the user's club */
+  titles: number;
+  allTime: {
+    topScorer: RecordEntry | null;
+    mostApps: RecordEntry | null;
+    bestSeasonGoals: RecordEntry | null;
+    bestSeasonRating: RecordEntry | null;
+    biggestWin: WinRecord | null;
+  };
+}
+
+/** The current season's live award state (reset at every rollover). */
+export interface AwardState {
+  rounds: RoundAward[];
+  bestWin: WinRecord | null;
+}
+
 export interface SaveGame {
   saveVersion: 1;
   seed: number;
@@ -419,6 +493,10 @@ export interface SaveGame {
   training: TrainingPlan;
   /** scouting department: staff, requests, knowledge, reports, shortlist (engine/scouting.ts) */
   scouting: ScoutingState;
+  /** all-time history, records and titles (engine/history.ts) */
+  history: HistoryState;
+  /** this season's live awards: player of the round feed + biggest win */
+  awards: AwardState;
   /** training/development news lines (trait learning, academy intake…), newest first */
   devNews: string[];
 }

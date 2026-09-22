@@ -7,6 +7,8 @@ import {
   contractFor,
   defaultRoleFor,
   ensureDev,
+  emptyAwards,
+  emptyHistory,
   freshFinances,
   hashSeed,
   initScouting,
@@ -77,6 +79,33 @@ export function normalizeSave(save: SaveGame): SaveGame {
     sc.reports = sc.reports.filter((id) => ids.has(id));
     sc.shortlist = sc.shortlist.filter((id) => ids.has(id));
     for (const id of Object.keys(sc.knowledge)) if (!ids.has(id)) delete sc.knowledge[id];
+  }
+  // history & awards (v0.17): backfill, repair partially-written states
+  if (!save.history || typeof save.history !== "object") {
+    save.history = emptyHistory();
+  } else {
+    const h = save.history;
+    if (!Array.isArray(h.seasons)) h.seasons = [];
+    if (typeof h.titles !== "number" || !Number.isFinite(h.titles)) h.titles = 0;
+    if (!h.allTime || typeof h.allTime !== "object") h.allTime = emptyHistory().allTime;
+    else {
+      const base = emptyHistory().allTime;
+      for (const k of Object.keys(base) as Array<keyof typeof base>) {
+        if (h.allTime[k] === undefined) (h.allTime as Record<string, unknown>)[k] = base[k];
+      }
+    }
+    h.seasons = h.seasons.filter((s) => s && typeof s.season === "number" && typeof s.champion?.clubId === "string");
+  }
+  if (!save.awards || typeof save.awards !== "object") {
+    save.awards = emptyAwards();
+  } else {
+    if (!Array.isArray(save.awards.rounds)) save.awards.rounds = [];
+    if (save.awards.bestWin === undefined) save.awards.bestWin = null;
+    save.awards.rounds = save.awards.rounds.filter((r) => r && typeof r.rating === "number");
+  }
+  for (const p of save.players) {
+    if (p.totals !== undefined && (typeof p.totals !== "object" || p.totals === null)) delete p.totals;
+    if (p.titles !== undefined && (typeof p.titles !== "number" || !Number.isFinite(p.titles))) delete p.titles;
   }
   if (!Array.isArray(save.offers)) save.offers = [];
   save.offers = save.offers.filter(

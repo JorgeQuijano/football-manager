@@ -11,6 +11,7 @@ export * from "./planner";
 export * from "./setpieces";
 export * from "./stats";
 export * from "./scouting";
+export * from "./history";
 export * from "./formations";
 export * from "./ratings";
 export * from "./league";

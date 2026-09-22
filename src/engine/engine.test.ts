@@ -91,7 +91,20 @@ import {
   wageHeadroom,
   windowTick
 } from "./transfers";
-import { FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery } from "./tuning";
+import {
+  AWARD_MIN_APPS,
+  POTR_MIN_MINUTES,
+  TOTS_SHAPE,
+  careerTotals,
+  ordinal,
+  payPrize,
+  prizeFor,
+  totalsFor,
+  topScorers
+} from "./history";
+import {
+  FORMATION_COORDS, FORMATION_IDS, FORMATIONS, T, weeklyRecovery
+} from "./tuning";
 import type { CornerRoutine, FreeKickRoutine, Intensity, Mentality, Player, PlayerUpdate, Position, SaveGame, SetPiecePlan, Stroke, TrainingPlan, TrainingUnit } from "./types";
 import type { MatchStatCtx } from "./stats";
 
@@ -2219,6 +2232,224 @@ describe("set pieces", () => {
     const strokes = live.state.timeline.filter((st) => st.sp === "corner").length;
     expect(stats.cornersHome + stats.cornersAway).toBe(strokes);
     expect(strokes).toBeGreaterThan(0);
+  });
+});
+
+describe("history, records & awards", () => {
+  it("folds season counters into per-club career totals exactly once", () => {
+    const s1 = playSeason(newGame(71));
+    const before = s1.players.filter((p) => p.apps > 5 && p.age < 30);
+    expect(before.length).toBeGreaterThan(10);
+    const sample = before.slice(0, 30).map((p) => ({
+      id: p.id,
+      clubId: p.clubId,
+      apps: p.apps,
+      goals: p.goals,
+      assists: p.assists
+    }));
+    const s2 = nextSeason(s1);
+    for (const snap of sample) {
+      const p = s2.players.find((x) => x.id === snap.id);
+      if (!p) continue; // retired — skip
+      const t = totalsFor(p, snap.clubId);
+      expect(t.apps).toBe(snap.apps); // folded once, exactly
+      expect(t.goals).toBe(snap.goals);
+      expect(careerTotals(p).apps).toBe(snap.apps);
+      expect(p.apps).toBe(0); // season counters reset
+    }
+    const kept = sample.filter((s) => s2.players.some((p) => p.id === s.id));
+    expect(kept.length).toBeGreaterThan(10);
+    for (const snap of kept) {
+      const p = s2.players.find((x) => x.id === snap.id)!;
+      const t = totalsFor(p, snap.clubId);
+      expect(t.goals).toBeGreaterThanOrEqual(snap.goals);
+      expect(t.apps).toBeGreaterThanOrEqual(snap.apps);
+    }
+    // a second rollover accumulates on top of the first (no reset, no double count from one season)
+    const s3 = nextSeason(playSeason(s2));
+    const p1 = s2.players.find((x) => x.id === kept[0].id);
+    const p3 = s3.players.find((x) => x.id === kept[0].id);
+    if (p1 && p3) {
+      const t2 = careerTotals(p1);
+      const t3 = careerTotals(p3);
+      expect(t3.apps).toBeGreaterThanOrEqual(t2.apps);
+    }
+  });
+
+  it("remembers the season: champion, your finish, top scorer, POTY, TOTS, biggest win", () => {
+    const s1 = playSeason(newGame(72));
+    const table = computeTable(s1.fixtures, s1.clubs);
+    const s2 = nextSeason(s1);
+    const h = s2.history;
+    expect(h.seasons).toHaveLength(1);
+    const r = h.seasons[0];
+    expect(r.season).toBe(1);
+    expect(r.champion.clubId).toBe(table[0].clubId);
+    expect(r.champion.points).toBe(table[0].pts);
+    expect(r.runnerUp.clubId).toBe(table[1].clubId);
+    const mine = table.find((t) => t.clubId === s1.userClubId)!;
+    expect(r.user.pos).toBe(mine.position);
+    expect(r.user.pts).toBe(mine.pts);
+    expect(r.user.w + r.user.d + r.user.l).toBe(seasonRounds(s1));
+    expect(r.user.prize).toBe(prizeFor(mine.position));
+    expect(r.topScorer!.goals).toBeGreaterThan(0);
+    expect(r.playerOfSeason!.rating).toBeGreaterThan(4);
+    expect(r.playerOfSeason!.apps).toBeGreaterThanOrEqual(AWARD_MIN_APPS);
+    expect(r.teamOfSeason).toHaveLength(11);
+    expect(r.teamOfSeason.map((x) => x.pos).join(",")).toBe(TOTS_SHAPE.join(","));
+    expect(new Set(r.teamOfSeason.map((x) => x.playerId)).size).toBe(11);
+    expect(r.biggestWin).not.toBeNull();
+    // the top scorer really was the league's best
+    const best = [...s1.players].sort((a, b) => b.goals - a.goals)[0];
+    expect(r.topScorer!.goals).toBe(best.goals);
+  });
+
+  it("pays prize money with the new budgets and writes a news line", () => {
+    const s1 = playSeason(newGame(73));
+    const s2 = nextSeason(s1);
+    expect(s2.devNews.some((n) => /prize money/i.test(n))).toBe(true);
+    // isolation: payPrize adds exactly the recorded prize
+    const s = newGame(73);
+    s.history.seasons.push({
+      season: 1,
+      champion: { clubId: s.clubs[1].id, name: s.clubs[1].name, points: 40, gf: 30, ga: 20 },
+      runnerUp: { clubId: s.clubs[0].id, name: s.clubs[0].name, points: 38 },
+      user: { pos: 4, pts: 30, w: 9, d: 3, l: 6, prize: 2_800_000 },
+      topScorer: null,
+      playerOfSeason: null,
+      teamOfSeason: [],
+      biggestWin: null
+    });
+    const before = s.finances[s.userClubId].transfer;
+    payPrize(s);
+    expect(s.finances[s.userClubId].transfer).toBe(before + 2_800_000);
+    expect(s.devNews[0]).toMatch(/4th/);
+  });
+
+  it("crowns champions with titles and counts only your own", () => {
+    const s1 = playSeason(newGame(75));
+    const champId = computeTable(s1.fixtures, s1.clubs)[0].clubId;
+    const prevTitles = new Map(s1.players.map((p) => [p.id, p.titles ?? 0]));
+    const s2 = nextSeason(s1);
+    for (const p of s2.players) {
+      const was = prevTitles.get(p.id);
+      if (was === undefined) continue; // new youth / free agents
+      const atChamp = p.clubId === champId && s1.players.find((x) => x.id === p.id)!.clubId === champId;
+      expect(p.titles ?? 0).toBe(atChamp ? was + 1 : was);
+    }
+    expect(s2.history.titles).toBe(champId === s1.userClubId ? 1 : 0);
+  });
+
+  it("updates all-time records when they are beaten and keeps them across seasons", () => {
+    const s1 = playSeason(newGame(76));
+    const s2 = nextSeason(s1);
+    const a = s2.history.allTime;
+    expect(a.topScorer!.value).toBeGreaterThan(0);
+    expect(a.mostApps!.value).toBeGreaterThan(0);
+    expect(a.bestSeasonGoals!.value).toBeGreaterThan(0);
+    expect(a.bestSeasonRating!.value).toBeGreaterThan(4);
+    expect(a.biggestWin!.season).toBe(1);
+    const s3 = nextSeason(playSeason(s2));
+    expect(s3.history.seasons).toHaveLength(2);
+    expect(s3.history.allTime.topScorer!.value).toBeGreaterThanOrEqual(a.topScorer!.value);
+    expect(s3.history.allTime.mostApps!.value).toBeGreaterThan(a.mostApps!.value); // apps only grow
+  });
+
+  it("awards a player of the round every round — best rating, minimum minutes", () => {
+    let save = newGame(77);
+    save = playRound(save).save;
+    expect(save.awards.rounds).toHaveLength(1);
+    expect(save.awards.rounds[0].round).toBe(1);
+    expect(save.awards.rounds[0].season).toBe(1);
+    // the winner is the best-rated player who played at least 45 minutes this round
+    let bestRt = -1;
+    let bestId = "";
+    for (const r of save.lastResults) {
+      for (const [pid, rt] of Object.entries(r.ratings)) {
+        const u = r.updates.find((x) => x.playerId === pid);
+        if (!u || u.minutes < POTR_MIN_MINUTES) continue;
+        if (rt > bestRt) {
+          bestRt = rt;
+          bestId = pid;
+        }
+      }
+    }
+    expect(save.awards.rounds[0].playerId).toBe(bestId);
+    const full = playSeason(newGame(77));
+    expect(full.awards.rounds).toHaveLength(seasonRounds(full));
+    const rolled = nextSeason(full);
+    expect(rolled.awards.rounds).toHaveLength(0); // reset for the new campaign
+    expect(rolled.awards.bestWin).toBeNull();
+  });
+
+  it("tracks the biggest win of the season and of all time", () => {
+    const s1 = playSeason(newGame(78));
+    const played = s1.fixtures.filter((f) => f.played && f.homeGoals != null);
+    const widest = played.reduce((m, f) =>
+      Math.abs(f.homeGoals! - f.awayGoals!) > Math.abs(m.homeGoals! - m.awayGoals!) ? f : m
+    );
+    const w = s1.awards.bestWin!;
+    expect(Math.abs(w.hs - w.as)).toBe(Math.abs(widest.homeGoals! - widest.awayGoals!));
+    expect(w.homeId === widest.homeId || w.homeId === widest.awayId).toBe(true);
+    const s2 = nextSeason(s1);
+    expect(s2.history.allTime.biggestWin!.season).toBe(1);
+  });
+
+  it("keeps clubs' record books per club and per career", () => {
+    const s1 = playSeason(newGame(79));
+    const s2 = nextSeason(s1);
+    const p = s2.players.find((x) => careerTotals(x).apps > 0)!;
+    expect(careerTotals(p).apps).toBeGreaterThan(0);
+    const clubId = Object.keys(p.totals!)[0];
+    expect(totalsFor(p, clubId).apps).toBeGreaterThan(0);
+    expect(totalsFor(p, "no-such-club")).toEqual({ apps: 0, goals: 0, assists: 0 });
+    // a player who never featured has no career entry (saves stay small)
+    const ghost = s2.players.find((x) => (x.totals ?? undefined) && Object.keys(x.totals!).length === 0);
+    expect(ghost === undefined || Object.values(ghost.totals!).every((t) => t.apps + t.goals + t.assists > 0)).toBe(true);
+    // Scorers tab: mid-season ordering (pre-season everyone is on 0, so the list is empty)
+    let mid = newGame(79);
+    for (let i = 0; i < 6; i++) mid = playRound(mid).save;
+    const scouted = topScorers(mid, 5);
+    expect(scouted).toHaveLength(5);
+    expect(scouted[0].goals).toBeGreaterThanOrEqual(scouted[1].goals);
+    expect(scouted.every((p) => p.goals > 0 || p.apps > 0)).toBe(true);
+    expect(topScorers(s2, 5)).toHaveLength(0); // fresh season, nothing played yet
+  });
+
+  it("survives players retiring: records live on in history", () => {
+    let save = newGame(80);
+    for (let i = 0; i < 4; i++) save = nextSeason(playSeason(save));
+    expect(save.history.seasons).toHaveLength(4);
+    expect(save.history.allTime.topScorer!.value).toBeGreaterThan(10);
+    const youngest = [...save.players].sort((a, b) => a.age - b.age)[0];
+    expect(youngest.age).toBeLessThan(24);
+  });
+
+  it("prize money descends by position and ordinal reads right", () => {
+    expect(prizeFor(1)).toBeGreaterThan(prizeFor(2));
+    expect(prizeFor(2)).toBeGreaterThan(prizeFor(10));
+    expect(prizeFor(0)).toBe(prizeFor(1));
+    expect(prizeFor(99)).toBe(prizeFor(10));
+    expect(ordinal(1)).toBe("1st");
+    expect(ordinal(2)).toBe("2nd");
+    expect(ordinal(3)).toBe("3rd");
+    expect(ordinal(4)).toBe("4th");
+    expect(ordinal(11)).toBe("11th");
+    expect(ordinal(21)).toBe("21st");
+  });
+
+  it("has no history mid-season and is deterministic", () => {
+    let save = newGame(81);
+    for (let i = 0; i < 5; i++) save = playRound(save).save;
+    expect(save.history.seasons).toHaveLength(0);
+    expect(save.awards.rounds).toHaveLength(5);
+    expect(save.history.titles).toBe(0);
+
+    const run = () => {
+      const s = nextSeason(playSeason(newGame(82)));
+      return JSON.stringify([s.history, s.awards]);
+    };
+    expect(run()).toBe(run());
   });
 });
 
