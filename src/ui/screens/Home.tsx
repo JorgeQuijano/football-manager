@@ -23,6 +23,7 @@ import {
 import { useGame } from "@/state/store";
 import { formColor, initials, ordinal, shortName } from "@/ui/format";
 import { SettingsSheet } from "@/ui/sheets";
+import { WeekCard } from "@/ui/Week";
 import { MediaCard } from "@/ui/Press";
 import { MatchStakes, MeetingCard } from "@/ui/Motivation";
 
@@ -126,6 +127,7 @@ export function Home() {
 
       <div className="mt-3">
         <MeetingCard />
+      <WeekCard />
       </div>
 
       {game.round < 0 && (

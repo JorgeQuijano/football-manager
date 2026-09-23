@@ -28,6 +28,7 @@ export * from "./commercial";
 export * from "./onboarding";
 export * from "./attrs20";
 export * from "./aerial";
+export * from "./week";
 export * from "./formations";
 export * from "./ratings";
 export * from "./league";

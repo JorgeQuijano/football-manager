@@ -41,7 +41,15 @@ import {
   startLive,
   T, playRound } from "@/engine";
 import type { BidResponse } from "@/engine";
-import type { AttrKey, CornerRoutine, FacilityKind, FreeKickRoutine, TrainingPlan } from "@/engine";
+import type {
+  Activity,
+  AttrKey,
+  CornerRoutine,
+  DayReport,
+  FacilityKind,
+  FreeKickRoutine,
+  TrainingPlan
+} from "@/engine";
 import { cleanSetPieces } from "@/engine";
 import {
   applyTeamTalk,
@@ -76,6 +84,9 @@ import {
   toggleShortlist as toggleShortlistEngine,
   topUpScouting as topUpScoutingEngine,
   leaders as leadersOf,
+  runDay,
+  DEFAULT_PLAN,
+  MATCH_DAY,
   bankToTransfer as bankToTransferEngine,
   startBuild as startBuildEngine,
   signSponsor as signSponsorEngine
@@ -121,6 +132,8 @@ interface AppState {
   screen: Screen;
   /** the generated world shown on the club-selection screen (v0.32) */
   preview: SaveGame | null;
+  /** the report of the day just finished (v0.35) */
+  lastDay: DayReport | null;
   reveal: MatchResult | null;
   builderFor: string | null; // custom formation id being edited (null = creating)
 
@@ -220,6 +233,11 @@ interface AppState {
   resetGame: () => void;
   /** sim the remaining pre-season friendlies instantly */
   skipPreseason: () => void;
+  /** One day of the pre-match week: train, rest, recover (engine/week.ts). */
+  advanceDay: () => void;
+  /** set the standing week plan, or one day of it */
+  setWeekPlan: (plan: Activity[]) => void;
+  setPlanDay: (day: number, activity: Activity) => void;
   /** open an inbox item: marks it read and returns the screen to show */
   openInboxItem: (id: string) => string | undefined;
   markInboxAllRead: () => void;
@@ -260,6 +278,7 @@ export const useGame = create<AppState>()((set, get) => ({
   slots: [],
   game: null,
   preview: null,
+  lastDay: null,
   screen: "new",
   reveal: null,
   builderFor: null,
@@ -279,7 +298,7 @@ export const useGame = create<AppState>()((set, get) => ({
     const { preview } = get();
     if (preview) {
       const game: SaveGame = { ...preview, userClubId: clubId, onboarded: false };
-      set({ game, preview: null, screen: "welcome", reveal: null, builderFor: null });
+      set({ game, preview: null, screen: "welcome", reveal: null, builderFor: null, lastDay: null });
       schedulePersist(game);
       return;
     }
@@ -298,6 +317,33 @@ export const useGame = create<AppState>()((set, get) => ({
   },
 
   /** Play out the rest of pre-season in one go. */
+  advanceDay: () => {
+    const { game } = get();
+    if (!game) return;
+    const { save, report } = runDay(game);
+    set({ game: save, lastDay: report });
+    schedulePersist(save);
+  },
+
+  setWeekPlan: (plan: Activity[]) => {
+    const { game } = get();
+    if (!game) return;
+    const next: SaveGame = { ...game, weekPlan: plan.slice(0, 6) };
+    set({ game: next });
+    schedulePersist(next);
+  },
+
+  setPlanDay: (day: number, activity: Activity) => {
+    const { game } = get();
+    if (!game) return;
+    const plan = [...(game.weekPlan ?? DEFAULT_PLAN)];
+    if (day < 0 || day >= 6 || day === MATCH_DAY) return;
+    plan[day] = activity;
+    const next: SaveGame = { ...game, weekPlan: plan };
+    set({ game: next });
+    schedulePersist(next);
+  },
+
   skipPreseason: () => {
     const { game } = get();
     if (!game) return;

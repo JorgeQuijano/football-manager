@@ -753,3 +753,32 @@ Mapping: `d = round(1 + 19 × (v − 20) / 76)`, clamped. A 42 reads as a 7, a 6
 4. **The record** — headed goals are counted (`Player.headers`, reset each pre-season), shown in the sheet ("189 cm · Aerial 17 · 3 headed goals") and flagged on the scorer (`Scorer.header`) so the match feed can mark them.
 
 **The tall-player kicker, in numbers:** a 196cm striker with physical 88 carries aerial ≈ 90 (a **19**); a 170cm forward with physical 45 carries ≈ 27 (a **7**). Over 400 deliveries to the same box, the big man wins roughly three times as many as the small one, and in the duel he converts about **25% more** of the ones he wins.
+
+## 40. The week: day-by-day management (`week.ts`)
+
+The match engine still runs once per round. **The six days before the match are now the manager's** — a plan, a daily tick, and a clock.
+
+**The clock.** `save.day` runs Mon 0 → Sat 5. Day 5 is **match day**, and it is not optional: you can plan anything you like for it and the engine will still call it a match. The round engine puts the clock back to Monday when the round completes, so a week is: Mon…Fri of decisions, Saturday of football. Old saves normalise to `day: 5` — *Continue* means "play the match", exactly as before.
+
+**The plan.** `save.weekPlan` is six activities, set once and carried over every week (with per-day edits any time):
+
+| Activity | Condition | Freshness | Sharpness | Trains? |
+|---|---|---|---|---|
+| Rest | +22 | −7 | — | no |
+| Recovery | +20 | −7 | — | no |
+| Day off | +18 | −7 | −1 | no |
+| Physical | −3 | +2 | — | yes (highest knock risk) |
+| Technical | −3 | +1 | — | yes |
+| Tactical | −2 | +1 | — | yes |
+| Set pieces | −3 | +1 | — | yes |
+| Match prep | −1 | +1 | +2 | yes (light) |
+| Travel | −2 | — | — | no |
+| Match | engine's own | engine's own | engine's own | — |
+
+**The daily tick** (`runDay`) applies the day's activity to **every club** (AI squads live the same week on the default plan), seeded per `(player, day)` so a replay breaks the same legs. Injured players only recover (+4 condition/day). Training days carry a knock risk (`0.1–0.6%` per day, doubled under 55 condition, ×1.5 when jaded) — which is the cost side of an overloaded week.
+
+**Pacing is preserved.** The old weekly recovery (~+10 condition, −12 jaded, −3 sharpness for a non-playing player) is now the **sum of the six days**, so the game does not speed up or slow down; the default plan is the baseline (`planGrowthFactor = 1.0` at four training days). A heavy week buys ±10% development and pays in freshness; a light week does the reverse; **the same week is impossible to have both**.
+
+**What the daily tick replaced:** `sharpnessTick`/`jadedTick` now run in `"played"` mode — they only describe what the match did to the men who played it — and the weekly recovery loop in `completeRound` is gone. Bans and injuries still count down in weeks.
+
+**The screen** (`ui/Week.tsx`): a card with six rows (day · activity select · today marker · match day), a live load read-out ("4 training days · +0% growth"), the day report line when something happened in training, and the **Continue bar** above the nav — *"Continue → Tue · Physical"*, or *"Play the match"* on Saturday, with a one-tap **skip to match day** that still runs every day's plan.

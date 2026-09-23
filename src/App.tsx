@@ -10,6 +10,7 @@ import { LeagueScreen } from "@/ui/screens/LeagueScreen";
 import { MatchScreen } from "@/ui/screens/MatchScreen";
 import { NewGame } from "@/ui/screens/NewGame";
 import { Welcome } from "@/ui/screens/Welcome";
+import { WeekBar } from "@/ui/Week";
 import { SeasonEnd } from "@/ui/screens/SeasonEnd";
 import { SetPieces } from "@/ui/screens/SetPieces";
 import { Squad } from "@/ui/screens/Squad";
@@ -55,7 +56,8 @@ export default function App() {
         {screen === "league" && <LeagueScreen />}
         {screen === "club" && <Club />}
       </main>
-      <BottomNav />
+      <WeekBar />
+        <BottomNav />
     </div>
   );
 }

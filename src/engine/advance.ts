@@ -241,14 +241,14 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
     ].slice(0, 8);
   }
 
-  // Between rounds: players who sat out recover / serve bans.
-  const intensityRec = INTENSITIES[(save.training?.intensity ?? "normal") as keyof typeof INTENSITIES].recovery;
+  // Between rounds: bans and injuries are counted in weeks, so they tick here.
+  // Recovery, freshness and sharpness are the seven days' work now (engine/week.ts).
   for (const p of save.players) {
     if (p.injuredWeeks > 0 && !playedIds.has(p.id)) p.injuredWeeks--;
     if (p.suspension > 0 && !playedIds.has(p.id)) p.suspension--;
-    const rec = weeklyRecovery(p) * (p.clubId === save.userClubId ? intensityRec : 1);
-    p.condition = Math.min(100, p.condition + rec);
   }
+  // the week starts again on Monday, and the plan may travel with you
+  save.day = 0;
 
   // a sending-off is a decision waiting for you — put it in the inbox
   if (userResult) {
@@ -276,8 +276,8 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
   // a week without football dulls a hot streak
   formFreshnessTick(save, playedIds);
   // bodies: match sharpness rises and falls, wear accumulates, learners learn
-  sharpnessTick(withDev, minutesById);
-  jadedTick(withDev, minutesById);
+  sharpnessTick(withDev, minutesById, "played");
+  jadedTick(withDev, minutesById, "played");
   retrainTick(withDev, minutesById);
   moveTick(withDev, minutesById);
   // international week: the best go away and come back with a cap and tired legs
@@ -322,8 +322,8 @@ export function completeFriendly(input: SaveGame, userResult?: MatchResult): Sav
 
   const minutesById: Record<string, number> = {};
   if (userResult) for (const u of userResult.updates) minutesById[u.playerId] = (minutesById[u.playerId] ?? 0) + u.minutes;
-  sharpnessTick(save, minutesById);
-  jadedTick(save, minutesById);
+  sharpnessTick(save, minutesById, "played");
+  jadedTick(save, minutesById, "played");
   developRound(save, minutesById);
   scoutingTick(save);
   windowTick(save);
