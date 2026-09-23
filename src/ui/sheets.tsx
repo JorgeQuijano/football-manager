@@ -21,7 +21,7 @@ import {
   TRAITS,
   yellowBanLine
 } from "@/engine";
-import { ATTR_KEYS, ATTR_LABEL, ATTR_SHORT, BAND_BAR, BAND_COLOUR, barPct, readAttr, readRange } from "@/engine";
+import { ATTR_KEYS, ATTR_LABEL, ATTR_SHORT, BAND_BAR, BAND_COLOUR, barPct, readAttr, readRange, to20ovr } from "@/engine";
 import type { AttrKey } from "@/engine";
 import { FORM_BANDS, formBandFor, formOf, moodOf, moraleFactors, rating1, ratingAvg } from "@/engine";
 import { Button } from "@/components/ui/button";
@@ -633,7 +633,7 @@ export function PlayerDetailSheet({
                   <span className="text-muted-foreground">Development</span>
                   <span className="tnum">
                     {isOwn || !fogged
-                      ? `POT ${p.peak} · +${Math.max(0, p.peak - overallFor(p))} room`
+                      ? `POT ${to20ovr(p.peak)} · +${to20ovr(p.peak) - to20ovr(overallFor(p))} room`
                       : est.potRange
                         ? `POT ~${est.potRange[0]}–${est.potRange[1]}${est.potStars !== null ? ` (${est.potStars.toFixed(1)}★)` : ""}`
                         : est.potStars !== null
@@ -845,7 +845,7 @@ export function PlayerPickerSheet({
       .map((id) => (id ? oppSquad.find((p) => p.id === id) : undefined))
       .filter((p): p is Player => !!p);
     const avg = oppXi.length
-      ? Math.round(oppXi.reduce((a, p) => a + overallFor(p), 0) / oppXi.length)
+      ? to20ovr(Math.round(oppXi.reduce((a, p) => a + overallFor(p), 0) / oppXi.length))
       : 0;
     oppLine = `${oppClub.short} next (avg ${avg})`;
   }
@@ -979,7 +979,7 @@ export function PlayerPickerSheet({
                       : ""}
                   </span>
                 </span>
-                <span className="text-sm font-extrabold tnum">{overallFor(p)}</span>
+                <span className="text-sm font-extrabold tnum">{to20ovr(overallFor(p))}</span>
               </button>
             );
           })}

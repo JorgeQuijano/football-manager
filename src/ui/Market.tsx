@@ -2,6 +2,8 @@ import { useState } from "react";
 import type { Player } from "@/engine";
 import {
   estimateFor,
+  ovrRange20,
+  to20ovr,
   LOAN,
   canPreContract,
   isPreContracted,
@@ -167,7 +169,7 @@ export function LoansCard() {
               {shortName(p.name)} <span className="text-muted-foreground">← {game.clubs.find((c) => c.id === p.loan!.fromClubId)?.short}</span>
             </div>
             <div className="text-[11px] text-muted-foreground tnum">
-              OVR {overallFor(p)} · you pay {Math.round(p.loan!.wageShare * 100)}% of {money(p.contract.wage)}/wk
+              OVR {to20ovr(overallFor(p))} · you pay {Math.round(p.loan!.wageShare * 100)}% of {money(p.contract.wage)}/wk
               {p.loan!.optionFee ? ` · option ${money(p.loan!.optionFee)}` : ""}
             </div>
           </div>
@@ -192,7 +194,7 @@ export function LoansCard() {
               {shortName(p.name)} <span className="text-muted-foreground">→ {game.clubs.find((c) => c.id === p.loan!.toClubId)?.short}</span>
             </div>
             <div className="text-[11px] text-muted-foreground tnum">
-              OVR {overallFor(p)} · they pay {Math.round(p.loan!.wageShare * 100)}% · back in pre-season
+              OVR {to20ovr(overallFor(p))} · they pay {Math.round(p.loan!.wageShare * 100)}% · back in pre-season
             </div>
           </div>
           <span className="shrink-0 text-[10px] font-bold uppercase text-muted-foreground">out on loan</span>
@@ -526,9 +528,9 @@ export function LoanTargets({ clubId, onLoan }: { clubId: string; onLoan: (p: Pl
                 <span className="block text-[11px] text-muted-foreground tnum">
                   age {p.age} ·{" "}
                   {est.exactOvr !== null
-                    ? `OVR ${est.exactOvr}`
+                    ? `OVR ${to20ovr(est.exactOvr)}`
                     : est.ovrRange
-                      ? `OVR ~${est.ovrRange[0]}–${est.ovrRange[1]}`
+                      ? `OVR ~${ovrRange20(est.ovrRange[0], est.ovrRange[1])}`
                       : "no report"}{" "}
                   · {money(p.contract.wage)}/wk
                 </span>

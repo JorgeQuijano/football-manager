@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Player, Position } from "@/engine";
-import { BAND_COLOUR, readAttr, readRange, estimateFor, knowledgeOf, marketValue, money, overallFor, squadOf } from "@/engine";
+import { BAND_COLOUR, ovrRange20, readAttr, readRange, to20ovr, estimateFor, knowledgeOf, marketValue, money, overallFor, squadOf } from "@/engine";
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
 
@@ -9,8 +9,8 @@ const POSITIONS: Array<Position | "any"> = ["any", "GK", "DF", "MF", "FW"];
 
 const knownOvr = (game: ReturnType<typeof useGame.getState>["game"] & object, p: Player): number => {
   const est = estimateFor(game, p);
-  if (est.exactOvr !== null) return est.exactOvr;
-  if (est.ovrRange) return Math.round((est.ovrRange[0] + est.ovrRange[1]) / 2);
+  if (est.exactOvr !== null) return to20ovr(est.exactOvr);
+  if (est.ovrRange) return to20ovr((est.ovrRange[0] + est.ovrRange[1]) / 2);
   return 0;
 };
 
@@ -167,7 +167,7 @@ export function PlayerSearch({ onOpenPlayer }: { onOpenPlayer: (id: string) => v
                     <span className="block text-[11px] text-muted-foreground tnum">
                       age {p.age} · {game.clubs.find((c) => c.id === p.clubId)?.short ?? "free agent"} ·{" "}
                       {est.exactOvr !== null
-                        ? `OVR ${est.exactOvr}`
+                        ? `OVR ${to20ovr(est.exactOvr)}`
                         : est.ovrRange
                           ? `OVR ~${est.ovrRange[0]}–${est.ovrRange[1]}`
                           : "no report"}
@@ -236,7 +236,11 @@ function CompareRows({ pair }: { pair: Player[] }) {
                 {p.pos} · age {p.age} · {game.clubs.find((c) => c.id === p.clubId)?.short ?? "free"}
               </div>
               <div className="text-[10px] text-muted-foreground tnum">
-                {est.exactOvr !== null ? `OVR ${est.exactOvr}` : est.ovrRange ? `OVR ~${est.ovrRange[0]}–${est.ovrRange[1]}` : "no report"}
+                {est.exactOvr !== null
+                  ? `OVR ${to20ovr(est.exactOvr)}`
+                  : est.ovrRange
+                    ? `OVR ~${ovrRange20(est.ovrRange[0], est.ovrRange[1])}`
+                    : "no report"}
               </div>
             </div>
           );

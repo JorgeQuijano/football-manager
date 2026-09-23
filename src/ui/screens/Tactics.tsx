@@ -12,6 +12,7 @@ import {
   FORMATION_IDS,
   isAvailable,
   overallFor,
+  to20ovr,
   resolveFormation,
   ROLE_DEFS,
   squadOf,
@@ -72,7 +73,7 @@ export function Tactics() {
   const myAtt = Math.round(attackStrength(xiPlayers, xiRoles, lineup.mentality));
   const myDef = Math.round(defenseStrength(xiPlayers, xiRoles, lineup.mentality));
   const myAvg = xiPlayers.length
-    ? Math.round(xiPlayers.reduce((a, p) => a + overallFor(p), 0) / xiPlayers.length)
+    ? to20ovr(Math.round(xiPlayers.reduce((a, p) => a + overallFor(p), 0) / xiPlayers.length))
     : 0;
 
   const fx = game.fixtures.find(

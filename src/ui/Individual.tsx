@@ -9,6 +9,8 @@ import {
   disciplinaryCases,
   moveOptions,
   moveReqFor,
+  to20,
+  to20ovr,
   overallFor,
   retrainOptions,
   sharpBand,
@@ -253,7 +255,7 @@ export function LearnerCard({ player }: { player: Player }) {
               <option value="">Pick a move…</option>
               {moveOpts.map((t) => (
                 <option key={t} value={t}>
-                  {TRAITS[t].label} ({moveReqFor(t).attr} {moveReqFor(t).min}+)
+                  {TRAITS[t].label} ({moveReqFor(t).attr} {to20(moveReqFor(t).min)}+)
                 </option>
               ))}
             </select>
@@ -391,7 +393,7 @@ export function CaptainCard() {
             .sort((a, b) => b.age - a.age)
             .map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} · {p.pos} · age {p.age} · OVR {overallFor(p)}
+                {p.name} · {p.pos} · age {p.age} · OVR {to20ovr(overallFor(p))}
               </option>
             ))}
         </select>
