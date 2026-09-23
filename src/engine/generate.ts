@@ -6,6 +6,7 @@ import { autoLineup } from "./ratings";
 import { builtinFormation } from "./formations";
 import { buildFixtures } from "./league";
 import { makeFriendlies } from "./preseason";
+import { heightFor } from "./aerial";
 import { contractFor, freshFinances } from "./transfers";
 import { peakFor } from "./training";
 import { FACILITY_MAX, makeSponsorOffers } from "./commercial";
@@ -100,6 +101,8 @@ function makePlayer(
     clubId,
     name,
     age,
+    // height comes from his own id, so no rng draw is spent and old saves match
+    height: heightFor(id, pos),
     pos,
     attrs,
     // deterministic per player id so existing saves backfill identically

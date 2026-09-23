@@ -118,6 +118,7 @@ const applyResult = (
     }
     p.goals += u.goals;
     p.assists += u.assists;
+    if (u.header) p.headers = (p.headers ?? 0) + 1; // headed goals (engine/aerial.ts)
     const cardsBefore = p.yellows ?? 0;
     if (u.injuredWeeks > 0) {
       p.injuredWeeks = Math.max(p.injuredWeeks, medicalWeeks(save, p.clubId, u.injuredWeeks));
@@ -405,6 +406,7 @@ export function nextSeason(input: SaveGame): SaveGame {
     // season stats reset (the recent-match log survives across seasons)
     p.mins = 0;
     p.yellows = 0;
+    p.headers = 0;
     p.reds = 0;
     p.ratingSum = 0;
     p.ratingCount = 0;

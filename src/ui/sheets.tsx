@@ -21,7 +21,19 @@ import {
   TRAITS,
   yellowBanLine
 } from "@/engine";
-import { ATTR_KEYS, ATTR_LABEL, ATTR_SHORT, BAND_BAR, BAND_COLOUR, barPct, readAttr, readRange, to20ovr } from "@/engine";
+import {
+  ATTR_KEYS,
+  ATTR_LABEL,
+  ATTR_SHORT,
+  BAND_BAR,
+  BAND_COLOUR,
+  aerial20,
+  barPct,
+  heightLine,
+  readAttr,
+  readRange,
+  to20ovr
+} from "@/engine";
 import type { AttrKey } from "@/engine";
 import { FORM_BANDS, formBandFor, formOf, moodOf, moraleFactors, rating1, ratingAvg } from "@/engine";
 import { Button } from "@/components/ui/button";
@@ -729,6 +741,10 @@ export function PlayerDetailSheet({
                   <span>Attributes</span>
                   <span data-testid="attr-scale-note">out of 20 · colour vs the league</span>
                 </div>
+                <p className="text-[11px] font-semibold" data-testid="height-line">
+                  {heightLine(p)} · Aerial <span className="text-primary">{aerial20(p)}</span>
+                  {(p.headers ?? 0) > 0 ? ` · ${p.headers} headed goal${p.headers === 1 ? "" : "s"}` : ""}
+                </p>
                 {(p.pos === "GK"
                   ? ([
                       ["Reflexes", "reflexes"],

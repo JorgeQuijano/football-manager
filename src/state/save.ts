@@ -11,6 +11,7 @@ import {
   emptyHistory,
   emptyMedia,
   FANS_START,
+  heightFor,
   policyFor,
   HEADLINES_CAP,
   MORALE_START,
@@ -199,6 +200,10 @@ export function normalizeSave(save: SaveGame): SaveGame {
     if (typeof fin.balance !== "number" || !Number.isFinite(fin.balance)) fin.balance = 4_000_000;
   }
   if (typeof save.onboarded !== "boolean") save.onboarded = true; // old saves have already been welcomed
+  // height (v0.34): derived deterministically, so old saves get the same numbers
+  for (const p of save.players) {
+    if (typeof p.height !== "number" || p.height < 150 || p.height > 210) p.height = heightFor(p.id, p.pos);
+  }
   if (!Array.isArray(save.recentResults)) save.recentResults = [];
   save.recentResults = save.recentResults
     .filter((r) => r && typeof r.round === "number" && typeof r.oppId === "string")

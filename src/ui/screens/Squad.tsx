@@ -11,6 +11,7 @@ import {
   squadOf,
   yellowsToBan,
   to20ovr,
+  aerial20,
   type SortMode
 } from "@/engine";
 import { useGame } from "@/state/store";
@@ -119,6 +120,12 @@ export function Squad() {
                       )}
                       {(p.sharpness ?? 85) < 70 && (
                         <span className="text-[#FFB020]" data-testid={`rusty-${p.id}`}> · rusty</span>
+                      )}
+                      {aerial20(p) >= 16 && (
+                        <span className="text-primary" data-testid={`tower-${p.id}`}>
+                          {" "}
+                          · aerial threat
+                        </span>
                       )}
                       {(p.jaded ?? 0) > 60 && (
                         <span className="text-[#FFB020]" data-testid={`jaded-${p.id}`}> · heavy legs</span>
