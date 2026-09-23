@@ -233,7 +233,7 @@ export function Home() {
       <Card className="mt-3">
         <CardContent className="p-4">
           <div className="flex items-baseline justify-between">
-            <span className="eyebrow">League One</span>
+            <span className="eyebrow">{game.leagueName ?? "League One"}</span>
             <button
               data-testid="mini-table-link"
               className="-my-2.5 px-3 py-3.5 text-[11px] font-semibold text-primary"

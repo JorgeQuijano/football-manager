@@ -1,4 +1,5 @@
 import { makeCup } from "@/engine/cup";
+import { makeWorldLeagues } from "@/engine";
 import { del, get, set } from "idb-keyval";
 import type { SaveGame } from "@/engine";
 import {
@@ -303,6 +304,18 @@ export function normalizeSave(save: SaveGame): SaveGame {
   });
   // a cup for saves made before cups existed (v0.36)
   if (!save.cup && save.clubs?.length) save.cup = makeCup(save);
+  // a continent for saves made before the rest of Europe existed (v0.38)
+  if (!save.world && save.clubs?.length) {
+    save.nation = save.nation ?? "eng";
+    save.country = save.country ?? "England";
+    save.leagueName = save.leagueName ?? "League One";
+    const outside = makeWorldLeagues(save.seed, save.nation, save.season ?? 1);
+    save.world = outside.leagues;
+    for (const [clubId, fin] of Object.entries(save.finances ?? {})) void clubId, fin;
+    for (const c of outside.clubs) {
+      if (!save.finances[c.id]) save.finances[c.id] = { transfer: 2_000_000, wageBudget: 250_000, balance: 4_000_000 };
+    }
+  }
 
   return save;
 }

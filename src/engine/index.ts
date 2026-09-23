@@ -31,6 +31,8 @@ export * from "./aerial";
 export * from "./week";
 export * from "./cup";
 export * from "./clubs";
+export * from "./world";
+export * from "./nations";
 export * from "./formations";
 export * from "./ratings";
 export * from "./league";

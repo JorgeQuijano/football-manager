@@ -148,7 +148,7 @@ interface AppState {
 
   init: () => Promise<void>;
   /** generate the league so the club choice can be made on real data (v0.32) */
-  prepareWorld: (seed?: number) => void;
+  prepareWorld: (seed?: number, nationId?: string) => void;
   startNewGame: (clubId: string) => void;
   /** close the first-day briefing */
   dismissWelcome: () => void;
@@ -304,9 +304,9 @@ export const useGame = create<AppState>()((set, get) => ({
     set({ game: save, loaded: true, screen: save ? (save.live ? "match" : "home") : "new" });
   },
 
-  prepareWorld: (seed) => {
+  prepareWorld: (seed, nationId) => {
     const s = seed ?? Math.floor(Math.random() * 1_000_000) + 1;
-    const world = newGame(s, "c1");
+    const world = newGame(s, undefined, nationId);
     set({ preview: world });
   },
 

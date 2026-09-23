@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormationSlot, Player, Position, RoleId } from "@/engine";
-import {
+import { seasonRounds,
   autoLineup,
   builtinFormation,
   careerTotals,
@@ -258,8 +258,9 @@ export function SettingsSheet({
             <div className="space-y-1.5 rounded-xl border border-border p-3 text-xs leading-relaxed text-muted-foreground">
               <p className="font-semibold text-foreground">How it works</p>
               <p>
-                10 clubs, 18 rounds. 3 points for a win, 1 for a draw. Top of the
-                table at the end of the season wins the league.
+                Your league has {game.clubs.length} clubs and {seasonRounds(game)} rounds. 3 points for a win,
+                1 for a draw. Top of the table at the end of the season wins the league, and the top divisions
+                of Spain, Germany and Italy run alongside you.
               </p>
               <p>
                 Set your line-up, roles and mentality in Tactics, then hit Continue to

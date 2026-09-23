@@ -395,6 +395,20 @@ export interface Club {
   city?: string;
   ground?: string;
   founded?: number;
+  /** league titles before you arrived */
+  honours?: number;
+}
+
+/** A league you are not managing in (engine/world.ts, v0.38). */
+export interface WorldLeague {
+  id: string;
+  country: string;
+  name: string;
+  clubs: Club[];
+  players: Player[];
+  fixtures: Fixture[];
+  /** cached squad power per club for the light model */
+  power?: Record<string, number>;
 }
 
 export interface Fixture {
@@ -945,6 +959,12 @@ export interface SaveGame {
   weekOverride?: { forRound: number; plan: Activity[] };
   /** the season's knockout cup (engine/cup.ts, v0.36) */
   cup?: Cup;
+  /** which nation your league is in (v0.38) */
+  nation?: string;
+  country?: string;
+  leagueName?: string;
+  /** the leagues you are not in, with real squads and light results */
+  world?: WorldLeague[];
   /** the tie just played, for the result screen */
   cupLast?: { round: CupRoundId; tieId: string };
   /** offers on the shirt waiting for an answer */
