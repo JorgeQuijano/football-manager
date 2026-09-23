@@ -17,7 +17,9 @@ import {
   bidForPlayer,
   builtinFormation,
   changeMinute,
+  completeCupTie,
   completeRound,
+  CUP_DAY,
   finalizeLive,
   fixLineup,
   isAvailable,
@@ -35,10 +37,14 @@ import {
   seasonRounds,
   signFreeAgent,
   skipToFullTime,
+  mulberry32,
+  shootout,
   skipToHalfTime,
   slotScoreFor,
   squadOf,
   startLive,
+  tieAsFixture,
+  userCupTie,
   T, playRound } from "@/engine";
 import type { BidResponse } from "@/engine";
 import type {
@@ -159,6 +165,9 @@ interface AppState {
   startSecondHalf: () => void;
   skipTo: (to: "ht" | "ft") => void;
   setPlayhead: (m: number) => void;
+  /** one-week plan override (a cup week's lighter load) */
+  setWeekOverride: (plan: Activity[] | null) => void;
+
   startNextSeason: () => void;
   setScreen: (s: Screen) => void;
   setFormation: (f: string) => void;
@@ -365,6 +374,18 @@ export const useGame = create<AppState>()((set, get) => ({
       set({ screen: "seasonEnd" });
       return;
     }
+    // a cup Wednesday is a match day too: play the tie, leave the league round alone
+    const pendingTie = (game.day ?? 0) === CUP_DAY ? userCupTie(game) : undefined;
+    if (pendingTie) {
+      const tieLive = startLive(game, tieAsFixture(pendingTie), "cup");
+      if (tieLive) {
+        tieLive.cup = true;
+        const saveWithTie = { ...game, live: tieLive };
+        set({ game: saveWithTie, reveal: null, screen: "match" });
+        schedulePersist(saveWithTie);
+        return;
+      }
+    }
     const prepared = prepareRound(game);
     const live = startLive(prepared);
     if (!live) {
@@ -381,6 +402,20 @@ export const useGame = create<AppState>()((set, get) => ({
   finishMatch: () => {
     const { game } = get();
     if (!game) return;
+    if (game.live?.cup) {
+      const result = finalizeLive(game.live);
+      let pens: { home: number; away: number } | undefined;
+      if (result.homeGoals === result.awayGoals) {
+        const players = new Map(game.players.map((p) => [p.id, p]));
+        const rng = mulberry32(game.live.state.rngState);
+        const so = shootout(game.live.state, players, rng);
+        pens = { home: so.home, away: so.away };
+      }
+      const save = completeCupTie({ ...game, live: undefined }, result, pens);
+      set({ game: save, reveal: result, screen: "home" });
+      schedulePersist(save);
+      return;
+    }
     if (game.live) {
       const result = finalizeLive(game.live);
       const save = completeRound({ ...game, live: undefined }, result);
@@ -543,6 +578,15 @@ export const useGame = create<AppState>()((set, get) => ({
       lastPlayheadPersist = now;
       schedulePersist(get().game);
     }
+  },
+
+  setWeekOverride: (plan: Activity[] | null) => {
+    const { game } = get();
+    if (!game) return;
+    const save = structuredClone(game);
+    save.weekOverride = plan ? { forRound: save.round, plan } : undefined;
+    set({ game: save });
+    schedulePersist(save);
   },
 
   startNextSeason: () => {

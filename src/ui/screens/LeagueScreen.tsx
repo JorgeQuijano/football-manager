@@ -4,6 +4,7 @@ import { computeTable, conditionLine, conditionsFor, money, ordinal, rating1, ra
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataHub } from "@/ui/DataHub";
+import { CupPanel } from "@/ui/CupPanel";
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
 import { CalendarView } from "@/ui/Calendar";
@@ -37,10 +38,15 @@ export function LeagueScreen() {
           <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="table">Table</TabsTrigger>
           <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="diary">Diary</TabsTrigger>
           <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="fixtures">Fixtures</TabsTrigger>
+          <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="cup">Cup</TabsTrigger>
           <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="scorers">Scorers</TabsTrigger>
           <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="history">History</TabsTrigger>
           <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="data">Data</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="cup">
+          <CupPanel />
+        </TabsContent>
 
         <TabsContent value="table">
           <Card>

@@ -1,4 +1,5 @@
 import type {
+  Fixture,
   LiveChange,
   LiveMatch,
   MatchResult,
@@ -35,8 +36,14 @@ export function userFixture(save: SaveGame) {
 }
 
 /** Kick off the user's fixture as a pauseable live match (first half pre-simulated). */
-export function startLive(save: SaveGame): LiveMatch | undefined {
-  const fx = userFixture(save);
+export function startLive(
+  save: SaveGame,
+  /** a specific fixture to play (a cup tie, v0.36) instead of the league round */
+  override?: Fixture,
+  /** extra seed material so a cup tie never draws the league match's numbers */
+  seedTag = ""
+): LiveMatch | undefined {
+  const fx = override ?? userFixture(save);
   if (!fx) return undefined;
   const homeClub = save.clubs.find((c) => c.id === fx.homeId)!;
   const awayClub = save.clubs.find((c) => c.id === fx.awayId)!;
@@ -44,7 +51,9 @@ export function startLive(save: SaveGame): LiveMatch | undefined {
   const away = resolveSide(save, fx.awayId);
   const userSide = fx.homeId === save.userClubId ? "home" : "away";
   const rng = mulberry32(
-    hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)
+    seedTag
+      ? hashSeed(save.seed, "match", save.season, save.round, seedTag, fx.homeId, fx.awayId)
+      : hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)
   );
   const state = startMatch({
     round: save.round,

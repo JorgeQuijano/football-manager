@@ -127,12 +127,58 @@ export const CONGESTED_PLAN: Activity[] = [
 export const isActivity = (v: unknown): v is Activity =>
   typeof v === "string" && Object.prototype.hasOwnProperty.call(ACTIVITIES, v);
 
-/** Today's activity for a club: match day is forced, otherwise the plan decides. */
+/** Wednesday — where a cup tie lands (CUP_DAY lives in cup.ts). */
+const WEDNESDAY = 2;
+
+/** Does the user have a cup tie to play this week? (read straight off the cup) */
+function cupTieThisWeek(save: SaveGame): boolean {
+  const cup = save.cup;
+  if (!cup) return false;
+  for (const [round, week] of Object.entries(cup.schedule ?? {})) {
+    if (week !== save.round) continue;
+    if (
+      cup.ties.some(
+        (t) => t.round === round && !t.played && (t.homeId === save.userClubId || t.awayId === save.userClubId)
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Every day this week that is a match day: Saturday, plus Wednesday if the cup calls. */
+export function matchDays(save: SaveGame, clubId?: string): number[] {
+  const days = [MATCH_DAY];
+  if (clubId === undefined || clubId === save.userClubId) {
+    if (cupTieThisWeek(save)) days.unshift(WEDNESDAY);
+  }
+  return days;
+}
+
+export function isMatchDay(save: SaveGame, day: number, clubId?: string): boolean {
+  return matchDays(save, clubId).includes(day);
+}
+
+/** Today's activity for a club: match days are forced, otherwise the plan decides. */
+/**
+ * The week's plan: override or standing: a one-week override (a congested cup week, say)
+ * if the manager set one for this round, otherwise the standing plan.
+ */
+export function planOf(save: SaveGame, clubId?: string): Activity[] {
+  if (clubId !== undefined && clubId !== save.userClubId) return DEFAULT_PLAN;
+  const ov = save.weekOverride;
+  if (ov && ov.forRound === save.round && ov.plan?.length === DAY_NAMES.length) {
+    return ov.plan.filter(isActivity).length === DAY_NAMES.length ? ov.plan : DEFAULT_PLAN;
+  }
+  const plan = save.weekPlan;
+  return plan && plan.filter(isActivity).length === DAY_NAMES.length ? plan : DEFAULT_PLAN;
+}
+
 export function activityFor(save: SaveGame, day: number, clubId?: string): Activity {
   const d = Math.max(0, Math.min(MATCH_DAY, day));
-  if (d === MATCH_DAY) return "match";
-  const plan = clubId === undefined || clubId === save.userClubId ? save.weekPlan : undefined;
-  const chosen = plan?.[d];
+  if (isMatchDay(save, d, clubId)) return "match";
+  const chosen = planOf(save, clubId)[d];
   return isActivity(chosen) ? chosen : DEFAULT_PLAN[d];
 }
 
@@ -187,7 +233,7 @@ export function runDay(
       p.jaded = Math.max(0, jadedOf(p) - 4);
       continue;
     }
-    if (d === MATCH_DAY) {
+    if (isMatchDay(save, d)) {
       // match day's own physical work is done by the match engine; a non-player
       // only gets the freshness of not playing
       p.jaded = Math.max(0, Math.min(100, Math.round(jadedOf(p) - 8)));
