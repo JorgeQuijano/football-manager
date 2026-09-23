@@ -132,6 +132,21 @@ export function readRange(save: SaveGame, key: AttrKey, lo: number, hi: number):
   return pack(save, key, (lo + hi) / 2, to20(hi), to20(lo));
 }
 
+/**
+ * Overall and potential read on the same 1–20 scale as the attributes, so the
+ * whole game speaks one language: an OVR of 14 is a good player, a POT of 18 is
+ * a player who can become very good. (FM hides these behind stars; we show stars
+ * *and* a number, but the number has to be the same dialect as the attributes.)
+ */
+export const to20ovr = (v: number): number => to20(v);
+
+/** A scouted overall/potential range as text: "13–15". */
+export const ovrRange20 = (lo: number, hi: number): string => {
+  const a = to20(lo);
+  const b = to20(hi);
+  return a === b ? String(b) : `${a}–${b}`;
+};
+
 /** How full the bar is: the 1–20 band stretched over the full width. */
 export function barPct(d: number): number {
   return Math.max(3, Math.min(100, ((d - 1) / (ATTR20_MAX - 1)) * 100));

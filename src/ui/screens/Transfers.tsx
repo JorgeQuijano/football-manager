@@ -8,6 +8,7 @@ import {
   marketValue,
   money,
   overallFor,
+  to20ovr,
   squadOf,
   transferWindow,
   wageBill,
@@ -403,7 +404,7 @@ export function Transfers() {
                     {p.name} <span className="text-muted-foreground">→ {from.short}</span>
                   </div>
                   <div className="text-[11px] text-muted-foreground">
-                    {p.pos} · OVR {overallFor(p)} ·{" "}
+                    {p.pos} · OVR {to20ovr(overallFor(p))} ·{" "}
                     {o.kind === "loan"
                       ? `loan · ${money(o.fee)} fee · they cover ${Math.round((o.loan?.wageShare ?? 0) * 100)}% of his wages`
                       : `bid ${money(o.fee)}${o.clause ? " (release clause)" : ""} · valued ${money(marketValue(p))}`}
@@ -447,7 +448,7 @@ export function Transfers() {
               <div className="min-w-0">
                 <div className="truncate text-sm font-bold">{p.name}</div>
                 <div className="text-[11px] text-muted-foreground">
-                  {p.pos} · OVR {overallFor(p)} · {money(p.contract.wage)}/wk · {cLabel(p.contract.until, game.season)}
+                  {p.pos} · OVR {to20ovr(overallFor(p))} · {money(p.contract.wage)}/wk · {cLabel(p.contract.until, game.season)}
                 </div>
               </div>
               <Button

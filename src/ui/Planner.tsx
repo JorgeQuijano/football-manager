@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   CAREER_STAGES,
   overallFor,
+  to20ovr,
   squadPlan,
   STAGE_ORDER,
   type ContractState,
@@ -169,8 +170,8 @@ export function PlannerView({ onOpenPlayer }: { onOpenPlayer: (id: string) => vo
                           </span>
                         </span>
                         <span className="shrink-0 text-[10px] font-bold tnum">
-                          {overallFor(p)}
-                          <span className="font-semibold text-muted-foreground">/{p.peak}</span>
+                          {to20ovr(overallFor(p))}
+                          <span className="font-semibold text-muted-foreground">/{to20ovr(p.peak)}</span>
                         </span>
                       </span>
                       <span className="mt-1 flex flex-wrap gap-1">

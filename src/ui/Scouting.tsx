@@ -5,6 +5,8 @@ import {
   KNOWLEDGE_FULL,
   REQUEST_COST,
   estimateFor,
+  ovrRange20,
+  to20ovr,
   formOf,
   knowledgeOf,
   money,
@@ -114,9 +116,9 @@ export function ScoutingView({ onOpenPlayer }: { onOpenPlayer: (id: string) => v
           <span className="mt-0.5 block truncate text-[10px] text-muted-foreground tnum">
             {club ? club.name : "Free agent"} · age {p.age}
             {est.exactOvr !== null
-              ? ` · OVR ${est.exactOvr} / POT ${est.exactPot}`
+              ? ` · OVR ${to20ovr(est.exactOvr)} / POT ${to20ovr(est.exactPot ?? est.exactOvr)}`
               : est.ovrRange
-                ? ` · OVR ~${est.ovrRange[0]}–${est.ovrRange[1]}`
+                ? ` · OVR ~${ovrRange20(est.ovrRange[0], est.ovrRange[1])}`
                 : est.tier === "none"
                   ? " · no report"
                   : " · early read"}

@@ -6,6 +6,7 @@ import {
   INTENSITIES,
   UNITS,
   overallFor,
+  to20ovr,
   squadOf
 } from "@/engine";
 import type { Intensity, TrainingUnit } from "@/engine";
@@ -145,7 +146,7 @@ export function Training() {
                 {p.name} <span className="text-[11px] font-semibold text-muted-foreground">{p.age}y</span>
               </span>
               <span className="block text-[11px] text-muted-foreground">
-                OVR {overallFor(p)} · POT {p.peak}
+                OVR {to20ovr(overallFor(p))} · POT {to20ovr(p.peak)}
                 {p.focus ? ` · focus ${ATTR_SHORT[p.focus]}` : ""}
               </span>
             </span>
@@ -170,11 +171,11 @@ export function Training() {
                 {p.name} <span className="text-[11px] font-semibold text-muted-foreground">{p.age}y</span>
               </span>
               <span className="block text-[11px] text-muted-foreground">
-                OVR {overallFor(p)} · POT {p.peak}
+                OVR {to20ovr(overallFor(p))} · POT {to20ovr(p.peak)}
               </span>
             </span>
             <span className="shrink-0 rounded bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary tnum">
-              +{p.peak - overallFor(p)} room
+              +{to20ovr(p.peak) - to20ovr(overallFor(p))} room
             </span>
           </button>
         ))}

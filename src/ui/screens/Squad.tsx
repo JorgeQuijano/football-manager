@@ -10,6 +10,7 @@ import {
   SORT_MODES,
   squadOf,
   yellowsToBan,
+  to20ovr,
   type SortMode
 } from "@/engine";
 import { useGame } from "@/state/store";
@@ -140,7 +141,9 @@ export function Squad() {
                           ★{rating1(f)}
                         </span>
                       )}
-                      <span className="text-sm font-extrabold tnum">{overallFor(p)}</span>
+                      <span className="text-sm font-extrabold tnum" title="overall, out of 20">
+                        {to20ovr(overallFor(p))}
+                      </span>
                     </span>
                     <span className="h-1 w-16 overflow-hidden rounded-full bg-secondary">
                       <span
