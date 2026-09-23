@@ -319,6 +319,19 @@ export interface PreContract {
 }
 
 /** Club money for the current season; see engine/transfers.ts. */
+/** What the manager can schedule on a day (engine/week.ts, v0.35). */
+export type Activity =
+  | "rest"
+  | "recovery"
+  | "off"
+  | "physical"
+  | "technical"
+  | "tactical"
+  | "setpieces"
+  | "prep"
+  | "travel"
+  | "match";
+
 export interface Finances {
   transfer: number; // available transfer budget
   wageBudget: number; // weekly wage ceiling
@@ -887,6 +900,10 @@ export interface SaveGame {
   sponsor?: SponsorDeal;
   /** the first-day briefing has been seen (engine/onboarding.ts, v0.32) */
   onboarded?: boolean;
+  /** which day of the pre-match week it is, Mon 0 … Sat 5 = match day (engine/week.ts, v0.35) */
+  day?: number;
+  /** the standing week plan the manager sets in advance (engine/week.ts, v0.35) */
+  weekPlan?: Activity[];
   /** offers on the shirt waiting for an answer */
   sponsorOffers?: SponsorOffer[];
   /** incoming offers for the user's players, pending a decision */

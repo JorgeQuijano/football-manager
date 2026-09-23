@@ -25,9 +25,15 @@ export const sharpBand = (s: number): "match-fit" | "fine" | "rusty" | "cold" =>
   s >= 85 ? "match-fit" : s >= 70 ? "fine" : s >= 50 ? "rusty" : "cold";
 
 /** A round of football: minutes sharpen you, sitting out dulls you. */
-export function sharpnessTick(save: SaveGame, minutesById: Record<string, number>): void {
+export function sharpnessTick(
+  save: SaveGame,
+  minutesById: Record<string, number>,
+  /** "played" = only the match's own effect; "all" = the old weekly behaviour */
+  mode: "played" | "all" = "all"
+): void {
   for (const p of save.players) {
     const mins = minutesById[p.id] ?? 0;
+    if (mode === "played" && mins <= 0) continue; // the days handle the rest
     const s = sharpnessOf(p);
     let next = s;
     if (mins >= 60) next = s + 6;
@@ -53,10 +59,15 @@ export function jadedFactor(p: Player): number {
 export const jadedBand = (j: number): "fresh" | "ok" | "heavy" | "burnt out" =>
   j <= 35 ? "fresh" : j <= 60 ? "ok" : j <= 80 ? "heavy" : "burnt out";
 
-export function jadedTick(save: SaveGame, minutesById: Record<string, number>): void {
+export function jadedTick(
+  save: SaveGame,
+  minutesById: Record<string, number>,
+  mode: "played" | "all" = "all"
+): void {
   const heavy = save.training?.intensity === "heavy";
   for (const p of save.players) {
     const mins = minutesById[p.id] ?? 0;
+    if (mode === "played" && mins <= 0) continue; // the days handle the rest
     const j = jadedOf(p);
     let next = j;
     if (mins >= 60) {

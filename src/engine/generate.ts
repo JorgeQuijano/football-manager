@@ -6,6 +6,7 @@ import { autoLineup } from "./ratings";
 import { builtinFormation } from "./formations";
 import { buildFixtures } from "./league";
 import { makeFriendlies } from "./preseason";
+import { DEFAULT_PLAN } from "./week";
 import { heightFor } from "./aerial";
 import { contractFor, freshFinances } from "./transfers";
 import { peakFor } from "./training";
@@ -200,6 +201,8 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     userClubId: chosen,
     clubs,
     facilities: makeFacilities(clubs),
+    day: 0,
+    weekPlan: [...DEFAULT_PLAN],
     players,
     fixtures,
     lineup,

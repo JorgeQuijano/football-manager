@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
 import { facilityModifier, facilitiesOf } from "./commercial";
+import { DEFAULT_PLAN, planGrowthFactor } from "./week";
 import { overallFor, squadOf } from "./ratings";
 import { hasTrait, TRAITS } from "./traits";
 import { pushInbox as inboxPush } from "./inbox";
@@ -304,6 +305,8 @@ export const planFor = (save: SaveGame, clubId: string): TrainingPlan =>
  */
 export function developRound(input: SaveGame, minutesById: Record<string, number>): SaveGame {
   const save: SaveGame = structuredClone(input);
+  // how much work the week actually put in (engine/week.ts): four training days = 1.0
+  const planFactor = planGrowthFactor(save.weekPlan ?? DEFAULT_PLAN);
   for (const p of save.players) {
     const plan = planFor(save, p.clubId);
     const rng = mulberry32(hashSeed(save.seed, "dev", p.id, save.season, save.round));
@@ -312,7 +315,8 @@ export function developRound(input: SaveGame, minutesById: Record<string, number
       plan,
       minutesById[p.id] ?? 0,
       rng,
-      facilityModifier("training", facilitiesOf(save, p.clubId).training)
+      facilityModifier("training", facilitiesOf(save, p.clubId).training) *
+        (p.clubId === save.userClubId ? planFactor : 1)
     );
   }
 

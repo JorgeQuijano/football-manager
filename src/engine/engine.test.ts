@@ -29,7 +29,7 @@ import { dealCost, dealValue, termsDemand } from "./transfers";
 import { INBOX_CAP, inboxFor, inboxUnread, markAllInboxRead, openInboxItem, pushInbox } from "./inbox";
 import { PRE_ROUNDS, makeFriendlies, preseasonState } from "./preseason";
 import { fmtShort as fmtShortCal, friendlyDate } from "./calendar";
-import type { Facilities } from "./types";
+import type { Activity, Facilities } from "./types";
 import {
   CLUB_LORE,
   bandFor,
@@ -51,6 +51,17 @@ import {
 } from "./attrs20";
 import { ATTR_KEYS as ATTR_KEY_LIST } from "./training";
 import { aerial20, aerialOf, duelFactor, headerWeight, heightFor, heightOf } from "./aerial";
+import {
+  ACTIVITIES,
+  CONGESTED_PLAN,
+  DEFAULT_PLAN,
+  MATCH_DAY,
+  activityFor,
+  planGrowthFactor,
+  runDay,
+  trainingDays,
+  weekView
+} from "./week";
 import { makeYouth } from "./training";
 import { formFactor, formFreshnessTick } from "./stats";
 import {
@@ -5987,6 +5998,147 @@ describe("height and the aerial game (v0.34.0)", () => {
     for (const p of restored.players) {
       expect(p.height).toBe(heightFor(p.id, p.pos));
     }
+  });
+});
+
+describe("the week: six days of decisions (v0.35.0)", () => {
+  const fresh = () => toLeague(newGame(1020));
+
+  it("keeps the clock: Mon → Sat, then a new week on match day completion", () => {
+    const save = fresh();
+    expect(save.day).toBe(0); // a new season starts on Monday
+    let s = save;
+    for (let i = 0; i < 5; i++) s = runDay(s).save;
+    expect(s.day).toBe(MATCH_DAY); // Saturday
+    // and the round engine puts us back on Monday
+    const played = playRound(s).save;
+    expect(played.day).toBe(0);
+  });
+
+  it("match day is the only day that runs the engine, and it is not optional", () => {
+    const save = { ...fresh(), day: MATCH_DAY };
+    expect(activityFor(save, MATCH_DAY)).toBe("match");
+    // you cannot plan training on match day
+    expect(
+      activityFor({ ...save, weekPlan: ["rest", "rest", "rest", "rest", "rest", "technical"] as Activity[] }, MATCH_DAY)
+    ).toBe("match");
+  });
+
+  it("a default week reproduces the old weekly recovery — the game does not speed up", () => {
+    const base = fresh();
+    // a tired squad, so recovery has somewhere to go (the old weekly tick gave ~+10)
+    const save: SaveGame = {
+      ...base,
+      players: base.players.map((p) => (p.clubId === base.userClubId ? { ...p, condition: 70 } : p))
+    };
+    const before = save.players.filter((p) => p.clubId === save.userClubId).map((p) => p.condition);
+    const avgBefore = before.reduce((a, b) => a + b, 0) / before.length;
+    let s = save;
+    for (let i = 0; i < MATCH_DAY; i++) s = runDay(s).save; // Monday to Friday
+    const after = s.players.filter((p) => p.clubId === s.userClubId).map((p) => p.condition);
+    const avgAfter = after.reduce((a, b) => a + b, 0) / after.length;
+    // …and the week's net recovery lands where the old weekly tick left it (≈ +10)
+    expect(avgAfter - avgBefore).toBeGreaterThan(4);
+    expect(avgAfter - avgBefore).toBeLessThan(18);
+  });
+
+  it("load is a lever: a heavy week costs legs, a rest week restores them", () => {
+    const base = fresh();
+    const heavy: SaveGame = { ...base, weekPlan: ["physical", "physical", "physical", "physical", "physical", "match"] as Activity[] };
+    const light: SaveGame = { ...base, weekPlan: ["rest", "rest", "rest", "rest", "rest", "match"] as Activity[] };
+    const run = (s: SaveGame) => {
+      let x = s;
+      for (let i = 0; i < MATCH_DAY; i++) x = runDay(x).save;
+      const sq = x.players.filter((p) => p.clubId === x.userClubId);
+      return {
+        condition: sq.reduce((a, p) => a + p.condition, 0) / sq.length,
+        jaded: sq.reduce((a, p) => a + jadedOf(p), 0) / sq.length
+      };
+    };
+    const h = run(heavy);
+    const l = run(light);
+    expect(h.condition).toBeLessThan(l.condition);
+    expect(h.jaded).toBeGreaterThan(l.jaded);
+  });
+
+  it("pays for its work: more training days, more development", () => {
+    const plan = (days: number): Activity[] => {
+      const p: Activity[] = ["rest", "rest", "rest", "rest", "rest", "match"];
+      for (let i = 0; i < days; i++) p[i] = "technical";
+      return p;
+    };
+    const factor = (days: number) => planGrowthFactor(plan(days));
+    expect(factor(0)).toBeLessThan(factor(2));
+    expect(factor(2)).toBeLessThan(factor(4));
+    expect(factor(4)).toBe(1); // the baseline week is unchanged
+    expect(factor(5)).toBeGreaterThan(1);
+    // and the same holds in the engine: two identical players, two different weeks
+    const base = fresh();
+    const grow = (planDays: number) => {
+      const s: SaveGame = { ...base, weekPlan: plan(planDays) };
+      const p = s.players.find((x) => x.clubId === s.userClubId)!;
+      const before = p.attrs.passing + p.attrs.shooting;
+      const after = developRound(s, { [p.id]: 90 });
+      const q = after.players.find((x) => x.id === p.id)!;
+      return q.attrs.passing + q.attrs.shooting - before;
+    };
+    expect(grow(4)).toBeGreaterThanOrEqual(grow(1));
+  });
+
+  it("training days carry a knock risk; recovery days do not", () => {
+    const save = fresh();
+    // a whole season of five-a-week physical work on a tired squad breaks somebody
+    let s: SaveGame = { ...save, weekPlan: ["physical", "physical", "physical", "physical", "physical", "match"] as Activity[] };
+    for (const p of s.players) if (p.clubId === s.userClubId) p.condition = 45;
+    let knocks = 0;
+    for (let w = 0; w < 8; w++) {
+      for (let d = 0; d < MATCH_DAY; d++) {
+        const r = runDay(s);
+        s = r.save;
+        knocks += r.report.knocks.length;
+      }
+      s = playRound(s).save;
+    }
+    expect(knocks).toBeGreaterThan(0);
+    // a rest week never breaks anyone
+    const rested: SaveGame = { ...save, weekPlan: ["rest", "rest", "rest", "rest", "rest", "match"] as Activity[] };
+    let x = rested;
+    let restKnocks = 0;
+    for (let d = 0; d < MATCH_DAY; d++) {
+      const r = runDay(x);
+      x = r.save;
+      restKnocks += r.report.knocks.length;
+    }
+    expect(restKnocks).toBe(0);
+  });
+
+  it("the plan carries over week to week, and old saves keep the old rhythm", () => {
+    const save = fresh();
+    const planned: SaveGame = { ...save, weekPlan: ["off", "tactical", "technical", "recovery", "prep", "match"] as Activity[] };
+    let s = planned;
+    for (let d = 0; d < MATCH_DAY; d++) s = runDay(s).save;
+    s = playRound(s).save;
+    expect(s.day).toBe(0);
+    expect(s.weekPlan?.[0]).toBe("off"); // the standing plan survives the round rollover
+    // an old save with no week: Continue means play the match
+    const legacy = structuredClone(save);
+    delete legacy.day;
+    legacy.weekPlan = undefined;
+    const restored = normalizeSave(legacy);
+    expect(restored.day).toBe(MATCH_DAY);
+    expect(restored.weekPlan).toEqual(DEFAULT_PLAN);
+    expect(planGrowthFactor(restored.weekPlan!)).toBe(1); // and it is the baseline load
+  });
+
+  it("the view tells the manager what each day is for", () => {
+    const save = fresh();
+    const view = weekView({ ...save, day: 2 });
+    expect(view.length).toBe(6);
+    expect(view[2].isToday).toBe(true);
+    expect(view[5].isMatch).toBe(true);
+    expect(view.every((d) => d.label.length > 2 && d.blurb.length > 10)).toBe(true);
+    // presets for congestion (v0.36, when the cup lands)
+    expect(trainingDays(CONGESTED_PLAN)).toBeLessThan(trainingDays(DEFAULT_PLAN));
   });
 });
 

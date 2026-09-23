@@ -156,6 +156,19 @@ flowchart LR
   MOT --> DRAW["oriented bodies, feet in stride,<br/>jockey stand-off, no overlaps"]
 ```
 
+## 9 · The week (between matches)
+
+```mermaid
+flowchart LR
+  M["Mon"] --> T["Tue"] --> W["Wed"] --> TH["Thu"] --> F["Fri"] --> S["Sat · match day"]
+  S -->|"round completes"| M
+  P["weekPlan: one activity per day<br/>set once, carried over"] -.-> M
+  M -.->|daily tick, all clubs| A["condition · freshness · sharpness<br/>knock risk · development factor"]
+  S -->|only day that| E["runs the match engine"]
+```
+
+*Four training days = the baseline week (1.0× growth). Heavy weeks buy development and pay in freshness; light weeks do the opposite.*
+
 ## 8 · Code map
 
 | File | What lives there |

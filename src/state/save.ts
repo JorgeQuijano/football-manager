@@ -2,6 +2,7 @@ import { del, get, set } from "idb-keyval";
 import type { SaveGame } from "@/engine";
 import {
   autoLineup,
+  DEFAULT_PLAN,
   builtinFormation,
   cleanSetPieces,
   contractFor,
@@ -200,6 +201,9 @@ export function normalizeSave(save: SaveGame): SaveGame {
     if (typeof fin.balance !== "number" || !Number.isFinite(fin.balance)) fin.balance = 4_000_000;
   }
   if (typeof save.onboarded !== "boolean") save.onboarded = true; // old saves have already been welcomed
+  // the week (v0.35): old saves keep the old rhythm — Continue means "play the match"
+  if (typeof save.day !== "number" || save.day < 0 || save.day > 5) save.day = 5;
+  if (!Array.isArray(save.weekPlan) || save.weekPlan.length !== 6) save.weekPlan = [...DEFAULT_PLAN];
   // height (v0.34): derived deterministically, so old saves get the same numbers
   for (const p of save.players) {
     if (typeof p.height !== "number" || p.height < 150 || p.height > 210) p.height = heightFor(p.id, p.pos);
