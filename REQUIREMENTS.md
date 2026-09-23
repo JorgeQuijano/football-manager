@@ -197,7 +197,7 @@ football-manager/
 
 ### Performance budgets
 
-- Initial JS ≤ 250 KB gz (goal 150–180).
+- Initial JS ≤ 260 KB gz (goal 150–180). Raised from 250 in v0.42: the law layer (`laws.ts`, offside/back-pass/handball/restarts) is real engine content at ~1.2 KB gz, not glue.
 - First load < 2s on mid-range Android over 4G. Lighthouse mobile ≥ 90.
 - Full 18-round league sim < 100 ms; one match sim < 10 ms.
 - Main thread only (no Web Worker) — revisit only if profiling shows jank.
@@ -240,7 +240,7 @@ Rough effort shape (not a promise): M0 = 2–4 evenings · M1 ≈ 1 week · M2 =
 7. Installable PWA on Android and iOS; standalone display; icon correct.
 8. Theme cycle works, persists, no flash on load.
 9. Export/import round-trips the save exactly.
-10. Perf budgets met (JS ≤ 250 KB gz; Lighthouse mobile ≥ 90; sim timing budgets).
+10. Perf budgets met (JS ≤ 260 KB gz; Lighthouse mobile ≥ 90; sim timing budgets).
 11. Season end reached; champion = table top; "Next season" works (age +1, fresh fixtures).
 12. Commentary consistent with score/events for all goals.
 13. No console errors during a full-season playthrough.

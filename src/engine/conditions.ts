@@ -35,7 +35,10 @@ export const WEATHERS: Record<WeatherId, WeatherDef> = {
     label: "Heavy rain",
     short: "Rain",
     tint: "#3D7EDB",
-    conversion: 0.9,
+    // chaos up, finishing down: the turnover bump creates chances, so the
+    // conversion drop has to be big enough that rain is still a lower-scoring
+    // day (v0.42 — at 0.90 the two effects cancelled and rain out-scored dry)
+    conversion: 0.84,
     turnover: 1.3,
     corner: 1.16,
     fouls: 1.12,

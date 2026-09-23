@@ -887,3 +887,19 @@ The complaint was exact: *the ball is passed around but nobody is where it lands
 **Measured, not eyeballed.** A diagnostic hook (`__fmBallGap` = distance from the ball to the nearest player) sampled at every phase completion, over a full half: the ball now comes to rest **0–1.1 units** from the nearest player (p50 0.1), with **zero** rest points further than 6 units. Before, passes routinely finished tens of units from anyone. The only large gaps left are legitimate: a throw-in travelling to the touchline, and a shot crossing the goalmouth.
 
 The sim is untouched — the timeline, the results and every golden value are exactly as they were. This was a presentation fix in the strict sense: the visuals now *obey* the sim's actor, instead of inventing a destination of their own.
+
+## 46. The laws, applied (`laws.ts`, v0.42)
+
+The engine used to *flavour* the rules rather than apply them: offside was a dice roll on goals ("15% of open-play goals were actually offside"), the ball went out for a throw-in to nobody in particular, and the back-pass rule did not exist. Two of those are now decided from the state of the pitch, and every ruling has a test.
+
+**Offside is judged from positions.** `side.coords` — per-slot coordinates the engine has carried since v0.17 for the visual layer — are now read by the law: the line is the **second-last defender**, never retreating past the halfway line; a pass must be **forward**; a receiver level with the line is onside but flagged as a *tight* call the assistant may miss (35%); the **keeper is exempt**; and **no offside can come from a throw-in, corner or goal kick** (`OFFSIDE_FROM`). When the flag goes up the move dies **before the shot** — no save, no goal, no rebound — and the defence restarts with the free kick. When a tight one is missed, the goal-time **VAR** re-derives the same ruling, so a flagged-offside goal only stands if the flag really was missed.
+
+**Restarts are decided by the laws, not by a coin.** `restartAfterOut` reads *who touched it last* and *which line it crossed*: an attacker's touch over the goal line is a **goal kick** (new: the engine had no goal kicks at all), a defender's is a **corner**, and the touchline gives the **throw to the other side** — taken by one of their own players, with the possession actually changing hands (the old code handed the throw back to the side that put it out).
+
+**The back-pass rule exists.** A deliberate team-mate pass to the keeper — `backPassTarget` finds it in the chain — can be picked up (`backPassHandle`, ~9%); when he does, it is an **indirect free kick** and a `foul` event names him. A ball from an opponent is never an offence, which is the actual law.
+
+**Handball exists too.** A share of defensive blocks (`handballRate`, ~2%) strike an arm: inside the area that is a **penalty**, resolved through the normal penalty path.
+
+Calibration is intact: the laws remove chances (an offside voids a move) but the goal band holds, and the audit test asserts **zero goals on the same whistle as a flag**.
+
+`docs/LAWS.md` is the auditable inventory — modelled, approximated, not modelled.
