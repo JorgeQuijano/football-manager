@@ -1,3 +1,4 @@
+import { makeCup } from "@/engine/cup";
 import { del, get, set } from "idb-keyval";
 import type { SaveGame } from "@/engine";
 import {
@@ -300,6 +301,9 @@ export function normalizeSave(save: SaveGame): SaveGame {
     const r = roles?.[i];
     return r && ROLE_GROUPS[slot].includes(r) ? r : defaultRoleFor(slot);
   });
+  // a cup for saves made before cups existed (v0.36)
+  if (!save.cup && save.clubs?.length) save.cup = makeCup(save);
+
   return save;
 }
 

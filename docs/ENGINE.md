@@ -782,3 +782,17 @@ The match engine still runs once per round. **The six days before the match are 
 **What the daily tick replaced:** `sharpnessTick`/`jadedTick` now run in `"played"` mode — they only describe what the match did to the men who played it — and the weekly recovery loop in `completeRound` is gone. Bans and injuries still count down in weeks.
 
 **The screen** (`ui/Week.tsx`): a card with six rows (day · activity select · today marker · match day), a live load read-out ("4 training days · +0% growth"), the day report line when something happened in training, and the **Continue bar** above the nav — *"Continue → Tue · Physical"*, or *"Play the match"* on Saturday, with a one-tap **skip to match day** that still runs every day's plan.
+
+## 41. The Challenge Cup (`cup.ts`, v0.36)
+
+The Cup runs on the same day clock v0.35 built. It is the reason the clock exists.
+
+**Format.** All ten clubs enter. The four lowest-seeded (last season's finish, then squad value) play a **preliminary round**; the two winners join the other six in the **quarter-finals**, then semis, then the final. Every tie is drawn from a seed — `hashSeed(seed, "cup", season, draw-<round>)` — so the same save always draws, and always wins or loses, the same way. Nobody appears twice in a round, and home advantage in a drawn round goes to the better seed.
+
+**The clock.** Each round has a week: **prelim = league week 4, QF = 8, SF = 12, final = 16**, played on the **Wednesday** of that week. So a cup week contains two match days (Wed + Sat) and the manager's plan still runs on the other four days — which is the whole point: **a cup tie is paid for in legs.** The Week card marks the Wednesday as *Cup tie*, says *"two matches this week"*, and offers a one-tap **lighter week** (`CONGESTED_PLAN`, a one-round override) when the manager wants it.
+
+**The ties themselves.** Ninety minutes, and penalties if they are level (`resolveTie` — and the live path does the same: full time level → a shootout on the same state, so watching it and simulating it agree). The manager's tie is played through the **normal match screen**: the XI, the talks, the subs, the legs. His result lands in `completeCupTie`, which applies what a match applies — minutes, goals, assists, headers, condition loss, knocks (medical centre included), cards and the bans they carry, form ratings — then settles the round. **The league round does not move** (`round` is untouched, no league result is recorded): the cup is a Wednesday, the league is a Saturday.
+
+**Settling.** When the round's book closes: prize money for going through (£150k / £350k / £750k / £1.5m to the winner), a news line, and the next round is drawn. If the manager has no tie in a round (he is out, or he has a bye) the round still happens — `tickCup` runs inside `completeRound` so the bracket never stalls waiting for a man who isn't in it. Settling is **idempotent** (`cup.settled`): a round pays out and draws exactly once, whether the manager played it or the engine did.
+
+**Where it is visible.** The League screen has a **Cup** tab: status, the bracket by round with the manager's ties highlighted, penalties inline, past winners from `history.cups`. Old saves get a cup drawn on load (`normalizeSave`); a new season draws a fresh one in `nextSeason`.

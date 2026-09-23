@@ -15,6 +15,7 @@ import { medicalWeeks, rollSponsor, runCommercialRound, tickBuilds } from "./com
 import { scoutingBudgetFor, scoutingTick } from "./scouting";
 import { payPrize, recordSeason, roundAwards } from "./history";
 import { moraleTick, MORALE_START } from "./morale";
+import { makeCup, tickCup } from "./cup";
 import { conditionsFor } from "./conditions";
 import { mediaGate, mediaTick, makePress } from "./media";
 import { applyPreContracts, payAddons, payTransferAddons, policyFor, settleDebts, policyPayoff } from "./market";
@@ -74,7 +75,7 @@ export function resolveSide(save: SaveGame, clubId: string): Resolved {
   };
 }
 
-const matchInputs = (save: SaveGame, round: number, homeId: string, awayId: string) => {
+export const matchInputs = (save: SaveGame, round: number, homeId: string, awayId: string) => {
   const home = resolveSide(save, homeId);
   const away = resolveSide(save, awayId);
   const rng = mulberry32(hashSeed(save.seed, "match", save.season, round, homeId, awayId));
@@ -287,6 +288,8 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
 
   // Transfer activity for this round while a window is open (AI churn + bids for you).
   const withTransfers = windowTick(withDev);
+  // the cup runs on its own when the manager has no tie this week (v0.36) — before the round moves on
+  tickCup(withTransfers);
   withTransfers.round = round + 1;
   // media: results move the fans, promises come due, the next conference is booked
   mediaTick(withTransfers, withTransfers.lastResults);
@@ -375,6 +378,7 @@ export function nextSeason(input: SaveGame): SaveGame {
   recordSeason(save);
   save.season += 1;
   save.round = PRE_ROUNDS[0];
+  save.cupLast = undefined;
   save.phase = "pre";
   save.live = undefined;
   save.offers = [];
@@ -383,6 +387,7 @@ export function nextSeason(input: SaveGame): SaveGame {
     ...buildFixtures(save.clubs, save.season, save.seed),
     ...makeFriendlies(save, save.season)
   ];
+  save.cup = makeCup(save);
   // season-end: did he hit the personal target you set him? (before anything resets)
   settleTargets(save);
   // season-end: trait learning reads last season's minutes; then reset trackers + intake
@@ -448,5 +453,6 @@ export function nextSeason(input: SaveGame): SaveGame {
   save.lastResults = [];
   save.lastUserMatch = undefined;
   makePress(save); // a new season, a fresh round of questions
+
   return save;
 }

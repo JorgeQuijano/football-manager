@@ -7,6 +7,7 @@ import { builtinFormation } from "./formations";
 import { buildFixtures } from "./league";
 import { makeFriendlies } from "./preseason";
 import { DEFAULT_PLAN } from "./week";
+import { makeCup } from "./cup";
 import { heightFor } from "./aerial";
 import { contractFor, freshFinances } from "./transfers";
 import { peakFor } from "./training";
@@ -227,5 +228,8 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
   if (save.media?.press) save.media.press.round = 1;
   // the shirt is on the market from day one
   save.sponsorOffers = makeSponsorOffers(save);
-  return save;
+
+  // the Challenge Cup: drawn on day one (v0.36)
+  save.cup = makeCup(save);
+    return save;
 }

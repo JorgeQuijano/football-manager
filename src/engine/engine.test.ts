@@ -28,6 +28,8 @@ import { LOAN, bidForLoan, exerciseLoanOption, loanAsk, loanRollover, loanCount,
 import { dealCost, dealValue, termsDemand } from "./transfers";
 import { INBOX_CAP, inboxFor, inboxUnread, markAllInboxRead, openInboxItem, pushInbox } from "./inbox";
 import { PRE_ROUNDS, makeFriendlies, preseasonState } from "./preseason";
+import { CUP_DAY, completeCupTie, cupStatus, makeCup, resolveTie, tickCup, tieAsFixture, userCupTie } from "./cup";
+import { shootout } from "./match";
 import { fmtShort as fmtShortCal, friendlyDate } from "./calendar";
 import type { Activity, Facilities } from "./types";
 import {
@@ -60,7 +62,9 @@ import {
   planGrowthFactor,
   runDay,
   trainingDays,
-  weekView
+  weekView,
+  matchDays,
+  planOf
 } from "./week";
 import { makeYouth } from "./training";
 import { formFactor, formFreshnessTick } from "./stats";
@@ -274,6 +278,13 @@ import type { BoardPolicy, TransferOffer, CornerRoutine, FreeKickRoutine, Intens
 import type { MatchStatCtx } from "./stats";
 
 /** Jump straight into the league: pre-season friendlies remain unplayed (v0.27). */
+/** play a live match out to the final whistle (deterministic) */
+function playLiveOut(save: any) {
+  const players = playersById(save);
+  const st = advanceTo(save.live.state, 90, players);
+  return { ...save, live: { ...save.live, state: st, minute: 90 } };
+}
+
 function toLeague(save: SaveGame): SaveGame {
   return { ...save, round: 1, phase: "league" };
 }
@@ -5998,6 +6009,144 @@ describe("height and the aerial game (v0.34.0)", () => {
     for (const p of restored.players) {
       expect(p.height).toBe(heightFor(p.id, p.pos));
     }
+  });
+});
+
+describe("the Challenge Cup: mid-week knockout (v0.36.0)", () => {
+  /** play league rounds up to (not including) a round number */
+  const toRound = (seed: number, round: number) => {
+    let save = toLeague(newGame(seed));
+    let guard = 0;
+    while (save.round < round && guard++ < 40) save = playRound(save).save;
+    return save;
+  };
+
+  /** the manager plays his tie — the same two calls the live path makes */
+  const playTie = (save: any) => {
+    const tie = userCupTie(save);
+    if (!tie) return save;
+    const r = resolveTie(save, tie);
+    return completeCupTie(
+      { ...save, live: undefined },
+      {
+        homeGoals: r.homeGoals,
+        awayGoals: r.awayGoals,
+        updates: [],
+        ratings: {}
+      } as any,
+      r.pens
+    );
+  };
+
+  /** the first week where the manager has a cup tie */
+  const cupWeek = (seed: number) => {
+    let save = toLeague(newGame(seed));
+    let guard = 0;
+    while (!userCupTie(save) && save.round < 17 && guard++ < 30) save = playRound(save).save;
+    return save;
+  };
+
+  it("draws the preliminary round from the weakest clubs, seeded", () => {
+    const s = toLeague(newGame(2020));
+    const a = makeCup(s);
+    const b = makeCup(s);
+    expect(a.ties).toHaveLength(2);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b)); // same seed, same draw
+    const inPrelim = new Set(a.ties.flatMap((t) => [t.homeId, t.awayId]));
+    expect(inPrelim.size).toBe(4);
+    for (const t of a.ties) expect(t.homeId).not.toBe(t.awayId);
+  });
+
+  it("every club is in the cup — six byes, four in the preliminary", () => {
+    const s = toLeague(newGame(2021));
+    const prelim = s.cup!.ties.filter((t) => t.round === "prelim");
+    const inPrelim = new Set(prelim.flatMap((t) => [t.homeId, t.awayId]));
+    expect(inPrelim.size).toBe(4);
+    expect(s.clubs.length - inPrelim.size).toBe(6); // the rest go straight to the quarters
+  });
+
+  it("a cup tie turns Wednesday into a match day", () => {
+    const save = cupWeek(2021);
+    const tie = userCupTie(save);
+    expect(tie).toBeTruthy();
+    expect(matchDays(save)).toContain(CUP_DAY);
+    expect(matchDays(save).length).toBe(2); // Wednesday and Saturday
+    expect(activityFor(save, CUP_DAY)).toBe("match");
+    expect(activityFor(save, 0)).not.toBe("match");
+  });
+
+  it("resolves a tie over ninety minutes, and on penalties if it is level", () => {
+    const save = cupWeek(2022);
+    const tie = userCupTie(save)!;
+    const r = resolveTie(save, tie);
+    expect(Number.isFinite(r.homeGoals)).toBe(true);
+    if (r.homeGoals === r.awayGoals) {
+      expect(r.pens).toBeTruthy();
+      expect(r.pens!.home).not.toBe(r.pens!.away);
+    }
+  });
+
+  it("plays the manager's tie and leaves the league round untouched", () => {
+    const save = cupWeek(2023);
+    const round = save.round;
+    const resultsBefore = save.lastResults.length;
+    const tie = userCupTie(save)!;
+    const after = playTie(save);
+    expect(after.round).toBe(round); // the league round has not moved
+    expect(after.lastResults.length).toBe(resultsBefore);
+    const t = after.cup!.ties.find((x: any) => x.id === tie.id)!;
+    expect(t.played).toBe(true);
+    expect(t.winnerId).toBeTruthy();
+    // the whole round is settled
+    expect(after.cup!.ties.filter((x: any) => x.round === tie.round).every((x: any) => x.played)).toBe(true);
+    expect(after.day).toBeGreaterThanOrEqual(CUP_DAY);
+  });
+
+  it("the bracket runs on its own when the manager is not holding it up", () => {
+    const save = toRound(2024, 8); // the quarter-final week
+    const clone: any = JSON.parse(JSON.stringify(save));
+    const qf = clone.cup.ties.filter((t: any) => t.round === "qf");
+    expect(qf.length).toBe(4); // eight clubs: two prelim winners, six byes
+    // say the manager has played his (or is out): the round must settle itself
+    const mine = qf.find((t: any) => t.homeId === clone.userClubId || t.awayId === clone.userClubId);
+    if (mine && !mine.played) {
+      mine.played = true;
+      mine.winnerId = mine.homeId;
+    }
+    tickCup(clone);
+    expect(clone.cup.ties.filter((t: any) => t.round === "qf").every((t: any) => t.played)).toBe(true);
+    expect(clone.cup.ties.filter((t: any) => t.round === "sf")).toHaveLength(2);
+    // and it only settles once: no double draw, no double prize
+    const before = JSON.stringify(clone.cup);
+    tickCup(clone);
+    expect(JSON.stringify(clone.cup)).toBe(before);
+  });
+
+  it("a season ends with one winner, remembered in the history", () => {
+    let save = toLeague(newGame(2025));
+    let guard = 0;
+    while (save.round <= 18 && guard++ < 40) {
+      save = playTie(save);
+      save = playRound(save).save;
+    }
+    const cup = save.cup!;
+    expect(cup.winnerId).toBeTruthy();
+    expect(cup.runnerUpId).toBeTruthy();
+    expect(cup.runnerUpId).not.toBe(cup.winnerId);
+    expect(save.history.cups?.length).toBe(1);
+    expect(save.history.cups![0].winnerId).toBe(cup.winnerId);
+    expect(cupStatus(save).toLowerCase()).toContain("cup");
+    // and one name is on it, not two
+    const allTies = cup.ties;
+    expect(allTies.filter((t) => t.round === "final")).toHaveLength(1);
+  });
+
+  it("the congested plan is the light one, and only applies for the week it was set", () => {
+    expect(trainingDays(CONGESTED_PLAN)).toBeLessThan(trainingDays(DEFAULT_PLAN));
+    const save = toLeague(newGame(2027));
+    const s = { ...save, weekOverride: { forRound: save.round, plan: CONGESTED_PLAN } };
+    expect(planOf(s)).toEqual(CONGESTED_PLAN);
+    expect(planOf({ ...save, weekOverride: { forRound: save.round + 1, plan: CONGESTED_PLAN } })).toEqual(DEFAULT_PLAN);
   });
 });
 

@@ -404,6 +404,35 @@ export interface Fixture {
   awayGoals?: number;
 }
 
+export type CupRoundId = "prelim" | "qf" | "sf" | "final";
+
+/** One knockout tie (engine/cup.ts, v0.36). */
+export interface CupTie {
+  id: string;
+  round: CupRoundId;
+  homeId: string;
+  awayId: string;
+  played: boolean;
+  homeGoals?: number;
+  awayGoals?: number;
+  pens?: { home: number; away: number };
+  aet?: boolean;
+  winnerId?: string;
+}
+
+/** The Challenge Cup: one draw a season, mid-week ties. */
+export interface Cup {
+  season: number;
+  rounds: CupRoundId[];
+  ties: CupTie[];
+  /** which league round each cup round is played in */
+  schedule: Record<CupRoundId, number>;
+  winnerId?: string;
+  runnerUpId?: string;
+  /** rounds already settled (so a round only pays out and draws once) */
+  settled?: CupRoundId[];
+}
+
 export type MatchEventType =
   | "kickoff"
   | "goal"
@@ -705,6 +734,8 @@ export interface LiveChange {
 }
 
 export interface LiveMatch {
+  /** a Challenge Cup tie, not a league round (v0.36) */
+  cup?: boolean;
   base: MatchState; // start-of-current-half snapshot (timeline included up to its minute)
   state: MatchState; // current state simulated to the end of the current half
   half: 1 | 2;
@@ -799,6 +830,8 @@ export interface SeasonRecord {
 
 export interface HistoryState {
   seasons: SeasonRecord[];
+  /** Challenge Cup winners by season (engine/cup.ts, v0.36) */
+  cups?: { season: number; winnerId: string }[];
   /** league titles won by the user's club */
   titles: number;
   allTime: {
@@ -904,6 +937,12 @@ export interface SaveGame {
   day?: number;
   /** the standing week plan the manager sets in advance (engine/week.ts, v0.35) */
   weekPlan?: Activity[];
+  /** a plan for one week only (a cup week needs a lighter load, v0.36) */
+  weekOverride?: { forRound: number; plan: Activity[] };
+  /** the season's knockout cup (engine/cup.ts, v0.36) */
+  cup?: Cup;
+  /** the tie just played, for the result screen */
+  cupLast?: { round: CupRoundId; tieId: string };
   /** offers on the shirt waiting for an answer */
   sponsorOffers?: SponsorOffer[];
   /** incoming offers for the user's players, pending a decision */
