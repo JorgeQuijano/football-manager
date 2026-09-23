@@ -736,3 +736,20 @@ Mapping: `d = round(1 + 19 × (v − 20) / 76)`, clamped. A 42 reads as a 7, a 6
 `readAttr(save, key, v)` returns `{ d, text, band, colour }` and `readRange(save, key, lo, hi)` does the same for a **scouted range** — the fog now speaks in 1–20 too ("13–15"), collapsing to a single digit once the report is exact. Bars are scaled across the 1–20 band (`barPct`) instead of 0–99, so two players finally *look* different on screen.
 
 **Nothing is stored.** The save keeps its fine-grained values, the engine keeps its resolution, and because the whole layer is display-only it cannot touch a result, a rating or a deterministic replay.
+
+## 39. Height and the aerial game (`aerial.ts`)
+
+**Do we have header goals?** We did — corners and crossed free kicks have always picked a "header" who "rises highest and heads it in". But there was no height anywhere in the game: the header pick was weighted on `physical` and the routine's favourite, and nobody contested it.
+
+**Height (v0.34.0).** Every player now carries a height in cm, generated deterministically from his own id (`heightFor(id, pos)`) so **no RNG draw is spent** — every existing world, every golden test and every old save keeps its exact values, and stripping a height from a save restores the same number. Bands by position: keepers 186–198, centre-halves 178–195, midfielders 169–189, forwards 172–193, with a slight bell so most players sit mid-band. It is *public* information (like a real team sheet): shown in the sheet as "188 cm · a handful in the air".
+
+**The aerial score** folds height and physical into one number — the way FM folds height into jumping reach:
+`aerial = 55 × normalised(height, 170→198) + 45 × physical/100`, displayed on the usual **1–20** scale (`aerial20`) and as a squad tag **· aerial threat** from 16 up.
+
+**What it decides:**
+1. **Who attacks a delivery** — the corner and crossed-free-kick header picks now weight by `headerWeight(p) = (aerial/50)^1.6 + 0.15`, flavoured by the routine (near post still wants a strong header, far post still rewards shooting).
+2. **The duel** — the defence sends its **best header** up against him (`bestAerial`), and `duelFactor(att, marker) = 1 + (aerial_att − aerial_marker)/200`, clamped 0.8–1.25, multiplies the conversion. Both sides pick their best, so the comparison is absolute and the swing is gentle — the match engine's goal volume does not move because of it.
+3. **Open play** — some chances are now **crosses**: a move that came from a wide position (`x < 22` or `> 78` on the passer) with an aerial target in the box becomes a headed attempt (`crossShareFor` — 20% wide, 6% central, 3% with nobody to aim at). The header man replaces the shooter, his duel decides the quality, and the commentary says so.
+4. **The record** — headed goals are counted (`Player.headers`, reset each pre-season), shown in the sheet ("189 cm · Aerial 17 · 3 headed goals") and flagged on the scorer (`Scorer.header`) so the match feed can mark them.
+
+**The tall-player kicker, in numbers:** a 196cm striker with physical 88 carries aerial ≈ 90 (a **19**); a 170cm forward with physical 45 carries ≈ 27 (a **7**). Over 400 deliveries to the same box, the big man wins roughly three times as many as the small one, and in the duel he converts about **25% more** of the ones he wins.

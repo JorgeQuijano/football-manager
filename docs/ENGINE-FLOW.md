@@ -58,7 +58,10 @@ This is the only place in the sim where a *named player* makes a *choice*: who s
 flowchart TD
   C0["resolveChance(atk, def)"] --> S1["1 · WHO SHOOTS<br/>weighted pick among outfielders"]
   S1 --> S2["2 · THE MOVE<br/>buildChain: 3–6 passes,<br/>forward-biased, ends at the shooter"]
-  S2 --> S3["3 · CONVERSION<br/>pGoal = base × finish × keeper × weather<br/>clamp 4–30%"]
+  S2 --> S2b{"a cross?<br/>wide move + an aerial<br/>target in the box"}
+  S2b -->|"yes (6–20%)"| CROSSH["the header man attacks it<br/>duel vs their best header<br/>aerial = height + physical"]
+  S2b -->|no| S3
+  CROSSH --> S3["3 · CONVERSION<br/>pGoal = base × finish × keeper × weather<br/>clamp 4–30%"]
   S3 -->|"roll: goal"| D1{"4 · THE DRAMA<br/>onside?"}
   S3 -->|"roll: no goal"| N1{"outcome shape"}
   D1 -->|"truly offside"| O1["flag? → offside<br/>VAR: stands / not given"]

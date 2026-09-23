@@ -16,6 +16,7 @@ import type {
 import { hashSeed, mulberry32, pick, pickWeighted, randInt, type Rng } from "./rng";
 import { T } from "./tuning";
 import { hasTrait } from "./traits";
+import { aerialOf, bestAerial, crossShareFor, duelFactor, headerWeight } from "./aerial";
 import { aiOppInstructions, oiEffect, oiOn, piEffect, piOf, shoutScale, talkDefFor } from "./talks";
 import type { KnockoutOutcome } from "./talks";
 import { CORNER_ROUTINES, FK_ROUTINES, familiarityFactor, familiarityOf } from "./setpieces";
@@ -554,11 +555,35 @@ const resolveChance = (
   );
   const chain = buildChain(atkSide, atk, rng, shooter.slot);
   const gk = dfn.find((x) => x.p.pos === "GK");
+  // is this a cross, aimed at a head? A move that came from a wide position with an
+  // aerial target on the end of it can be, and the tall men get on the end of those.
+  const lastPasser = chain.length > 1 ? atk.find((x) => x.slot === chain[chain.length - 2]) : undefined;
+  const wide = !!lastPasser && (() => {
+    const x = atkSide.coords[lastPasser.slot]?.[0] ?? 50;
+    return x < 22 || x > 78;
+  })();
+  const aerialTargets = shooters.filter((x) => aerialOf(x.p) >= 45);
+  const crossed = rng() < crossShareFor(wide, aerialTargets.length > 0);
+  const headerMan = crossed
+    ? pickWeighted(rng, shooters, (x) => headerWeight(x.p) * ROLE_DEFS[x.role].finish)
+    : null;
+  const defendHeader = crossed ? bestAerial(dfn.filter((x) => x.p.pos !== "GK").map((x) => x.p)) : undefined;
+  const defHeads = dfn.filter((x) => x.p.pos !== "GK").map((x) => x.p);
+  const headDuel = headerMan && defendHeader ? duelFactor(headerMan.p, defendHeader) : 1;
   const finish =
     roleFinish(shooter.p, shooter.role) * ROLE_DEFS[shooter.role].finish * attEdge(s, shooter.p) * instrFor(s, shooter.p, "finish");
   const gkSkill = gk ? defenseScore(gk.p, gk.role) * defEdge(s, gk.p) : 50;
   const eff = conditionEffects(s.cond);
-  let pGoal = T.conversionBase * (1 + (finish - 60) / 120) * (1 + (60 - gkSkill) / 160) * eff.conversion;
+  const attempt = headerMan ?? shooter;
+  const attemptFinish = headerMan
+    ? roleFinish(headerMan.p, headerMan.role) * ROLE_DEFS[headerMan.role].finish * attEdge(s, headerMan.p)
+    : finish;
+  let pGoal =
+    T.conversionBase *
+    (1 + (attemptFinish - 60) / 120) *
+    (1 + (60 - gkSkill) / 160) *
+    eff.conversion *
+    (headerMan ? headDuel * 0.92 : 1); // a header is a little harder than a shot
   pGoal = clamp(pGoal, 0.04, 0.3);
 
   const evBefore = s.events.length;
@@ -679,16 +704,18 @@ const resolveChance = (
     }
 
     s.scorers.push({
-      playerId: shooter.p.id,
-      name: shooter.p.name,
+      playerId: attempt.p.id,
+      name: attempt.p.name,
       clubId: atkSide.clubId,
-      minute: m
+      minute: m,
+      header: !!headerMan
     });
+    if (headerMan) updOf(s, attempt.p.id).header = true;
     s.events.push({
       minute: m,
       type: "goal",
       clubId: atkSide.clubId,
-      playerId: shooter.p.id,
+      playerId: attempt.p.id,
       text:
         pick(rng, GOAL_TEXT)(shooter.p.name, atkSide.short) +
         (assister ? pick(rng, ASSIST_SUFFIX)(assister.p.name, "") : "")
@@ -992,22 +1019,31 @@ const resolveFreeKick = (
   const dfn = proto(defSide, players);
   const gk = dfn.find((x) => x.p.pos === "GK");
   const gkSkill = gk ? defenseScore(gk.p, gk.role) * defEdge(s, gk.p) : 50;
-  // a crossed routine is a headed delivery (corner-like); everything else is a shot
   const contenders = atk.filter((x) => x.p.id !== taker.p.id);
+  // a crossed routine is a headed delivery (corner-like); everything else is a shot
   const header =
     eff.delivery && contenders.length
       ? pickWeighted(
           rng,
           contenders,
-          (x) => x.p.attrs.physical * 1.1 + x.p.attrs.shooting * 0.35 + ROLE_DEFS[x.role].finish * 9
+          (x) =>
+            headerWeight(x.p) *
+            (1 + x.p.attrs.shooting / 160 + ROLE_DEFS[x.role].finish * 0.09) *
+            attEdge(s, x.p)
         )
       : null;
+  const isHeader = !!header;
+  // a crossed delivery is contested too
+  const fkDefenders = dfn.filter((x) => x.p.pos !== "GK").map((x) => x.p);
+  const fkMarker = header ? bestAerial(fkDefenders) : undefined;
+  const fkDuel = header && fkMarker ? duelFactor(header.p, fkMarker) : 1;
   const pGoal = clamp(
     (eff.delivery && header ? T.cornerGoalBase : T.fkGoalBase) *
       eff.goal *
       fam *
       (1 + ((eff.delivery ? taker.p.attrs.passing : taker.p.attrs.shooting) - 60) / (eff.delivery ? 100 : 80)) *
       (1 + (60 - gkSkill) / (eff.delivery ? 220 : 200)) *
+      fkDuel *
       conditionEffects(s.cond).conversion *
       (hasTrait(taker.p, "dead_ball") ? (eff.delivery ? 1.06 : 1.08) : 1),
     eff.delivery ? 0.008 : 0.02,
@@ -1026,6 +1062,7 @@ const resolveFreeKick = (
   if (rng() < pGoal) {
     const scorer = header ?? taker;
     out = "goal";
+    if (isHeader) updOf(s, scorer.p.id).header = true;
     atkSide.goals++;
     updOf(s, scorer.p.id).goals++;
     s.ratings[scorer.p.id] = clamp(s.ratings[scorer.p.id] + 1.0, 4, 10);
@@ -1132,19 +1169,26 @@ const resolveCorner = (
     );
   const flagX = rng() < 0.5 ? 2 : 98;
   const contenders = atk.filter((x) => x.p.id !== taker.p.id);
+  // the delivery is aimed at whoever is best in the air, flavoured by the routine
   const header =
     contenders.length > 0
       ? pickWeighted(
           rng,
           contenders,
           (x) =>
-            eff.header === "physical"
-              ? x.p.attrs.physical * 1.3 + x.p.attrs.shooting * 0.25 + ROLE_DEFS[x.role].finish * 8
+            headerWeight(x.p) *
+            (eff.header === "physical"
+              ? 1 + x.p.attrs.physical / 120 + ROLE_DEFS[x.role].finish * 0.08
               : eff.header === "shooting"
-                ? x.p.attrs.shooting * 0.8 + x.p.attrs.physical * 0.45 + ROLE_DEFS[x.role].finish * 10
-                : x.p.attrs.physical * 0.9 + x.p.attrs.shooting * 0.3 + ROLE_DEFS[x.role].finish * 10
+                ? 0.8 + x.p.attrs.shooting / 140 + ROLE_DEFS[x.role].finish * 0.1
+                : 0.9 + x.p.attrs.shooting / 160 + ROLE_DEFS[x.role].finish * 0.1) *
+            attEdge(s, x.p)
         )
       : taker;
+  // …and the defence sends its best header up to contest it
+  const dfnForDuel = proto(defSide, players).filter((x) => x.p.pos !== "GK").map((x) => x.p);
+  const marker = bestAerial(dfnForDuel);
+  const duel = contenders.length > 0 && marker ? duelFactor(header.p, marker) : 1;
   const dfn = proto(defSide, players);
   const gk = dfn.find((x) => x.p.pos === "GK");
   const gkSkill = gk ? defenseScore(gk.p, gk.role) * defEdge(s, gk.p) : 50;
@@ -1153,6 +1197,7 @@ const resolveCorner = (
       eff.goal *
       fam *
       (1 + (taker.p.attrs.passing - 60) / 100 + (header.p.attrs.physical - 60) / 120) *
+      duel *
       (1 + (60 - gkSkill) / 220) *
       conditionEffects(s.cond).conversion *
       (hasTrait(taker.p, "dead_ball") ? 1.06 : 1),

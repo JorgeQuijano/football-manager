@@ -141,6 +141,8 @@ export interface Player {
   clubId: string; // "" = free agent
   name: string;
   age: number;
+  /** height in cm — public information, never trained (engine/aerial.ts) */
+  height?: number;
   pos: Position;
   attrs: PlayerAttrs;
   /** FM-style behavioural traits (0-2 per player); see engine/traits.ts */
@@ -172,6 +174,8 @@ export interface Player {
   /** season cards */
   yellows: number;
   reds: number;
+  /** goals scored with his head this season (engine/aerial.ts) */
+  headers?: number;
   /** season rating accumulator (4.0-10.0 per match) */
   ratingSum: number;
   ratingCount: number;
@@ -423,6 +427,8 @@ export interface PlayerUpdate {
   red: boolean;
   /** why he went: a second booking or a straight red — different bans (engine/discipline.ts) */
   redKind?: "straight" | "second";
+  /** this goal was a header (engine/aerial.ts) */
+  header?: boolean;
   injuredWeeks: number; // if > 0, newly injured
   conditionLoss: number;
 }
@@ -452,7 +458,14 @@ export interface MatchResult {
   events: MatchEvent[];
   ratings: Record<string, number>;
   updates: PlayerUpdate[];
-  scorers: { playerId: string; name: string; clubId: string; minute: number }[];
+  scorers: {
+    playerId: string;
+    name: string;
+    clubId: string;
+    minute: number;
+    /** scored with his head (engine/aerial.ts) */
+    header?: boolean;
+  }[];
   /** every shot of the match, with its xG (data hub) */
   shots?: MatchShot[];
   /** knockout ties only: decided after extra time */
@@ -644,7 +657,14 @@ export interface MatchState {
   entryMinute: Record<string, number>;
   exitMinute: Record<string, number>;
   played: string[];
-  scorers: { playerId: string; name: string; clubId: string; minute: number }[];
+  scorers: {
+    playerId: string;
+    name: string;
+    clubId: string;
+    minute: number;
+    /** scored with his head (engine/aerial.ts) */
+    header?: boolean;
+  }[];
   /** every shot of the match, with its xG (data hub) */
   shots?: MatchShot[];
   /** per player: which side (0 home / 1 away) and natural position — for post-match ratings */
