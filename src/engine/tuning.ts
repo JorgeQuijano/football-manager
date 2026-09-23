@@ -29,6 +29,11 @@ export const T = {
   // --- on-pitch realism (v0.19): officials, offside & VAR ---
   offsideRate: 0.15, // share of open-play goals that were actually offside
   linesmanMiss: 0.35, // share of true offsides the flag misses
+  // --- the laws, applied (v0.42) ---
+  offsideTolerance: 0.6, // pitch units past the line before it is offside
+  offsideTight: 2.2, // within this margin it is a "tight" call the flag may miss
+  backPassHandle: 0.06, // chance a keeper picks up a deliberate back-pass (a free kick if he does)
+  handballRate: 0.02, // share of defensive blocks that are handled (penalty in the box)
   linesmanWrong: 0.08, // share of onside goals wrongly flagged
   varReview: 0.6, // share of controversial calls reviewed
   varCatch: 0.75, // share of reviewed errors corrected

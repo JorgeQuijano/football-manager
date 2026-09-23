@@ -469,6 +469,7 @@ export type MatchEventType =
   | "freekick"
   | "penalty"
   | "offside"
+  | "foul"
   | "var"
   | "info";
 

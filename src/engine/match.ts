@@ -15,6 +15,16 @@ import type {
 } from "./types";
 import { hashSeed, mulberry32, pick, pickWeighted, randInt, type Rng } from "./rng";
 import { T } from "./tuning";
+import {
+  LAW_TEXT,
+  attackersOf,
+  backPassTarget,
+  checkOffside,
+  flagGoesUp,
+  handballVerdict,
+  keeperPicksItUp,
+  restartAfterOut
+} from "./laws";
 import { hasTrait } from "./traits";
 import { aerialOf, bestAerial, crossShareFor, duelFactor, headerWeight } from "./aerial";
 import { aiOppInstructions, oiEffect, oiOn, piEffect, piOf, shoutScale, talkDefFor } from "./talks";
@@ -496,19 +506,82 @@ const possessionPhase = (
   const atk = proto(side, players);
   if (!atk.length) return;
   const chain = buildChain(side, atk, rng);
+
+  // --- the back-pass rule: a deliberate ball back to the keeper (v0.42) ---
+  const backTo = backPassTarget(chain, atk);
+  if (backTo !== null && keeperPicksItUp(0.5, rng)) {
+    const keeper = atk.find((x) => x.slot === backTo);
+    const spot = rng() < 0.5 ? 6 : 94;
+    s.events.push({
+      minute: m,
+      type: "foul",
+      clubId: side.clubId,
+      playerId: keeper?.p.id,
+      text: pick(rng, LAW_TEXT.backPass)(keeper?.p.name ?? "the keeper")
+    });
+    s.timeline.push({ m, h: isHome(s, side) ? 1 : 0, p: chain, o: "foul" });
+    s.timeline.push({
+      m,
+      h: isHome(s, opp) ? 1 : 0,
+      p: [],
+      o: "turnover",
+      b: undefined,
+      t: spot
+    });
+    return;
+  }
+
   if (rng() < 0.2) {
     const lastSlot = chain[chain.length - 1];
     const deepInAttack = lastSlot !== undefined && (side.coords[lastSlot]?.[1] ?? 100) < 40;
-    if (deepInAttack && rng() < T.cornerFromOut) {
-      resolveCorner(s, side, opp, m, rng, players);
+    const oppos = attackersOf(opp, players);
+    if (deepInAttack) {
+      // over the goal line: a defender's touch is a corner, the attacker's is a goal kick
+      const deflected = rng() < T.cornerFromOut;
+      const verdict = restartAfterOut(deflected ? "def" : "atk", "goal-line-defending", true);
+      if (verdict.restart === "corner") {
+        resolveCorner(s, side, opp, m, rng, players);
+        return;
+      }
+      const gk = oppos.find((x) => x.p.pos === "GK") ?? oppos[0];
+      s.events.push({
+        minute: m,
+        type: "info",
+        clubId: opp.clubId,
+        playerId: gk?.p.id,
+        text: pick(rng, LAW_TEXT.goalKick)(opp.short)
+      });
+      s.timeline.push({
+        m,
+        h: isHome(s, opp) ? 1 : 0,
+        p: gk ? [gk.slot] : [],
+        o: "out",
+        sp: "goalkick",
+        t: 50
+      });
       return;
+    }
+    // the touchline: the throw belongs to the other side, taken by one of their own
+    const verdict = restartAfterOut("atk", "touchline", false);
+    const theirs = verdict.to === "def" ? oppos.filter((x) => x.p.pos !== "GK") : [];
+    const taker = theirs.length
+      ? pickWeighted(rng, theirs, (x) => 1 + (x.p.attrs.physical ?? 50) / 100).slot
+      : undefined;
+    const xOut = rng() < 0.5 ? 4 : 96;
+    if (taker !== undefined) {
+      s.events.push({
+        minute: m,
+        type: "info",
+        clubId: opp.clubId,
+        text: `${opp.short} have the throw.`
+      });
     }
     s.timeline.push({
       m,
-      h: isHome(s, side) ? 1 : 0,
-      p: chain,
+      h: isHome(s, verdict.to === "def" ? opp : side) ? 1 : 0,
+      p: taker !== undefined ? [taker] : [],
       o: "out",
-      t: rng() < 0.5 ? 4 : 96,
+      t: xOut,
       sp: "throw"
     });
     return;
@@ -555,6 +628,53 @@ const resolveChance = (
   );
   const chain = buildChain(atkSide, atk, rng, shooter.slot);
   const gk = dfn.find((x) => x.p.pos === "GK");
+
+  // --- offside, judged from where the players actually are (v0.42) ---
+  const ruling = checkOffside(
+    atkSide,
+    defSide,
+    attackersOf(defSide, players),
+    atk,
+    chain.length > 1 ? chain[chain.length - 2] : undefined,
+    shooter.slot
+  );
+  if (flagGoesUp(ruling, rng)) {
+    s.events.push({
+      minute: m,
+      type: "offside",
+      clubId: atkSide.clubId,
+      playerId: shooter.p.id,
+      text: pick(rng, LAW_TEXT.offsideFlag)(shooter.p.name)
+    });
+    s.timeline.push({ m, h: isHome(s, atkSide) ? 1 : 0, p: chain, o: "offside" });
+    // the defence restarts with the free kick where he strayed
+    const setter = attackersOf(defSide, players).find((x) => x.p.pos === "GK");
+    s.timeline.push({
+      m,
+      h: isHome(s, defSide) ? 1 : 0,
+      p: setter ? [setter.slot] : [],
+      o: "turnover",
+      b: setter?.slot
+    });
+    return;
+  }
+
+  // --- the back-pass rule: a deliberate ball back to the keeper ---
+  const backTo = backPassTarget(chain, atk);
+  if (backTo !== null && keeperPicksItUp(0.4, rng)) {
+    const keeper = atk.find((x) => x.slot === backTo);
+    s.events.push({
+      minute: m,
+      type: "foul",
+      clubId: atkSide.clubId,
+      playerId: keeper?.p.id,
+      text: pick(rng, LAW_TEXT.backPass)(keeper?.p.name ?? "the keeper")
+    });
+    s.timeline.push({ m, h: isHome(s, atkSide) ? 1 : 0, p: chain, o: "foul" });
+    const setter = attackersOf(defSide, players).find((x) => x.p.pos === "GK");
+    s.timeline.push({ m, h: isHome(s, defSide) ? 1 : 0, p: setter ? [setter.slot] : [], o: "turnover", b: setter?.slot });
+    return;
+  }
   // is this a cross, aimed at a head? A move that came from a wide position with an
   // aerial target on the end of it can be, and the tall men get on the end of those.
   const lastPasser = chain.length > 1 ? atk.find((x) => x.slot === chain[chain.length - 2]) : undefined;
@@ -595,7 +715,16 @@ const resolveChance = (
 
   if (rng() < pGoal) {
     // --- the flag, and the VAR room: was he onside? -------------------------------
-    const trulyOffside = rng() < T.offsideRate;
+    // the review asks the law: was he actually beyond the line?
+    const review = checkOffside(
+      atkSide,
+      defSide,
+      attackersOf(defSide, players),
+      atk,
+      chain.length > 1 ? chain[chain.length - 2] : undefined,
+      shooter.slot
+    );
+    const trulyOffside = review.offside;
     const missRate = T.linesmanMiss;
     let disallowed = false;
     if (trulyOffside) {
@@ -737,6 +866,17 @@ const resolveChance = (
     const defMean =
       dfn.reduce((acc, x) => acc + defenseScore(x.p, x.role) * defEdge(s, x.p) * instrFor(s, x.p, "defense"), 0) /
       Math.max(1, dfn.length);
+    // --- handball: a block that strikes an arm in the area (v0.42) ---
+    if (blockers.length > 0 && handballVerdict(true, rng) === "penalty") {
+      s.events.push({
+        minute: m,
+        type: "info",
+        clubId: atkSide.clubId,
+        text: pick(rng, LAW_TEXT.handball)()
+      });
+      resolvePenalty(s, atkSide, defSide, m, rng, players);
+      return;
+    }
     if (blockers.length > 0 && rng() < T.blockShare * eff.turnover * clamp(defMean / 62, 0.6, 1.4)) {
       const blocker = pickWeighted(rng, blockers, (x) => defenseScore(x.p, x.role) * defEdge(s, x.p) * instrFor(s, x.p, "defense"));
       out = "block";

@@ -13,12 +13,17 @@ export const SHARP_MIN = 20;
 
 export const sharpnessOf = (p: Player): number => p.sharpness ?? SHARP_START;
 
-/** 1.0 when match-fit; a rusty player loses up to 7% of his finishing/defending/keeping. */
+/**
+ * 1.0 when match-fit; a rusty player loses up to 12% of his finishing,
+ * defending and keeping (v0.42 — it was 7%, which was small enough that a cold
+ * side played statistically the same as a sharp one; rotation has to mean
+ * something).
+ */
 export function sharpnessFactor(p: Player): number {
   const s = sharpnessOf(p);
   if (s >= SHARP_NEUTRAL) return 1;
   const drop = (SHARP_NEUTRAL - s) / (SHARP_NEUTRAL - SHARP_MIN); // 0..1
-  return Math.round((1 - 0.07 * Math.min(1, Math.max(0, drop))) * 1000) / 1000;
+  return Math.round((1 - 0.12 * Math.min(1, Math.max(0, drop))) * 1000) / 1000;
 }
 
 export const sharpBand = (s: number): "match-fit" | "fine" | "rusty" | "cold" =>

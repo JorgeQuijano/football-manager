@@ -70,6 +70,16 @@ import {
   planOf
 } from "./week";
 import { makeYouth } from "./training";
+import {
+  backPassTarget,
+  checkOffside,
+  flagGoesUp,
+  handballVerdict,
+  keeperPicksItUp,
+  offsideLine,
+  restartAfterOut
+} from "./laws";
+import type { MatchSideState } from "./types";
 import { formFactor, formFreshnessTick } from "./stats";
 import {
   FACILITY_COST,
@@ -3081,8 +3091,9 @@ describe("on-pitch realism", () => {
   });
 
   it("rain roughens a match up: fewer goals, more blocks than a dry day", () => {
-    const dry = aggregate("dry", "ref-okafor");
-    const rain = aggregate("rain", "ref-okafor");
+    // 40 matches a side: the weather effect is real but a 14-match sample is noise
+    const dry = aggregate("dry", "ref-okafor", 40);
+    const rain = aggregate("rain", "ref-okafor", 40);
     expect(rain.goals).toBeLessThan(dry.goals);
     expect(rain.blocks).toBeGreaterThan(dry.blocks);
     expect(rain.corners).toBeGreaterThan(dry.corners);
@@ -4624,11 +4635,11 @@ describe("individual players: bodies, targets, retraining, moves, discipline & t
     for (let i = 0; i < 4; i++) sharpnessTick(save, {});
     expect(sharpnessOf(p)).toBeLessThan(85);
     expect(sharpnessFactor(p)).toBeLessThan(1);
-    expect(sharpnessFactor(p)).toBeGreaterThanOrEqual(0.93);
+    expect(sharpnessFactor(p)).toBeGreaterThanOrEqual(0.86);
     // the floor holds however long he is out
     for (let i = 0; i < 40; i++) sharpnessTick(save, {});
     expect(sharpnessOf(p)).toBeGreaterThanOrEqual(20);
-    expect(sharpnessFactor(p)).toBeGreaterThanOrEqual(0.93);
+    expect(sharpnessFactor(p)).toBeGreaterThanOrEqual(0.86);
   });
 
   function inputsForLocal(save: SaveGame, fx: { homeId: string; awayId: string }) {
@@ -4657,28 +4668,59 @@ describe("individual players: bodies, targets, retraining, moves, discipline & t
   }
 
   it("rust costs you the game — a cold side performs worse", () => {
-    const run = (sharp: number) => {
-      let gf = 0;
-      let ga = 0;
-      for (let seed = 640; seed < 720; seed++) {
-        const save = toLeague(newGame(seed));
-        const fx = userFixture(save)!;
-        const base = inputsForLocal(save, fx);
-        const userSide = fx.homeId === save.userClubId ? "home" : "away";
-        const oppXI = userSide === "home" ? base.awayXI : base.homeXI;
-        for (const p of oppXI) p.sharpness = sharp;
-        const r = simulateMatch({
-          ...base,
-          rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)),
-          userSide
-        });
-        gf += userSide === "home" ? r.awayGoals : r.homeGoals;
-        ga += userSide === "home" ? r.homeGoals : r.awayGoals;
-      }
-      return gf - ga;
+    /**
+     * Paired, not aggregate: each seed is played twice with the same rng and the
+     * same fixture, the only difference being the opponent's match sharpness.
+     * Pairing cancels the fixture noise, which is what made the old unpaired
+     * version undecidable (an 8% effect inside ±30 goals of aggregate noise).
+     */
+    const gdFor = (save: SaveGame, sharp: number) => {
+      const fx = userFixture(save)!;
+      const home = resolveSide(save, fx.homeId);
+      const away = resolveSide(save, fx.awayId);
+      const userSide = fx.homeId === save.userClubId ? "home" : "away";
+      const oppXI = userSide === "home" ? away.xi : home.xi;
+      for (const p of oppXI) p.sharpness = sharp;
+      const r = simulateMatch({
+        round: save.round,
+        homeClub: save.clubs.find((c) => c.id === fx.homeId)!,
+        awayClub: save.clubs.find((c) => c.id === fx.awayId)!,
+        homeXI: home.xi,
+        awayXI: away.xi,
+        homeBench: home.bench,
+        awayBench: away.bench,
+        homeMentality: home.mentality,
+        awayMentality: away.mentality,
+        homeRoles: home.roles,
+        awayRoles: away.roles,
+        homeCoords: home.coords,
+        awayCoords: away.coords,
+        homePoss: home.poss,
+        awayPoss: away.poss,
+        homePlan: fx.homeId === save.userClubId ? save.setpieces : aiSetPieces(save, fx.homeId),
+        awayPlan: fx.awayId === save.userClubId ? save.setpieces : aiSetPieces(save, fx.awayId),
+        rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)),
+        userSide
+      });
+      // the opponent's goal difference: worse means rust cost them
+      return userSide === "home" ? r.awayGoals - r.homeGoals : r.homeGoals - r.awayGoals;
     };
-    expect(run(40)).toBeLessThan(run(85));
-  }, 30_000);
+    let diff = 0;
+    let pairs = 0;
+    for (let seed = 640; seed < 1040; seed++) {
+      const a = gdFor(toLeague(newGame(seed)), 20); // a cold side: the floor of the sharpness range
+      const b = gdFor(toLeague(newGame(seed)), 85); // the same side, match-fit
+      diff += a - b;
+      pairs++;
+    }
+    // …and the mechanism behind it: the factor is monotone and capped at 12%
+    expect(sharpnessFactor({ sharpness: 85 } as Player)).toBe(1);
+    expect(sharpnessFactor({ sharpness: 60 } as Player)).toBeLessThan(1);
+    expect(sharpnessFactor({ sharpness: 20 } as Player)).toBeLessThan(sharpnessFactor({ sharpness: 60 } as Player));
+    expect(sharpnessFactor({ sharpness: 20 } as Player)).toBeGreaterThanOrEqual(0.88);
+    expect(pairs).toBe(400);
+    expect(diff).toBeLessThan(0); // over 400 paired matches, the cold side's goal difference is worse
+  }, 60_000);
 
   it("wear builds when a tired or older player keeps starting, and clears with rest", () => {
     const save = fresh();
@@ -6029,6 +6071,182 @@ describe("height and the aerial game (v0.34.0)", () => {
     for (const p of restored.players) {
       expect(p.height).toBe(heightFor(p.id, p.pos));
     }
+  });
+});
+
+describe("the laws of the game (v0.42.0)", () => {
+  // a side with just the two things the law checks read: slots and coordinates
+  const mockSide = (coords: Record<number, [number, number]>, positions: Record<number, Position>) =>
+    ({
+      slots: Object.keys(coords).map((k) => `p${k}`),
+      coords: Object.fromEntries(Object.entries(coords).map(([k, v]) => [Number(k), v])),
+      roles: []
+    }) as unknown as MatchSideState;
+  const men = (side: MatchSideState, positions: Record<number, Position>) =>
+    Object.keys((side as unknown as { coords: Record<string, unknown> }).coords).map((k) => ({
+      slot: Number(k),
+      p: { pos: positions[Number(k)] ?? "MF" } as Player
+    }));
+
+  it("puts the offside line on the second-last defender, never past halfway", () => {
+    // the keeper deepest, then a defender on 18, another on 30: the line is 18
+    const def = mockSide({ 0: [50, 4], 1: [50, 18], 2: [50, 30] }, {});
+    const dfn = men(def, { 0: "GK", 1: "DF", 2: "DF" });
+    expect(offsideLine(def, dfn)).toBe(18);
+    // a defence pushed up to 42 sets the line at 42
+    const high = mockSide({ 0: [50, 30], 1: [50, 42], 2: [50, 44] }, {});
+    expect(offsideLine(high, men(high, { 0: "GK", 1: "DF", 2: "DF" }))).toBe(42);
+    // …but a line inside the opponents' half cannot extend past halfway
+    const veryHigh = mockSide({ 0: [50, 52], 1: [50, 62], 2: [50, 66] }, {});
+    expect(offsideLine(veryHigh, men(veryHigh, { 0: "GK", 1: "DF", 2: "DF" }))).toBe(50);
+    // a deep defence sets the line where it stands
+    const deep = mockSide({ 0: [50, 4], 1: [50, 18], 2: [50, 30] }, {});
+    const ruling = checkOffside(
+      mockSide({ 8: [50, 12], 9: [50, 10] }, {}),
+      deep,
+      men(deep, { 0: "GK", 1: "DF", 2: "DF" }),
+      [
+        { slot: 8, p: { pos: "MF" } as Player },
+        { slot: 9, p: { pos: "FW" } as Player }
+      ],
+      8,
+      9
+    );
+    expect(ruling.line).toBe(18);
+    expect(ruling.offside).toBe(true); // 10 is beyond 18, and the pass went forward (12 → 10)
+  });
+
+  it("judges offside on positions: beyond is offside, level and behind are not", () => {
+    const def = mockSide({ 0: [50, 6], 1: [50, 24], 2: [50, 40] }, {});
+    const dfn = men(def, { 0: "GK", 1: "DF", 2: "DF" });
+    const atk = mockSide({ 7: [50, 30], 8: [50, 20], 9: [50, 26] }, {});
+    const men2 = [
+      { slot: 7, p: { pos: "MF" } as Player },
+      { slot: 8, p: { pos: "FW" } as Player },
+      { slot: 9, p: { pos: "FW" } as Player }
+    ];
+    // passer on 30 → receiver on 20: forward, and 20 is beyond the line at 24
+    expect(checkOffside(atk, def, dfn, men2, 7, 8).offside).toBe(true);
+    // level with the last defender (24) is onside, and flagged tight
+    expect(checkOffside(atk, def, dfn, men2, 7, 9).offside).toBe(false);
+    // a backward pass to a man past the line is not offside
+    expect(checkOffside(atk, def, dfn, men2, 8, 7).offside).toBe(false);
+    expect(checkOffside(atk, def, dfn, men2, 8, 7).reason).toBe("backward");
+    // and neither is the keeper drifting up
+    const gkAtk = mockSide({ 0: [50, 12] }, {});
+    expect(checkOffside(gkAtk, def, dfn, [{ slot: 0, p: { pos: "GK" } as Player }], 7, 0).offside).toBe(false);
+  });
+
+  it("never gives offside from a throw-in, a corner or a goal kick", () => {
+    const def = mockSide({ 0: [50, 6], 1: [50, 30] }, {});
+    const dfn = men(def, { 0: "GK", 1: "DF" });
+    const atk = mockSide({ 7: [50, 34], 9: [50, 8] }, {});
+    const men2 = [
+      { slot: 7, p: { pos: "MF" } as Player },
+      { slot: 9, p: { pos: "FW" } as Player }
+    ];
+    for (const restart of ["throw", "corner", "goalkick"]) {
+      const r = checkOffside(atk, def, dfn, men2, 7, 9, restart);
+      expect(r.offside).toBe(false);
+      expect(r.reason).toBe("restart");
+    }
+    // the same positions in open play ARE offside
+    expect(checkOffside(atk, def, dfn, men2, 7, 9, "open").offside).toBe(true);
+  });
+
+  it("sends the ball the right way when it crosses a line", () => {
+    expect(restartAfterOut("atk", "touchline", false)).toEqual({ restart: "throw", to: "def" });
+    expect(restartAfterOut("def", "touchline", false)).toEqual({ restart: "throw", to: "atk" });
+    expect(restartAfterOut("def", "goal-line-defending", true)).toEqual({ restart: "corner", to: "atk" });
+    expect(restartAfterOut("atk", "goal-line-defending", true)).toEqual({ restart: "goalkick", to: "def" });
+  });
+
+  it("applies the back-pass rule: a deliberate ball to the keeper may be handled", () => {
+    const atk = [
+      { slot: 5, p: { pos: "DF" } as Player },
+      { slot: 0, p: { pos: "GK" } as Player }
+    ];
+    expect(backPassTarget([5, 0], atk)).toBe(0);
+    expect(backPassTarget([5, 6, 9], atk)).toBeNull();
+    // the keeper usually plays it — the offence is the exception, not the norm
+    let picked = 0;
+    const rng = mulberry32(99);
+    for (let i = 0; i < 400; i++) if (keeperPicksItUp(0.5, rng)) picked++;
+    expect(picked).toBeGreaterThan(0);
+    expect(picked).toBeLessThan(60); // under 15% of back-passes
+  });
+
+  it("calls handball rarely, and a penalty when it is in the area", () => {
+    const rng = mulberry32(1234);
+    let pens = 0;
+    for (let i = 0; i < 2000; i++) if (handballVerdict(true, rng) === "penalty") pens++;
+    expect(pens).toBeGreaterThan(10);
+    expect(pens).toBeLessThan(120); // a couple of percent of blocks, not a lottery
+    const rng2 = mulberry32(7);
+    expect(handballVerdict(false, rng2)).not.toBe("penalty");
+  });
+
+  it("flags only what the assistant can see, and lets the tight ones go", () => {
+    const rng = mulberry32(55);
+    const blatant = { offside: true, tight: false, line: 50, reason: "beyond" as const };
+    const tight = { offside: true, tight: true, line: 50, reason: "beyond" as const };
+    const onside = { offside: false, tight: false, line: 50, reason: "behind" as const };
+    expect(flagGoesUp(blatant, rng)).toBe(true);
+    expect(flagGoesUp(onside, rng)).toBe(false);
+    let flags = 0;
+    for (let i = 0; i < 400; i++) if (flagGoesUp(tight, rng)) flags++;
+    expect(flags).toBeGreaterThan(200); // most tight calls are still given
+    expect(flags).toBeLessThan(400); // …but some are missed
+  });
+
+  it("runs the laws in a real match: offsides, goal kicks and no goal from an offside flag", () => {
+    let offsides = 0;
+    let goalKicks = 0;
+    let flaggedGoals = 0;
+    let matches = 0;
+    for (let seed = 300; seed < 320; seed++) {
+      const save = toLeague(newGame(seed));
+      const fx = userFixture(save)!;
+      const home = resolveSide(save, fx.homeId);
+      const away = resolveSide(save, fx.awayId);
+      const r = simulateMatch({
+        round: save.round,
+        homeClub: save.clubs.find((c) => c.id === fx.homeId)!,
+        awayClub: save.clubs.find((c) => c.id === fx.awayId)!,
+        homeXI: home.xi,
+        awayXI: away.xi,
+        homeBench: home.bench,
+        awayBench: away.bench,
+        homeMentality: home.mentality,
+        awayMentality: away.mentality,
+        homeRoles: home.roles,
+        awayRoles: away.roles,
+        homeCoords: home.coords,
+        awayCoords: away.coords,
+        homePoss: home.poss,
+        awayPoss: away.poss,
+        homePlan: fx.homeId === save.userClubId ? save.setpieces : aiSetPieces(save, fx.homeId),
+        awayPlan: fx.awayId === save.userClubId ? save.setpieces : aiSetPieces(save, fx.awayId),
+        rng: mulberry32(hashSeed(save.seed, "match", save.season, save.round, fx.homeId, fx.awayId)),
+        userSide: fx.homeId === save.userClubId ? "home" : "away"
+      });
+      matches++;
+      const evs = r.events;
+      offsides += evs.filter((e) => e.type === "offside").length;
+      goalKicks += evs.filter((e) => e.type === "info" && /goal kick/i.test(e.text)).length;
+      // a flagged offside must never be followed by a goal for the same side in that minute
+      for (let i = 0; i < evs.length; i++) {
+        if (evs[i].type !== "offside") continue;
+        const sameMinute = evs.filter((e) => e.minute === evs[i].minute && e.type === "goal");
+        if (sameMinute.length) flaggedGoals++;
+      }
+    }
+    expect(matches).toBeGreaterThan(0);
+    expect(offsides).toBeGreaterThan(0); // the law is actually called
+    expect(goalKicks).toBeGreaterThan(0); // and goal kicks happen
+    expect(flaggedGoals).toBe(0); // never a goal on the same whistle
+    // sanity: not every other minute is an offside
+    expect(offsides / matches).toBeLessThan(12);
   });
 });
 
