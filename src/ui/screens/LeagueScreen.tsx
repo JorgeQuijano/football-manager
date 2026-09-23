@@ -5,13 +5,114 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataHub } from "@/ui/DataHub";
 import { CupPanel } from "@/ui/CupPanel";
+import { worldScorers, worldTable } from "@/engine";
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
 import { CalendarView } from "@/ui/Calendar";
 
+
+/** A league you are not in: real squads, light coverage (engine/world.ts, v0.38). */
+function ForeignLeague({ id }: { id: string }) {
+  const game = useGame((s) => s.game)!;
+  const w = (game.world ?? []).find((x) => x.id === id);
+  if (!w) return null;
+  const table = worldTable(w);
+  const scorers = worldScorers(w, 10);
+  const results = w.fixtures
+    .filter((f) => f.played)
+    .slice(-12)
+    .reverse();
+  const name = (cid: string) => w.clubs.find((c) => c.id === cid)?.name ?? cid;
+  return (
+    <div className="space-y-2" data-testid="foreign-league">
+      <Card>
+        <CardContent className="p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground">
+              {w.country} · {w.name}
+            </h3>
+            <span className="text-[10px] text-muted-foreground">{worldTable(w)[0]?.p ?? 0} rounds played</span>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Club</th>
+                <th>P</th>
+                <th>GD</th>
+                <th>Pts</th>
+              </tr>
+            </thead>
+            <tbody>
+              {table.map((row) => (
+                <tr key={row.clubId}>
+                  <td className="text-muted-foreground">{row.position}</td>
+                  <td className="name">{name(row.clubId)}</td>
+                  <td>{row.p}</td>
+                  <td>{row.gd > 0 ? `+${row.gd}` : row.gd}</td>
+                  <td className="font-bold">{row.pts}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      {results.length > 0 && (
+        <Card>
+          <CardContent className="p-3">
+            <h3 className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground">
+              Latest results
+            </h3>
+            <ul className="space-y-1">
+              {results.map((f, i) => (
+                <li key={i} className="flex items-center gap-2 text-[12px]">
+                  <span className="min-w-0 flex-1 truncate">{name(f.homeId)}</span>
+                  <span className="shrink-0 font-extrabold tabular-nums">
+                    {f.homeGoals}–{f.awayGoals}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-right">{name(f.awayId)}</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {scorers.length > 0 && (
+        <Card>
+          <CardContent className="p-3">
+            <h3 className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground">
+              Leading scorers
+            </h3>
+            <ul className="space-y-1">
+              {scorers.map((p) => (
+                <li key={p.id} className="flex items-center justify-between text-[12px]">
+                  <span className="min-w-0 truncate">
+                    {p.name} <span className="text-muted-foreground">· {name(p.clubId)}</span>
+                  </span>
+                  <span className="shrink-0 font-bold">{p.goals}</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardContent className="p-3 text-[11px] text-muted-foreground">
+          Abroad is covered lightly: results, tables and scorers are real, but nobody plays the minute-by-minute
+          engine outside your league, and there are no cups abroad yet.
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export function LeagueScreen() {
   const game = useGame((s) => s.game)!;
   const [tab, setTab] = useState("table");
+  const [league, setLeague] = useState("mine");
   const [openSeason, setOpenSeason] = useState<number | null>(null);
   const table = computeTable(game.fixtures, game.clubs);
   const rounds = [...new Set(game.fixtures.map((f) => f.round))].sort((a, b) => a - b);
@@ -28,12 +129,32 @@ export function LeagueScreen() {
 
   return (
     <div>
-      <h1 className="text-lg font-bold">League One</h1>
+      <h1 className="text-lg font-bold">{game.leagueName ?? "League One"}</h1>
       <p className="text-xs text-muted-foreground">
         Season {game.season} · {game.round > seasonRounds(game) ? "Complete" : `Round ${game.round} of ${seasonRounds(game)}`}
       </p>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(String(v))} className="mt-3">
+      <label className="mt-2 block">
+        <select
+          className="h-10 w-full rounded-lg border border-border bg-background px-2 text-[12px] font-semibold"
+          data-testid="league-select"
+          value={league}
+          onChange={(e) => setLeague(e.target.value)}
+        >
+          <option value="mine">
+            {game.country ?? "England"} — {game.leagueName ?? "League One"} (yours)
+          </option>
+          {(game.world ?? []).map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.country} — {w.name}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {league !== "mine" && <div className="mt-3"><ForeignLeague id={league} /></div>}
+
+      <Tabs value={tab} onValueChange={(v) => setTab(String(v))} className={league === "mine" ? "mt-3" : "hidden"}>
         <TabsList className="h-11! w-full">
           <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="table">Table</TabsTrigger>
           <TabsTrigger className="h-11! px-1.5! text-[11px]!" value="diary">Diary</TabsTrigger>

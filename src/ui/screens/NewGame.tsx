@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, Eye, Landmark, Shield, Users } from "lucide-react";
-import { bandLabel, clubBrief, type ClubBrief } from "@/engine";
+import { NATIONS, bandLabel, clubBrief, seasonRounds, type ClubBrief } from "@/engine";
 import { Button } from "@/components/ui/button";
 import { useGame } from "@/state/store";
 
@@ -28,11 +28,12 @@ export function NewGame() {
   const preview = useGame((s) => s.preview);
   const prepareWorld = useGame((s) => s.prepareWorld);
   const startNewGame = useGame((s) => s.startNewGame);
-  const [selected, setSelected] = useState("c1");
+  const [selected, setSelected] = useState<string | null>(null);
+  const [nation, setNation] = useState("eng");
 
   // build the league the moment the screen opens, so the choice is made on real data
   useEffect(() => {
-    if (!preview) prepareWorld();
+    if (!preview) prepareWorld(undefined, "eng");
   }, [preview, prepareWorld]);
 
   if (!preview) {
@@ -56,6 +57,28 @@ export function NewGame() {
           Public facts are public. Money and squads you read between the lines.
         </p>
       </div>
+
+      <label className="mb-3 block">
+        <span className="text-[11px] font-bold uppercase text-muted-foreground">Country</span>
+        <select
+          className="mt-1 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm font-semibold"
+          data-testid="country-select"
+          value={nation}
+          onChange={(e) => {
+            const id = e.target.value;
+            setNation(id);
+            setSelected(null);
+            // a new country is a new league: build it before he chooses a club
+            prepareWorld(undefined, id);
+          }}
+        >
+          {NATIONS.map((n) => (
+            <option key={n.id} value={n.id}>
+              {n.country} — {n.league}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <div className="space-y-2">
         {briefs.map((b, i) => {
@@ -159,12 +182,12 @@ export function NewGame() {
         data-testid="start-career"
         variant="outline"
         className="mt-5 h-12 w-full text-base font-bold"
-        onClick={() => startNewGame(selected)}
+        onClick={() => startNewGame(sel.id)}
       >
         Take the {sel.short} job
       </Button>
       <p className="mt-3 text-center text-xs text-muted-foreground">
-        18-round season · saves automatically on this device
+        {seasonRounds(preview)}-round season · {preview.clubs.length} clubs · saves automatically on this device
       </p>
     </div>
   );

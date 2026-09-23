@@ -1,4 +1,4 @@
-import type { Club, Facilities, FormationId, Lineup, Player, Position, SaveGame } from "./types";
+import type { Club, WorldLeague, Facilities, FormationId, Lineup, Player, Position, SaveGame } from "./types";
 import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
 import { traitsFor } from "./traits";
 import { FORMATIONS, T } from "./tuning";
@@ -17,93 +17,100 @@ import { initScouting } from "./scouting";
 import { emptyAwards, emptyHistory } from "./history";
 import { emptyMedia, makePress } from "./media";
 import { policyFor } from "./market";
+import { NATIONS, clubIdFor, nationById, type NationDef } from "./nations";
 
-export const CLUB_DEFS: ReadonlyArray<{ name: string; short: string; color: string }> = [
-  { name: "Northport FC", short: "NOR", color: "#2ED573" },
-  { name: "Ironvale United", short: "IRV", color: "#4DABF7" },
-  { name: "Ashford Town", short: "ASH", color: "#FFB020" },
-  { name: "Westgate Rovers", short: "WGR", color: "#B197FC" },
-  { name: "Kingsbury AFC", short: "KGB", color: "#FF8787" },
-  { name: "Brackenfield City", short: "BRK", color: "#63E6BE" },
-  { name: "Stonebridge FC", short: "STB", color: "#FFA94D" },
-  { name: "Marlowe Wanderers", short: "MAR", color: "#74C0FC" },
-  { name: "Redmoor Athletic", short: "RDM", color: "#F783AC" },
-  { name: "Fairhaven FC", short: "FAI", color: "#C0EB75" },
-  { name: "Harborough Rangers", short: "HAR", color: "#FFD43B" },
-  { name: "Ellesmere City", short: "ELL", color: "#8CE99A" },
-  { name: "Cranford Albion", short: "CRA", color: "#A5D8FF" },
-  { name: "Thornbury Town", short: "THB", color: "#FFC9C9" },
-  { name: "Selby Park", short: "SEL", color: "#D0BFFF" },
-  { name: "Glenmoor United", short: "GLN", color: "#FFE066" },
-  { name: "Oxbourne FC", short: "OXB", color: "#96F2D7" },
-  { name: "Radcliffe Wanderers", short: "RAD", color: "#FFB4A2" },
-  { name: "Wexford Athletic", short: "WEX", color: "#99E9F2" },
-  { name: "Larkspur Town", short: "LRK", color: "#E599F7" }
-];
+export { CLUB_DEFS } from "./nations";
 
-const FIRST = [
-  "Jack", "Liam", "Owen", "Noah", "Ethan", "Mason", "Leo", "Kai", "Ryan", "Cole",
-  "Finn", "Jude", "Milo", "Arlo", "Ezra", "Nico", "Theo", "Luca", "Hugo", "Dean",
-  "Reid", "Troy", "Vince", "Joel", "Sam", "Abe", "Rory", "Neil", "Curtis", "Brad",
-  "Frank", "Hank", "Isaac", "Miles", "Nate", "Oscar", "Pete", "Quinn", "Rex", "Seth"
-];
-
-const LAST = [
-  "Mora", "Okafor", "Silva", "Costa", "Baker", "Hayes", "Reed", "Cole", "Shaw",
-  "Mills", "Frost", "Nash", "Doyle", "Boyd", "Chambers", "Ellis", "Fletcher",
-  "Grant", "Hale", "Irving", "Jennings", "Keller", "Lawson", "Mercer", "Nolan",
-  "Ortiz", "Pike", "Quill", "Rowan", "Sutton", "Tate", "Underwood", "Vance",
-  "Walker", "Yates", "Zimmer", "Abbott", "Barrett", "Cannon", "Dalton", "Eaton",
-  "Farrell", "Gibson", "Holmes", "Ingram", "Joyce", "Keane", "Lombardi", "Marin",
-  "Novak", "Olsen", "Pardo", "Rivas", "Stanton", "Thorne", "Urbina", "Vega",
-  "Walsh", "Whitlock"
-];
+const EN = NATIONS[0];
+const FIRST = EN.first;
+const LAST = EN.last;
 
 function makePlayer(
   rng: Rng,
   clubId: string,
   idx: number,
   pos: Position,
-  strength: number
+  strength: number,
+  pools: { first: string[]; last: string[] } = { first: FIRST, last: LAST }
 ): Player {
   const r = (lo: number, hi: number) => randInt(rng, lo, hi);
   const base = r(T.attrRange[0], T.attrRange[1]) + Math.round(strength * 0.8);
   const j = (v: number) => Math.max(28, Math.min(96, v + r(-6, 6)));
+  /**
+   * Attributes that do not belong to his position live in a low band — 42 to 58
+   * (7–10 on the 1–20 scale, "poor", never mid-table) — and are additionally
+   * capped below the attributes that define the role, so the shape is structural
+   * rather than luck: a keeper's shooting can never reach his reflexes, a
+   * defender's can never reach his defending, a forward's defending can never
+   * reach his shooting. 42 is the generator's floor: a 1 on the 1–20 scale stays
+   * reserved for filler, never a real player's real attribute.
+   */
+  const off = (lo: number, hi: number, cap?: number) => {
+    const v = Math.max(42, Math.min(hi, lo + r(0, 6)));
+    return Math.max(28, cap === undefined ? v : Math.min(v, cap));
+  };
 
   let attrs: Player["attrs"];
   switch (pos) {
-    case "GK":
+    case "GK": {
+      const keep = j(base + 12);
+      const hand = j(base + 10);
       attrs = {
-        reflexes: j(base + 12), handling: j(base + 10), physical: j(base),
-        pace: j(base - 18), passing: j(base - 8), shooting: j(base - 30),
+        reflexes: keep,
+        handling: hand,
+        physical: j(base),
+        pace: off(44, 58, Math.min(keep, hand) - 8),
+        passing: j(base - 8),
+        shooting: off(42, 50, Math.min(keep, hand) - 14),
         defending: j(base - 10)
       };
       break;
-    case "DF":
+    }
+    case "DF": {
+      const def = j(base + 12);
       attrs = {
-        defending: j(base + 12), physical: j(base + 8), pace: j(base + 2),
-        passing: j(base - 2), shooting: j(base - 16), reflexes: j(base - 30),
-        handling: j(base - 30)
+        defending: def,
+        physical: j(base + 8),
+        pace: j(base + 2),
+        passing: j(base - 2),
+        shooting: off(42, 56, def - 8),
+        reflexes: off(42, 52, def - 10),
+        handling: off(42, 50, def - 12)
       };
       break;
-    case "MF":
+    }
+    case "MF": {
+      const pass = j(base + 10);
       attrs = {
-        passing: j(base + 10), pace: j(base + 2), defending: j(base),
-        shooting: j(base - 2), physical: j(base - 4), reflexes: j(base - 30),
-        handling: j(base - 30)
+        passing: pass,
+        pace: j(base + 2),
+        defending: j(base),
+        shooting: j(base - 2),
+        physical: j(base - 4),
+        reflexes: off(42, 52, pass - 6),
+        handling: off(42, 50, pass - 8)
       };
       break;
-    case "FW":
+    }
+    case "FW": {
+      const shot = j(base + 12);
       attrs = {
-        shooting: j(base + 12), pace: j(base + 8), passing: j(base - 4),
-        defending: j(base - 18), physical: j(base - 2), reflexes: j(base - 30),
-        handling: j(base - 30)
+        shooting: shot,
+        pace: j(base + 8),
+        passing: j(base - 4),
+        defending: off(42, 52, shot - 10),
+        physical: j(base - 2),
+        reflexes: off(42, 50, shot - 12),
+        handling: off(42, 48, shot - 14)
       };
       break;
+    }
   }
 
-  let name = `${pick(rng, FIRST)} ${pick(rng, LAST)}`;
-  if (name.split(" ")[0] === name.split(" ")[1]) name = `${pick(rng, FIRST)} ${pick(rng, LAST)}`;
+  let name = `${pick(rng, pools.first)} ${pick(rng, pools.last)}`;
+  if (name.split(" ")[0] === name.split(" ")[1]) {
+    name = `${pick(rng, pools.first)} ${pick(rng, pools.last)}`;
+  }
 
   const id = `p${clubId}-${idx}`;
   const age = randInt(rng, T.ageRange[0], T.ageRange[1]);
@@ -165,31 +172,89 @@ function makeFacilities(clubs: Club[]): Record<string, Facilities> {
   return out;
 }
 
-export function newGame(seed: number, userClubId?: string): SaveGame {
-  const rng = mulberry32(hashSeed(seed, "world"));
-
-  const clubs: Club[] = CLUB_DEFS.map((def, i) => ({
-    id: `c${i + 1}`,
-    name: def.name,
-    short: def.short,
-    color: def.color,
-    strength: T.strengthOffsets[i] ?? 0,
-    formation: pick(rng, Object.keys(FORMATIONS)) as FormationId
-  }));
-
+/** The leagues outside yours: real clubs, real squads, light results (v0.38). */
+export function makeWorldLeagues(
+  seed: number,
+  exclude: string,
+  season: number
+): { leagues: WorldLeague[]; clubs: Club[]; players: Player[] } {
+  const worldRng = mulberry32(hashSeed(seed, "outside"));
+  const clubs: Club[] = [];
   const players: Player[] = [];
-  for (const club of clubs) {
-    let n = 0;
-    (Object.keys(T.squad) as Position[]).forEach((pos) => {
-      for (let k = 0; k < T.squad[pos]; k++) {
-        players.push(makePlayer(rng, club.id, n++, pos, club.strength));
-      }
+  const leagues: WorldLeague[] = [];
+  for (const other of NATIONS) {
+    if (other.id === exclude) continue;
+    const wc: Club[] = other.clubs.map((def, i) => ({
+      id: clubIdFor(other.id, i),
+      name: def.name,
+      short: def.short,
+      color: def.color,
+      strength: T.strengthOffsets[i] ?? 0,
+      formation: pick(worldRng, Object.keys(FORMATIONS)) as FormationId,
+      city: def.city,
+      ground: def.ground,
+      founded: def.founded,
+      honours: def.honours
+    }));
+    const wp: Player[] = [];
+    for (const club of wc) {
+      let n = 0;
+      (Object.keys(T.squad) as Position[]).forEach((pos) => {
+        for (let k = 0; k < T.squad[pos]; k++) {
+          wp.push(makePlayer(worldRng, club.id, n++, pos, club.strength, { first: other.first, last: other.last }));
+        }
+      });
+    }
+    clubs.push(...wc);
+    players.push(...wp);
+    leagues.push({
+      id: other.id,
+      country: other.country,
+      name: other.league,
+      clubs: wc,
+      players: wp,
+      fixtures: buildFixtures(wc, season, seed)
     });
   }
+  return { leagues, clubs, players };
+}
 
-  const chosen = userClubId && clubs.some((c) => c.id === userClubId)
-    ? userClubId
-    : clubs[0].id;
+export function newGame(seed: number, userClubId?: string, nationId?: string): SaveGame {
+  const rng = mulberry32(hashSeed(seed, "world"));
+  const nation = nationById(nationId ?? "eng");
+
+  const makeClubs = (n: NationDef): Club[] =>
+    n.clubs.map((def, i) => ({
+      id: clubIdFor(n.id, i),
+      name: def.name,
+      short: def.short,
+      color: def.color,
+      strength: T.strengthOffsets[i] ?? 0,
+      formation: pick(rng, Object.keys(FORMATIONS)) as FormationId,
+      // the public details are part of the club: editable, and real for every nation
+      city: def.city,
+      ground: def.ground,
+      founded: def.founded,
+      honours: def.honours
+    }));
+
+  const makeSquad = (clubs: Club[], pools: { first: string[]; last: string[] }): Player[] => {
+    const out: Player[] = [];
+    for (const club of clubs) {
+      let n = 0;
+      (Object.keys(T.squad) as Position[]).forEach((pos) => {
+        for (let k = 0; k < T.squad[pos]; k++) {
+          out.push(makePlayer(rng, club.id, n++, pos, club.strength, pools));
+        }
+      });
+    }
+    return out;
+  };
+
+  const clubs = makeClubs(nation);
+  const players = makeSquad(clubs, { first: nation.first, last: nation.last });
+
+  const chosen = userClubId && clubs.some((c) => c.id === userClubId) ? userClubId : clubs[0].id;
   const fixtures = buildFixtures(clubs, 1, seed);
   // pre-season opens three weeks early with three friendlies (v0.27)
   const friendlies = makeFriendlies({ seed, clubs, userClubId: chosen }, 1);
@@ -199,7 +264,11 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     builtinFormation("4-3-3")
   );
 
-  const finances = freshFinances({ clubs, players });
+  // the rest of Europe (v0.38): built from its own stream, so your league is
+  // byte-for-byte what it was before the continent existed
+  const outside = makeWorldLeagues(seed, nation.id, 1);
+  const world = outside.leagues;
+  const finances = freshFinances({ clubs: [...clubs, ...outside.clubs], players: [...players, ...outside.players] });
   // a brand-new club has no shirt deal: the market is open from day one
 
 
@@ -210,11 +279,15 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     round: -3,
     phase: "pre",
     userClubId: chosen,
+    nation: nation.id,
+    country: nation.country,
+    leagueName: nation.league,
     clubs,
     facilities: makeFacilities(clubs),
     day: 0,
     weekPlan: [...DEFAULT_PLAN],
     players,
+    world,
     fixtures,
     lineup,
     customFormations: [],
@@ -233,6 +306,7 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
     policy: policyFor({ seed, clubs, players }, 1),
     devNews: []
   };
+
   makePress(save); // the press want a word before the opener
   // …and it belongs to the league opener, not the friendly weeks
   if (save.media?.press) save.media.press.round = 1;
@@ -241,5 +315,6 @@ export function newGame(seed: number, userClubId?: string): SaveGame {
 
   // the Challenge Cup: drawn on day one (v0.36)
   save.cup = makeCup(save);
-    return save;
+
+  return save;
 }

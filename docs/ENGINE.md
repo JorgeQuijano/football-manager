@@ -813,3 +813,36 @@ The Cup runs on the same day clock v0.35 built. It is the reason the clock exist
 - **Blank means "the club's own".** Clearing City or Ground hands that field back to `CLUB_LORE`, so an edit is reversible field by field, and **Reset** hands the whole club back to the generator.
 - **Cleaned, not trusted.** Names collapse whitespace and cap at 30 characters; the code uppercases and strips to letters/digits; a blank name and a non-hex colour are *refused* rather than stored; the founding year clamps to 1850–2026.
 - **It is world data, not a skin.** The edit is written into `save.clubs`, so the brief, the table, the diary, the cup draw and the commentary all follow it — and it carries into the next season.
+
+## 43. A continent of leagues (`nations.ts`, `world.ts`, v0.38)
+
+The game is no longer one league in one country. It is **four**, and each is data.
+
+**`nations.ts` — everything country-specific is an entry.** Each `NationDef` carries the country, the league's name, the name pools the player generator draws from, a handful of phrases the club brief can use, and twenty clubs (name, code, colour, city, ground, founding year, honours). Adding a fifth league is adding a fifth object: no engine code knows how many there are, which country the game is in, or what anything is called. `Club.city/ground/founded/honours` are written onto every generated club — which is why the club editor (v0.37) works identically abroad, and why `loreFor()` needs no new table.
+
+| Nation | Country | League | Clubs |
+|---|---|---|---|
+| `eng` | England | League One | Northport FC … Larkspur Town |
+| `esp` | Spain | Primera División | Real Valdoro … Atlético Nuevo Sur |
+| `ger` | Germany | Bundesliga Nord | SV Hohenstadt … TSV Sonnenberg |
+| `ita` | Italy | Serie Azzurra | AC Valcortese … US Nuova Tarquinia |
+
+Names come from the pool of the country the club plays in: a Spanish squad is full of Spanish surnames, a German one German, and the four pools never mix. The English league keeps its historic `c1`–`c20` ids, so every existing save, goldens and the `CLUB_LORE` story text keep working untouched.
+
+**The shape of the world.** `save.clubs` / `save.players` stay **your** league: the full minute-by-minute engine, the cup, the media, the finances, the records — all of it runs there and nothing changed. The other three live in `save.world`: real clubs, real squads (440 players each), real fixtures — but resolved by a **light model** instead of the engine:
+
+```
+xg(home) = 1.32 × (1 + (power_home − power_away)/26) × 1.12      power = mean OVR of the best XI
+xg(away) = 1.32 × (1 + (power_away − power_home)/26) × 0.92
+goals    = seeded Poisson(xg)         scorers picked by position × shooting
+```
+
+So a four-league world costs about what one league did: **40 matches a week across Europe, ~1 ms each** instead of 12, with the goals credited to real men — the foreign scoring charts are people, not numbers.
+
+**Determinism, and a stream that must not move.** The continent is generated from its own RNG stream (`hashSeed(seed, "outside")`), so your league is **byte-for-byte** what it was before the continent existed — there is a test that pins exactly that. Results abroad come from `hashSeed(seed, "world", <league>, season, round, home, away)`: same save, same Europe.
+
+**The round.** `completeRound` calls `tickCup` and then `tickWorld` before the round moves on. At the season rollover, `worldSeasonRollover` gives every foreign league fresh fixtures, ages its squads a year and resets their counters.
+
+**Where you can see it.** The League screen has a **league switcher**: your own league (full tabs) or any of the three abroad (table, latest results, leading scorers, and an honest note that coverage there is light). `allPlayers`/`playerAnywhere`/`leagueOfClub` give the rest of the game a way to ask about the continent — the market hooks into them next.
+
+**Attributes that fit the shirt.** The generator now puts position-*irrelevant* attributes in a **low band** rather than a gentle offset: an outfielder's reflexes and handling sit at 18–34, a keeper's shooting at 18–30 and his pace at 30–46. Previously a good outfielder could carry keeper-grade reflexes (47+) and a top keeper could shoot like a midfielder. Traits were already position-gated; there is now a sweep test over all 1,760 players in all four leagues asserting the shape: keepers shoot far less than forwards, keepers keep better than anyone, defenders defend better than forwards.

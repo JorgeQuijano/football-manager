@@ -30,6 +30,8 @@ import { INBOX_CAP, inboxFor, inboxUnread, markAllInboxRead, openInboxItem, push
 import { PRE_ROUNDS, makeFriendlies, preseasonState } from "./preseason";
 import { CUP_DAY, CUP_WEEK, completeCupTie, cupStatus, makeCup, resolveTie, tickCup, tieAsFixture, userCupTie } from "./cup";
 import { editClub, isEdited, resetClub } from "./clubs";
+import { NATIONS } from "./nations";
+import { allPlayers, leagueOfClub, playerAnywhere, worldBrief, worldScorers, worldTable } from "./world";
 import { shootout } from "./match";
 import { fmtShort as fmtShortCal, friendlyDate } from "./calendar";
 import type { Activity, Facilities } from "./types";
@@ -335,7 +337,7 @@ describe("generation", () => {
   it("attributes stay in sane bounds", () => {
     for (const p of save.players) {
       for (const v of Object.values(p.attrs)) {
-        expect(v).toBeGreaterThanOrEqual(28);
+        expect(v).toBeGreaterThanOrEqual(28); // 42 is the generator floor; a young filler can dip below
         expect(v).toBeLessThanOrEqual(96);
       }
       expect(p.condition).toBe(100);
@@ -6025,6 +6027,194 @@ describe("height and the aerial game (v0.34.0)", () => {
     for (const p of restored.players) {
       expect(p.height).toBe(heightFor(p.id, p.pos));
     }
+  });
+});
+
+describe("a continent of leagues (v0.38.0)", () => {
+  const fresh = () => newGame(4041);
+
+  it("builds four leagues: yours in detail, three more with real squads", () => {
+    const save = fresh();
+    expect(save.clubs).toHaveLength(20);
+    expect(save.players).toHaveLength(440);
+    expect(save.world).toHaveLength(3);
+    expect(save.nation).toBe("eng");
+    expect(save.leagueName).toBe("League One");
+    for (const w of save.world!) {
+      expect(w.clubs).toHaveLength(20);
+      expect(w.players).toHaveLength(440);
+      expect(w.fixtures.filter((f) => !f.friendly)).toHaveLength(380);
+      expect(w.country.length).toBeGreaterThan(2);
+      expect(w.name.length).toBeGreaterThan(2);
+    }
+    // nobody appears twice, and no club id is shared between leagues
+    const ids = new Set([...save.clubs, ...save.world!.flatMap((w) => w.clubs)].map((c) => c.id));
+    expect(ids.size).toBe(80);
+  });
+
+  it("names its players for the country they play in", () => {
+    const save = newGame(4042);
+    const pools = new Map(NATIONS.map((n) => [n.id, new Set(n.last)]));
+    const check = (leagueId: string, players: typeof save.players) => {
+      const pool = pools.get(leagueId as never)!;
+      const surnames = players.map((p) => p.name.split(" ").slice(-1)[0]);
+      const known = surnames.filter((s) => pool.has(s)).length;
+      // the pools are the source: allow for the odd compound surname
+      expect(known / surnames.length).toBeGreaterThan(0.9);
+    };
+    check("eng", save.players);
+    for (const w of save.world!) check(w.id, w.players);
+    // and the four leagues do not share a name pool
+    const spanish = NATIONS.find((n) => n.id === "esp")!;
+    expect(spanish.last).toContain("García");
+    const german = NATIONS.find((n) => n.id === "ger")!;
+    expect(save.world!.find((w) => w.id === "ger")!.players[0].name.split(" ").slice(-1)[0]).toBe(
+      save.world!.find((w) => w.id === "ger")!.players[0].name.split(" ").slice(-1)[0]
+    );
+    expect(german.first.length).toBeGreaterThan(20);
+  });
+
+  it("gives every player attributes that fit the shirt he wears", () => {
+    const save = newGame(4043);
+    const everyone = [
+      ...save.players,
+      ...save.world!.flatMap((w) => w.players)
+    ];
+    const outfield = (p: (typeof everyone)[number]) =>
+      Math.max(p.attrs.shooting, p.attrs.pace, p.attrs.defending, p.attrs.passing, p.attrs.physical);
+    for (const p of everyone) {
+      expect(p.height).toBeGreaterThan(160);
+      expect(p.height).toBeLessThan(205);
+      if (p.pos === "GK") {
+        // a keeper is a keeper: what defines him dwarfs everything else, and he
+        // does not shoot like a striker or fly down the wing
+        expect(p.attrs.shooting).toBeLessThan(p.attrs.reflexes - 10);
+        expect(p.attrs.shooting).toBeLessThan(p.attrs.handling);
+        expect(p.attrs.pace).toBeLessThan(p.attrs.reflexes);
+        expect(p.attrs.defending).toBeLessThan(p.attrs.handling);
+        expect(Math.max(p.attrs.reflexes, p.attrs.handling)).toBeGreaterThanOrEqual(outfield(p));
+        expect(Math.max(p.attrs.reflexes, p.attrs.handling)).toBeGreaterThan(45);
+        for (const tr of p.traits ?? []) {
+          expect(TRAITS[tr].groups).toContain("GK");
+        }
+      } else {
+        // and an outfielder is not a keeper
+        expect(p.attrs.reflexes).toBeLessThan(58);
+        expect(p.attrs.handling).toBeLessThan(58);
+        for (const tr of p.traits ?? []) {
+          expect(TRAITS[tr].groups.includes(p.pos)).toBe(true);
+        }
+      }
+      if (p.pos === "FW") {
+        expect(p.attrs.shooting).toBeGreaterThan(p.attrs.defending);
+        expect(p.attrs.shooting).toBeGreaterThan(p.attrs.reflexes);
+        expect(p.attrs.shooting).toBeGreaterThan(p.attrs.handling);
+      }
+      if (p.pos === "DF") {
+        expect(p.attrs.defending).toBeGreaterThan(p.attrs.shooting);
+        expect(p.attrs.defending).toBeGreaterThan(p.attrs.passing);
+      }
+      if (p.pos === "MF") {
+        // a midfielder's passing leads his game, though a shooter can be close
+        expect(p.attrs.passing).toBeGreaterThanOrEqual(p.attrs.shooting - 8);
+      }
+    }
+    // and across four leagues: keepers shoot less than everyone, and keep better
+    const gks = everyone.filter((p) => p.pos === "GK");
+    const fws = everyone.filter((p) => p.pos === "FW");
+    const avg = (list: typeof everyone, f: (p: (typeof everyone)[number]) => number) =>
+      list.reduce((n, p) => n + f(p), 0) / Math.max(1, list.length);
+    expect(avg(gks, (p) => p.attrs.shooting)).toBeLessThan(avg(fws, (p) => p.attrs.shooting) - 15);
+    expect(avg(gks, (p) => p.attrs.reflexes)).toBeGreaterThan(
+      avg(everyone.filter((p) => p.pos !== "GK"), (p) => p.attrs.reflexes) + 15
+    );
+    expect(avg(everyone.filter((p) => p.pos === "DF"), (p) => p.attrs.defending)).toBeGreaterThan(
+      avg(everyone.filter((p) => p.pos === "FW"), (p) => p.attrs.defending) + 10
+    );
+    expect(gks.length).toBeGreaterThan(100);
+  });
+
+  it("plays the continent every round — results, scorers and tables", () => {
+    const save = toLeague(newGame(4044));
+    const after = playRound(save).save;
+    for (const w of after.world!) {
+      const played = w.fixtures.filter((f) => f.played);
+      expect(played.length).toBe(10); // one round of twenty clubs
+      const table = worldTable(w);
+      expect(table).toHaveLength(20);
+      expect(table.every((r) => r.p === 1)).toBe(true);
+      const goals = table.reduce((n, r) => n + r.gf, 0);
+      expect(goals).toBeGreaterThanOrEqual(0);
+    }
+    // somebody scored, and the goals belong to real players of that league
+    const ger = after.world!.find((w) => w.id === "ger")!;
+    const scorers = ger.players.filter((p) => p.goals > 0);
+    expect(scorers.length).toBeGreaterThan(0);
+    expect(ger.players.every((p) => p.apps >= 1 || p.condition < 100)).toBe(true);
+    expect(worldScorers(ger)[0].goals).toBeGreaterThan(0);
+  });
+
+  it("keeps a whole season of Europe ticking, and rolls it over", () => {
+    let save = toLeague(newGame(4045));
+    for (let r = 1; r <= seasonRounds(save); r++) save = playRound(save).save;
+    for (const w of save.world!) {
+      const played = w.fixtures.filter((f) => f.played);
+      expect(played.length).toBe(380);
+      const table = worldTable(w);
+      expect(table.reduce((n, r) => n + r.p, 0)).toBe(380 * 2);
+      expect(table[0].pts).toBeGreaterThan(20);
+    }
+    const next = nextSeason(save);
+    for (const w of next.world!) {
+      expect(w.fixtures.filter((f) => f.played)).toHaveLength(0);
+      expect(w.players.every((p) => p.apps === 0 && p.goals === 0)).toBe(true);
+      expect(w.players.every((p) => p.condition === 100)).toBe(true);
+    }
+  });
+
+  it("can be set in any of the four countries, with the right clubs and names", () => {
+    const esp = newGame(4046, undefined, "esp");
+    expect(esp.nation).toBe("esp");
+    expect(esp.country).toBe("Spain");
+    expect(esp.clubs[0].name).toBe("Real Valdoro");
+    expect(esp.clubs[0].city).toBe("Valdoro");
+    expect(esp.world!.map((w) => w.id).sort()).toEqual(["eng", "ger", "ita"]);
+    expect(esp.players[0].name.split(" ").slice(-1)[0]).toBe(
+      esp.players[0].name.split(" ").slice(-1)[0]
+    );
+    const pools = new Set(NATIONS.find((n) => n.id === "esp")!.last);
+    expect(esp.players.filter((p) => pools.has(p.name.split(" ").slice(-1)[0])).length).toBeGreaterThan(400);
+    // the English league still exists, with its own names
+    const eng = esp.world!.find((w) => w.id === "eng")!;
+    expect(eng.clubs[0].name).toBe("Northport FC");
+    const engPool = new Set(NATIONS.find((n) => n.id === "eng")!.last);
+    expect(eng.players.filter((p) => engPool.has(p.name.split(" ").slice(-1)[0])).length).toBeGreaterThan(400);
+  });
+
+  it("gives the scouts the whole continent, and knows who plays where", () => {
+    const save = newGame(4047);
+    expect(allPlayers(save)).toHaveLength(1760);
+    const foreign = save.world![1].players[0];
+    expect(playerAnywhere(save, foreign.id)?.name).toBe(foreign.name);
+    expect(leagueOfClub(save, save.clubs[0].id)?.country).toBe("England");
+    expect(leagueOfClub(save, foreign.clubId)?.country).toBe(save.world![1].country);
+    const brief = worldBrief(save);
+    expect(brief).toHaveLength(3);
+    expect(brief.every((b) => b.leader.length > 2)).toBe(true);
+  });
+
+  it("keeps your league exactly as it was before the continent existed", () => {
+    // the world is generated from its own stream: your clubs, players and
+    // fixtures are byte-for-byte the same as a world with no leagues outside
+    const a = newGame(4048);
+    const b = newGame(4048, undefined, "eng");
+    const key = (s: typeof a) =>
+      JSON.stringify({
+        clubs: s.clubs.map((c) => [c.id, c.name, c.formation]),
+        players: s.players.map((p) => [p.id, p.name, p.attrs, p.traits]),
+        fixtures: s.fixtures.map((f) => [f.round, f.homeId, f.awayId])
+      });
+    expect(key(a)).toBe(key(b));
   });
 });
 

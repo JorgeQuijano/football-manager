@@ -16,6 +16,7 @@ import { scoutingBudgetFor, scoutingTick } from "./scouting";
 import { payPrize, recordSeason, roundAwards } from "./history";
 import { moraleTick, MORALE_START } from "./morale";
 import { makeCup, tickCup } from "./cup";
+import { tickWorld, worldSeasonRollover } from "./world";
 import { conditionsFor } from "./conditions";
 import { mediaGate, mediaTick, makePress } from "./media";
 import { applyPreContracts, payAddons, payTransferAddons, policyFor, settleDebts, policyPayoff } from "./market";
@@ -290,6 +291,8 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
   const withTransfers = windowTick(withDev);
   // the cup runs on its own when the manager has no tie this week (v0.36) — before the round moves on
   tickCup(withTransfers);
+  // and the rest of Europe plays its fixtures too (v0.38)
+  tickWorld(withTransfers, round);
   withTransfers.round = round + 1;
   // media: results move the fans, promises come due, the next conference is booked
   mediaTick(withTransfers, withTransfers.lastResults);
@@ -388,6 +391,7 @@ export function nextSeason(input: SaveGame): SaveGame {
     ...makeFriendlies(save, save.season)
   ];
   save.cup = makeCup(save);
+  worldSeasonRollover(save);
   // season-end: did he hit the personal target you set him? (before anything resets)
   settleTargets(save);
   // season-end: trait learning reads last season's minutes; then reset trackers + intake
