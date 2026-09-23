@@ -18,10 +18,10 @@ function difficultyColour(d: ClubBrief["difficulty"]) {
   return d === "Easy"
     ? "text-primary"
     : d === "Fair"
-      ? "text-[#7BE495]"
+      ? "text-[var(--positive)]"
       : d === "Hard"
-        ? "text-[#FFB020]"
-        : "text-[#FF6B6B]";
+        ? "text-[var(--warn)]"
+        : "text-[var(--danger)]";
 }
 
 export function NewGame() {

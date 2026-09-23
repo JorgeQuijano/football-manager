@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" data-theme-mode="system">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -8,6 +8,54 @@
     <link rel="apple-touch-icon" href="%BASE_URL%icons/apple-touch-icon.png" />
     <meta name="description" content="Touchline — a mobile-first football management game (MVP)." />
     <title>Touchline</title>
+    <script>
+      // Theme mode (system / light / dark) — runs BEFORE first paint so a light
+      // screen never flashes dark, or the other way round.
+      (function () {
+        var KEY = "touchline-theme";
+        var LIGHT_BG = "#f3f6fa";
+        var DARK_BG = "#0e1318";
+        var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+        function resolve() {
+          var mode = "system";
+          try {
+            mode = localStorage.getItem(KEY) || "system";
+          } catch (e) {}
+          if (mode !== "light" && mode !== "dark") mode = "system";
+          var dark = mode === "dark" || (mode === "system" && !!mq && mq.matches);
+          var el = document.documentElement;
+          el.setAttribute("data-theme", dark ? "dark" : "light");
+          el.setAttribute("data-theme-mode", mode);
+          el.classList.toggle("dark", dark);
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", dark ? DARK_BG : LIGHT_BG);
+          return mode;
+        }
+        window.THEME = {
+          get: function () {
+            try {
+              return localStorage.getItem(KEY) || "system";
+            } catch (e) {
+              return "system";
+            }
+          },
+          set: function (mode) {
+            try {
+              localStorage.setItem(KEY, mode);
+            } catch (e) {}
+            resolve();
+          }
+        };
+        resolve();
+        if (mq) {
+          var on = function () {
+            if (window.THEME.get() === "system") resolve();
+          };
+          if (mq.addEventListener) mq.addEventListener("change", on);
+          else if (mq.addListener) mq.addListener(on);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

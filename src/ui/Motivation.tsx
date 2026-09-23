@@ -41,10 +41,10 @@ export function MatchStakes() {
   const opp = game.clubs.find((c) => c.id === oppId);
   return (
     <div
-      className="mt-2 space-y-1 rounded-lg border border-[#FFB020]/50 bg-[#FFB020]/10 p-2.5"
+      className="mt-2 space-y-1 rounded-lg border border-[var(--warn-line)] bg-[var(--warn-soft)] p-2.5"
       data-testid="big-match"
     >
-      <div className="text-[11px] font-extrabold uppercase tracking-wide text-[#FFB020]">
+      <div className="text-[11px] font-extrabold uppercase tracking-wide text-[var(--warn)]">
         {big.label}
       </div>
       <div className="text-[11px] font-semibold" data-testid="big-match-stakes">

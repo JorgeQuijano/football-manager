@@ -109,17 +109,17 @@ export function Squad() {
                       age {p.age} · {p.goals} goal{p.goals === 1 ? "" : "s"} · {p.assists} assist
                       {p.assists === 1 ? "" : "s"}
                       {p.injuredWeeks > 0 && (
-                        <span className="text-[#FFB020]"> · injured ({p.injuredWeeks})</span>
+                        <span className="text-[var(--warn)]"> · injured ({p.injuredWeeks})</span>
                       )}
-                      {p.suspension > 0 && <span className="text-[#FF6157]"> · suspended</span>}
+                      {p.suspension > 0 && <span className="text-[var(--danger)]"> · suspended</span>}
                       {p.suspension === 0 && yellowsToBan(p) === 1 && (
-                        <span className="text-[#FFB020]" data-testid={`tightrope-${p.id}`}>
+                        <span className="text-[var(--warn)]" data-testid={`tightrope-${p.id}`}>
                           {" "}
                           · 1 yellow from a ban
                         </span>
                       )}
                       {(p.sharpness ?? 85) < 70 && (
-                        <span className="text-[#FFB020]" data-testid={`rusty-${p.id}`}> · rusty</span>
+                        <span className="text-[var(--warn)]" data-testid={`rusty-${p.id}`}> · rusty</span>
                       )}
                       {aerial20(p) >= 16 && (
                         <span className="text-primary" data-testid={`tower-${p.id}`}>
@@ -128,7 +128,7 @@ export function Squad() {
                         </span>
                       )}
                       {(p.jaded ?? 0) > 60 && (
-                        <span className="text-[#FFB020]" data-testid={`jaded-${p.id}`}> · heavy legs</span>
+                        <span className="text-[var(--warn)]" data-testid={`jaded-${p.id}`}> · heavy legs</span>
                       )}
                     </span>
                   </span>

@@ -13,15 +13,15 @@ import { useGame } from "@/state/store";
 import { posChip } from "@/ui/format";
 
 const DEPTH_BADGE: Record<DepthLevel, { label: string; cls: string }> = {
-  gap: { label: "GAP", cls: "bg-[#FF6B6B]/15 text-[#FF6B6B]" },
-  thin: { label: "THIN", cls: "bg-[#FFB020]/15 text-[#FFB020]" },
+  gap: { label: "GAP", cls: "bg-[var(--danger-soft)] text-[var(--danger)]" },
+  thin: { label: "THIN", cls: "bg-[var(--warn-soft)] text-[var(--warn)]" },
   ok: { label: "OK", cls: "bg-muted text-muted-foreground" },
   deep: { label: "DEEP", cls: "bg-primary/15 text-primary" }
 };
 
 const STATUS_CHIP: Partial<Record<ContractState, { label: string; cls: string }>> = {
-  expiring: { label: "Expiring", cls: "bg-[#FF6B6B]/15 text-[#FF6B6B]" },
-  lastyear: { label: "Last year", cls: "bg-[#FFB020]/15 text-[#FFB020]" },
+  expiring: { label: "Expiring", cls: "bg-[var(--danger-soft)] text-[var(--danger)]" },
+  lastyear: { label: "Last year", cls: "bg-[var(--warn-soft)] text-[var(--warn)]" },
   retiring: { label: "Retires", cls: "bg-[#7C5CFF]/15 text-[#7C5CFF]" }
 };
 
@@ -80,7 +80,7 @@ export function PlannerView({ onOpenPlayer }: { onOpenPlayer: (id: string) => vo
       </div>
 
       {plan.expiring > 0 && (
-        <p className="text-[11px] font-semibold text-[#FF6B6B]" data-testid="plan-expiring-note">
+        <p className="text-[11px] font-semibold text-[var(--danger)]" data-testid="plan-expiring-note">
           {plan.expiring} player{plan.expiring === 1 ? "" : "s"} out of contract — renew in the
           Transfers tab or they leave at season end.
         </p>

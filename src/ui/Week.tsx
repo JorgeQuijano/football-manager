@@ -104,8 +104,8 @@ export function WeekCard() {
       </ul>
 
       {twoMatches && (
-        <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-[#FFB020]/50 bg-[#FFB020]/10 px-2 py-1.5" data-testid="cup-week-note">
-          <span className="text-[11px] font-semibold text-[#FFB020]">
+        <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-[var(--warn-line)] bg-[var(--warn-soft)] px-2 py-1.5" data-testid="cup-week-note">
+          <span className="text-[11px] font-semibold text-[var(--warn)]">
             Two matches this week — heavy legs are a rotation problem.
           </span>
           <Button
@@ -121,7 +121,7 @@ export function WeekCard() {
       )}
 
       {lastDay && (lastDay.knocks.length > 0 || lastDay.lines.length > 0) && (
-        <p className="mt-2 text-[11px] font-semibold text-[#FFB020]" data-testid="day-report">
+        <p className="mt-2 text-[11px] font-semibold text-[var(--warn)]" data-testid="day-report">
           {lastDay.day} · {ACTIVITIES[lastDay.activity].label}: {[...lastDay.knocks, ...lastDay.lines].join(" ")}
         </p>
       )}

@@ -73,15 +73,15 @@ function Dots({ used, total }: { used: number; total: number }) {
 const eventClass: Record<string, string> = {
   goal: "text-primary font-bold",
   red: "text-destructive font-semibold",
-  yellow: "text-[#FFB020] font-semibold",
-  injury: "text-[#FFB020]",
+  yellow: "text-[var(--warn)] font-semibold",
+  injury: "text-[var(--warn)]",
   sub: "text-muted-foreground",
   save: "text-muted-foreground",
   miss: "text-muted-foreground",
   block: "text-muted-foreground",
   corner: "text-muted-foreground",
   freekick: "text-muted-foreground",
-  penalty: "text-[#FFB020] font-semibold",
+  penalty: "text-[var(--warn)] font-semibold",
   half: "font-bold",
   full: "font-bold",
   kickoff: "text-muted-foreground"
@@ -1103,7 +1103,7 @@ function LiveMatchScreen() {
                 <ul className="mt-3 space-y-1 text-left" data-testid="ht-report">
                   {htReport.slice(0, 3).map((a, i) => (
                     <li key={`${a.kind}-${i}`} className="flex items-start gap-1.5 text-[11px] leading-snug">
-                      <span className="mt-0.5 text-[#FFB020]">◆</span>
+                      <span className="mt-0.5 text-[var(--warn)]">◆</span>
                       <span>{a.text}</span>
                     </li>
                   ))}
@@ -1422,7 +1422,7 @@ function LiveMatchScreen() {
               </p>
 
               {subErr && (
-                <p className="mb-1.5 rounded-lg border border-[#FFB020]/40 bg-[#FFB020]/10 px-2 py-1.5 text-[11px] text-[#FFB020]" data-testid="ch-err">
+                <p className="mb-1.5 rounded-lg border border-[var(--warn-line)] bg-[var(--warn-soft)] px-2 py-1.5 text-[11px] text-[var(--warn)]" data-testid="ch-err">
                   {subErr}
                 </p>
               )}

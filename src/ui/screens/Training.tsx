@@ -27,7 +27,7 @@ function DeltaChips({ p }: { p: Player }) {
         <span
           key={d.attr}
           className={`rounded px-1.5 py-0.5 text-[10px] font-bold tnum ${
-            d.v > 0 ? "bg-primary/15 text-primary" : "bg-[#FF6B6B]/15 text-[#FF6B6B]"
+            d.v > 0 ? "bg-primary/15 text-primary" : "bg-[var(--danger-soft)] text-[var(--danger)]"
           }`}
         >
           {d.v > 0 ? "+" : ""}

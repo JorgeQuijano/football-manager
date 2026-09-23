@@ -63,7 +63,7 @@ export function BodyCard({ player }: { player: Player }) {
         </div>
       </div>
       {inj && (
-        <p className="text-[11px] font-semibold text-[#FFB020]" data-testid="player-injury">
+        <p className="text-[11px] font-semibold text-[var(--warn)]" data-testid="player-injury">
           {inj}
         </p>
       )}
@@ -135,7 +135,7 @@ export function TargetCard({ player }: { player: Player }) {
               className="flex h-11 w-full items-center justify-between rounded-lg border border-border bg-card px-3 text-left text-xs font-semibold"
             >
               <span className="truncate">{o.label}</span>
-              {o.ambitious && <span className="shrink-0 text-[10px] font-bold text-[#FFB020]">big ask</span>}
+              {o.ambitious && <span className="shrink-0 text-[10px] font-bold text-[var(--warn)]">big ask</span>}
             </button>
           ))}
         </div>
@@ -151,7 +151,7 @@ export function TargetCard({ player }: { player: Player }) {
           Drop the target
         </Button>
       )}
-      {note && <p className="text-[11px] font-semibold text-[#FF6B6B]">{note}</p>}
+      {note && <p className="text-[11px] font-semibold text-[var(--danger)]">{note}</p>}
     </div>
   );
 }
@@ -267,7 +267,7 @@ export function LearnerCard({ player }: { player: Player }) {
           Nothing left to work on — he has his two moves and there is no position left to teach him.
         </p>
       )}
-      {note && <p className="text-[11px] font-semibold text-[#FF6B6B]">{note}</p>}
+      {note && <p className="text-[11px] font-semibold text-[var(--danger)]">{note}</p>}
     </div>
   );
 }
@@ -330,9 +330,9 @@ export function DisciplineCard() {
     <section className="space-y-2" data-testid="discipline-card">
       <h2 className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">Discipline</h2>
       {open.map((c) => (
-        <div key={c.playerId} className="space-y-2 rounded-xl border border-[#FFB020]/40 bg-card p-3" data-testid={`discipline-${c.playerId}`}>
+        <div key={c.playerId} className="space-y-2 rounded-xl border border-[var(--warn-line)] bg-card p-3" data-testid={`discipline-${c.playerId}`}>
           <div className="text-sm font-bold">
-            {c.name} <span className="font-semibold text-[#FFB020]">— {c.reason}</span>
+            {c.name} <span className="font-semibold text-[var(--warn)]">— {c.reason}</span>
           </div>
           <div className="flex flex-wrap gap-1.5">
             <button

@@ -58,7 +58,7 @@ export function Dynamics({ onOpenPlayer }: { onOpenPlayer: (id: string) => void 
   return (
     <div className="space-y-3" data-testid="dynamics-view">
       {msg && (
-        <p className={`text-[11px] font-semibold ${msg.bad ? "text-[#FF6B6B]" : "text-primary"}`} data-testid="talk-msg">
+        <p className={`text-[11px] font-semibold ${msg.bad ? "text-[var(--danger)]" : "text-primary"}`} data-testid="talk-msg">
           {msg.text}
         </p>
       )}
@@ -105,7 +105,7 @@ export function Dynamics({ onOpenPlayer }: { onOpenPlayer: (id: string) => void 
             ))}
         </div>
         {requests.length > 0 && (
-          <p className="mt-2 text-[11px] font-semibold text-[#FF8A5C]" data-testid="atmo-requests">
+          <p className="mt-2 text-[11px] font-semibold text-[var(--warn)]" data-testid="atmo-requests">
             {requests.length === 1
               ? `${requests[0].name} has handed in a transfer request.`
               : `${requests.length} players have handed in transfer requests.`}

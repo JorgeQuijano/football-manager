@@ -57,6 +57,7 @@ import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
 import { ArmbandCard, BodyCard, LearnerCard, TargetCard } from "@/ui/Individual";
 import { TalkPanel } from "@/ui/Motivation";
+import { ThemeToggle } from "@/ui/ThemeToggle";
 import { Stars } from "@/ui/Scouting";
 
 export function SettingsSheet({
@@ -255,6 +256,16 @@ export function SettingsSheet({
               New game (wipe save)
             </Button>
 
+            <div className="flex items-center justify-between rounded-xl border border-border p-3">
+              <div>
+                <p className="text-[12px] font-semibold">Theme</p>
+                <p className="text-[11px] text-muted-foreground">
+                  System follows your phone. Light is the one for daylight.
+                </p>
+              </div>
+              <ThemeToggle />
+            </div>
+
             <div className="space-y-1.5 rounded-xl border border-border p-3 text-xs leading-relaxed text-muted-foreground">
               <p className="font-semibold text-foreground">How it works</p>
               <p>
@@ -384,17 +395,17 @@ export function PlayerDetailSheet({
 
               <div className="flex flex-wrap gap-2 text-[11px] font-semibold">
                 {p.injuredWeeks > 0 && (
-                  <span className="rounded-md bg-[#FFB020]/15 px-2 py-1 text-[#FFB020]">
+                  <span className="rounded-md bg-[var(--warn-soft)] px-2 py-1 text-[var(--warn)]">
                     Injured · out ~{p.injuredWeeks} {p.injuredWeeks === 1 ? "match" : "matches"}
                   </span>
                 )}
                 {p.suspension > 0 && (
-                  <span className="rounded-md bg-[#FF6157]/15 px-2 py-1 text-[#FF6157]">
+                  <span className="rounded-md bg-[var(--danger-soft)] px-2 py-1 text-[var(--danger)]">
                     Suspended
                   </span>
                 )}
                 {isAvailable(p) && (
-                  <span className="rounded-md bg-[#2ED573]/15 px-2 py-1 text-[#2ED573]">
+                  <span className="rounded-md bg-[var(--positive-soft)] px-2 py-1 text-[var(--positive)]">
                     Available
                   </span>
                 )}
@@ -487,12 +498,12 @@ export function PlayerDetailSheet({
                         ))}
                       </div>
                       {p.transferRequest && (
-                        <p className="text-[11px] font-semibold text-[#FF8A5C]" data-testid="sheet-request">
+                        <p className="text-[11px] font-semibold text-[var(--warn)]" data-testid="sheet-request">
                           Has handed in a transfer request.
                         </p>
                       )}
                       {talkMsg && (
-                        <p className={`text-[11px] font-semibold ${talkMsg.bad ? "text-[#FF6B6B]" : "text-primary"}`} data-testid="sheet-talk-msg">
+                        <p className={`text-[11px] font-semibold ${talkMsg.bad ? "text-[var(--danger)]" : "text-primary"}`} data-testid="sheet-talk-msg">
                           {talkMsg.text}
                         </p>
                       )}
@@ -545,7 +556,7 @@ export function PlayerDetailSheet({
                 {yellowBanLine(p) && (
                   <p
                     className={`text-[11px] font-semibold ${
-                      (p.suspension ?? 0) > 0 ? "text-[#FF6157]" : "text-[#FFB020]"
+                      (p.suspension ?? 0) > 0 ? "text-[var(--danger)]" : "text-[var(--warn)]"
                     }`}
                     data-testid="ban-line"
                   >
@@ -662,7 +673,7 @@ export function PlayerDetailSheet({
                         <span
                           key={k}
                           className={`rounded px-1.5 py-0.5 text-[10px] font-bold tnum ${
-                            v > 0 ? "bg-primary/15 text-primary" : "bg-[#FF6B6B]/15 text-[#FF6B6B]"
+                            v > 0 ? "bg-primary/15 text-primary" : "bg-[var(--danger-soft)] text-[var(--danger)]"
                           }`}
                         >
                           {v > 0 ? "+" : ""}
@@ -900,7 +911,7 @@ export function PlayerPickerSheet({
               <p className="text-[10px] text-muted-foreground">
                 {ROLE_DEFS[role].label} — {ROLE_DEFS[role].desc}
                 {!laneFits(role, slot) && (
-                  <span className="text-[#FFB020]"> · off-lane for this slot</span>
+                  <span className="text-[var(--warn)]"> · off-lane for this slot</span>
                 )}
               </p>
               {current && bestRole && bestRole !== role && (

@@ -42,7 +42,7 @@ export function LeverTabs({
         >
           {t.label}
           {t.id === "subs" && !!badge && badge > 0 && (
-            <span className="absolute right-1 top-1 size-1.5 rounded-full bg-[#FFB020]" />
+            <span className="absolute right-1 top-1 size-1.5 rounded-full bg-[var(--warn)]" />
           )}
         </button>
       ))}
@@ -58,9 +58,9 @@ export function Nudges({ advice }: { advice: Advice[] }) {
       {advice.map((a, i) => (
         <li
           key={`${a.kind}-${a.playerId ?? i}`}
-          className="flex items-start gap-2 rounded-xl border border-[#FFB020]/35 bg-[#FFB020]/10 px-3 py-2 text-[11px] leading-snug"
+          className="flex items-start gap-2 rounded-xl border border-[var(--warn-line)] bg-[var(--warn-soft)] px-3 py-2 text-[11px] leading-snug"
         >
-          <span className="mt-0.5 text-[#FFB020]">◆</span>
+          <span className="mt-0.5 text-[var(--warn)]">◆</span>
           <span>{a.text}</span>
         </li>
       ))}
@@ -217,7 +217,7 @@ export function OppositionPanel({
               <span className="flex-1 truncate font-semibold">
                 {shortName(p.name)}
                 {suggestionId === id && !labelled && (
-                  <span className="ml-1.5 rounded bg-[#FFB020]/20 px-1 text-[8px] font-bold text-[#FFB020]">
+                  <span className="ml-1.5 rounded bg-[var(--warn-soft)] px-1 text-[8px] font-bold text-[var(--warn)]">
                     danger man
                   </span>
                 )}
@@ -379,7 +379,7 @@ export function TalkPanel({
           ))}
         </div>
         {shoutsUsed >= 2 && (
-          <p className="mt-1 text-[10px] text-[#FFB020]">The players have heard it all before — shouts are losing their bite.</p>
+          <p className="mt-1 text-[10px] text-[var(--warn)]">The players have heard it all before — shouts are losing their bite.</p>
         )}
       </div>
 
