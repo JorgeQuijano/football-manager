@@ -360,12 +360,19 @@ export function cupStatus(save: SaveGame): string {
     const w = save.clubs.find((c) => c.id === cup.winnerId);
     return w?.id === save.userClubId ? "You won the Challenge Cup." : `${w?.name} won the Challenge Cup.`;
   }
-  const round = cupRoundThisWeek(save);
-  const t = userCupTie(save, round);
+  // knocked out? only if he has actually lost a tie
+  const lost = cup.ties.some(
+    (t) =>
+      t.played &&
+      (t.homeId === save.userClubId || t.awayId === save.userClubId) &&
+      t.winnerId !== save.userClubId
+  );
+  if (lost) return "Out of the cup.";
+  const t = userCupTie(save);
   if (t) {
     const opp = save.clubs.find((c) => c.id === (t.homeId === save.userClubId ? t.awayId : t.homeId));
     return `${CUP_ROUND_LABEL[t.round]} v ${opp?.name}${t.homeId === save.userClubId ? " (home)" : " (away)"}`;
   }
-  const stillIn = cup.ties.some((x) => x.played && x.winnerId === save.userClubId);
-  return stillIn ? "Still in the cup." : "Out of the cup.";
+  const nextRound = CUP_ROUNDS.find((r) => cup.ties.some((x) => x.round === r && !x.played));
+  return nextRound ? `In the cup — ${CUP_ROUND_LABEL[nextRound].toLowerCase()} to come.` : "Still in the cup.";
 }
