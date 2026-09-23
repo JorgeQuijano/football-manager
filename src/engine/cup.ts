@@ -24,22 +24,36 @@ import { jadedTick, sharpnessTick } from "./physical";
  * price in legs, knocks and bookings. They just do not touch the league table.
  */
 
-export const CUP_ROUNDS: CupRoundId[] = ["prelim", "qf", "sf", "final"];
+export const CUP_ROUNDS: CupRoundId[] = ["prelim", "r16", "qf", "sf", "final"];
+/** ten clubs fit four rounds, twenty need five — the extra is the round of sixteen */
+export const cupRounds = (clubs: number): CupRoundId[] =>
+  clubs > 16 ? ["prelim", "r16", "qf", "sf", "final"] : ["prelim", "qf", "sf", "final"];
+/** the weeks those rounds are played in, spread across the season */
+export const cupSchedule = (clubs: number): Record<CupRoundId, number> =>
+  clubs > 16
+    ? { ...CUP_WEEK }
+    : { prelim: 4, r16: 0, qf: 8, sf: 12, final: 16 };
+/** a save's own rounds/schedule — what the cup was drawn with — else derived from the league */
+export const roundsOf = (save: SaveGame): CupRoundId[] =>
+  save.cup?.rounds?.length ? save.cup.rounds : cupRounds(save.clubs.length);
+export const scheduleOf = (save: SaveGame): Record<CupRoundId, number> =>
+  save.cup?.schedule ?? cupSchedule(save.clubs.length);
 
 export const CUP_ROUND_LABEL: Record<CupRoundId, string> = {
   prelim: "Preliminary round",
+  r16: "Round of sixteen",
   qf: "Quarter-finals",
   sf: "Semi-finals",
   final: "The Final"
 };
 
 /** Which league round each cup round is played in (a Wednesday in that week). */
-export const CUP_WEEK: Record<CupRoundId, number> = { prelim: 4, qf: 8, sf: 12, final: 16 };
+export const CUP_WEEK: Record<CupRoundId, number> = { prelim: 5, r16: 11, qf: 18, sf: 26, final: 34 };
 
 /** Wednesday on the week clock. */
 export const CUP_DAY = 2;
 /** What beating each round is worth to the account. */
-export const CUP_PRIZE: Record<CupRoundId, number> = { prelim: 150_000, qf: 350_000, sf: 750_000, final: 1_500_000 };
+export const CUP_PRIZE: Record<CupRoundId, number> = { prelim: 100_000, r16: 200_000, qf: 350_000, sf: 750_000, final: 1_500_000 };
 
 const rngFor = (save: SaveGame, tag: string): Rng => mulberry32(hashSeed(save.seed, "cup", save.season, tag));
 
@@ -71,18 +85,22 @@ const tie = (round: CupRoundId, homeId: string, awayId: string, n: number): CupT
   played: false
 });
 
-/** Draw the preliminary round: the four lowest-seeded clubs pair off. */
+/** Draw the preliminary round: the lowest-seeded clubs pair off (8 clubs with 20 teams). */
 export function drawPrelim(save: SaveGame): Cup {
   const order = seedOrder(save);
-  const low = order.slice(-4);
+  const playIn = Math.max(4, save.clubs.length - 12); // 12 byes into the round of sixteen
+  const low = order.slice(-playIn);
   const rng = rngFor(save, "draw-prelim");
   const shuffled = [...low].sort(() => rng() - 0.5);
-  const ties = [tie("prelim", shuffled[0], shuffled[1], 0), tie("prelim", shuffled[2], shuffled[3], 1)];
+  const ties: CupTie[] = [];
+  for (let i = 0; i + 1 < shuffled.length; i += 2) {
+    ties.push(tie("prelim", shuffled[i], shuffled[i + 1], ties.length));
+  }
   return {
     season: save.season,
     ties,
-    schedule: { ...CUP_WEEK },
-    rounds: CUP_ROUNDS
+    schedule: cupSchedule(save.clubs.length),
+    rounds: cupRounds(save.clubs.length)
   };
 }
 
@@ -90,7 +108,7 @@ export function drawPrelim(save: SaveGame): Cup {
 export function survivors(save: SaveGame): string[] {
   const cup = save.cup;
   if (!cup) return save.clubs.map((c) => c.id);
-  const drawn = CUP_ROUNDS.filter((r) => cup.ties.some((t) => t.round === r));
+  const drawn = roundsOf(save).filter((r) => cup.ties.some((t) => t.round === r));
   if (!drawn.length) return save.clubs.map((c) => c.id);
   const last = drawn[drawn.length - 1];
   const lastTies = cup.ties.filter((t) => t.round === last);
@@ -129,8 +147,8 @@ export function makeCup(save: SaveGame): Cup {
 export function cupRoundThisWeek(save: SaveGame): CupRoundId | null {
   const cup = save.cup;
   if (!cup) return null;
-  for (const r of CUP_ROUNDS) {
-    if (cup.schedule[r] !== save.round) continue;
+  for (const r of roundsOf(save)) {
+    if (scheduleOf(save)[r] !== save.round) continue;
     if (cup.ties.some((t) => t.round === r)) return r;
   }
   return null;
@@ -236,10 +254,10 @@ function settleRound(save: SaveGame, round: CupRoundId): void {
   cup.settled = cup.settled ?? [];
   if (cup.settled.includes(round)) return; // it only settles once
   cup.settled.push(round);
-  cup.rounds = cup.rounds ?? CUP_ROUNDS;
+  cup.rounds = cup.rounds ?? roundsOf(save);
   const mine = cup.ties.find((t) => t.round === round && (t.homeId === save.userClubId || t.awayId === save.userClubId));
-  const idx = CUP_ROUNDS.indexOf(round);
-  const next = CUP_ROUNDS[idx + 1];
+  const idx = roundsOf(save).indexOf(round);
+  const next = roundsOf(save)[idx + 1];
 
   if (round === "final") {
     const w = cup.ties.find((t) => t.round === "final");
@@ -344,11 +362,11 @@ export function completeCupTie(input: SaveGame, result: MatchResult, pens?: { ho
 export function cupView(save: SaveGame): Array<{ round: CupRoundId; label: string; ties: CupTie[]; week: number }> {
   const cup = save.cup;
   if (!cup) return [];
-  return CUP_ROUNDS.map((r) => ({
+  return roundsOf(save).map((r) => ({
     round: r,
     label: CUP_ROUND_LABEL[r],
     ties: cup.ties.filter((t) => t.round === r),
-    week: cup.schedule?.[r] ?? CUP_WEEK[r]
+    week: scheduleOf(save)[r]
   }));
 }
 
@@ -373,6 +391,6 @@ export function cupStatus(save: SaveGame): string {
     const opp = save.clubs.find((c) => c.id === (t.homeId === save.userClubId ? t.awayId : t.homeId));
     return `${CUP_ROUND_LABEL[t.round]} v ${opp?.name}${t.homeId === save.userClubId ? " (home)" : " (away)"}`;
   }
-  const nextRound = CUP_ROUNDS.find((r) => cup.ties.some((x) => x.round === r && !x.played));
+  const nextRound = roundsOf(save).find((r) => cup.ties.some((x) => x.round === r && !x.played));
   return nextRound ? `In the cup — ${CUP_ROUND_LABEL[nextRound].toLowerCase()} to come.` : "Still in the cup.";
 }

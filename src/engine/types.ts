@@ -391,6 +391,10 @@ export interface Club {
   color: string; // chip color
   strength: number; // generation-time offset
   formation: FormationId; // preferred formation (AI)
+  /** the public details the manager can edit (v0.37): blank = the club's own lore */
+  city?: string;
+  ground?: string;
+  founded?: number;
 }
 
 export interface Fixture {
@@ -404,7 +408,7 @@ export interface Fixture {
   awayGoals?: number;
 }
 
-export type CupRoundId = "prelim" | "qf" | "sf" | "final";
+export type CupRoundId = "prelim" | "r16" | "qf" | "sf" | "final";
 
 /** One knockout tie (engine/cup.ts, v0.36). */
 export interface CupTie {

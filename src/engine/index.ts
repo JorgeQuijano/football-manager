@@ -30,6 +30,7 @@ export * from "./attrs20";
 export * from "./aerial";
 export * from "./week";
 export * from "./cup";
+export * from "./clubs";
 export * from "./formations";
 export * from "./ratings";
 export * from "./league";
