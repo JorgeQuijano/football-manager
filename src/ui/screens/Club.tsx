@@ -181,7 +181,7 @@ export function Club() {
                 </div>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">{facilityEffectLine(kind, level)}</p>
                 {building ? (
-                  <p className="mt-1 text-[11px] font-semibold text-[#FFB020]" data-testid={`building-${kind}`}>
+                  <p className="mt-1 text-[11px] font-semibold text-[var(--warn)]" data-testid={`building-${kind}`}>
                     <HardHat size={12} className="mr-1 inline" />
                     Level {building.to} in {building.weeksLeft} week{building.weeksLeft > 1 ? "s" : ""}
                   </p>

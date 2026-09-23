@@ -22,6 +22,7 @@ import {
 } from "@/engine";
 import { useGame } from "@/state/store";
 import { formColor, initials, ordinal, shortName } from "@/ui/format";
+import { ThemeToggle } from "@/ui/ThemeToggle";
 import { SettingsSheet } from "@/ui/sheets";
 import { WeekCard } from "@/ui/Week";
 import { MediaCard } from "@/ui/Press";
@@ -95,12 +96,13 @@ export function Home() {
           {unread > 0 && (
             <span
               data-testid="inbox-badge"
-              className="absolute -right-0.5 -top-0.5 grid min-w-[18px] place-items-center rounded-full bg-[#FF6B6B] px-1 text-[10px] font-extrabold text-white"
+              className="absolute -right-0.5 -top-0.5 grid min-w-[18px] place-items-center rounded-full bg-[var(--danger)] px-1 text-[10px] font-extrabold text-white"
             >
               {unread > 9 ? "9+" : unread}
             </span>
           )}
         </button>
+        <ThemeToggle />
         <button
           data-testid="settings"
           onClick={() => setSettingsOpen(true)}

@@ -53,7 +53,7 @@ export function CupPanel() {
     <div className="space-y-2" data-testid="cup-panel">
       <Card>
         <CardContent className="flex items-center gap-2 p-3">
-          <Trophy size={16} className="shrink-0 text-[#FFB020]" />
+          <Trophy size={16} className="shrink-0 text-[var(--warn)]" />
           <div className="min-w-0">
             <p className="text-[12px] font-bold" data-testid="cup-status">
               {cupStatus(game)}

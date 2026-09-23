@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is([data-theme="dark"] *));
 
 @theme inline {
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -47,8 +47,69 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Tunnel theme — the app runs dark-only on this palette */
-:root,
+/*
+ * Tunnel — now in both flavours (v0.40).
+ *
+ * `:root` is the LIGHT palette and `:root[data-theme="dark"]` overrides it, so
+ * a light screen is the default state of the stylesheet and dark mode is
+ * additive. The mode machinery (system / light / dark) lives in the pre-paint
+ * script in index.html and writes `data-theme` + `data-theme-mode` on <html>.
+ *
+ * Semantic tokens — warn / danger / positive and their soft backgrounds — carry
+ * the amber, red and green accents that used to be hard-coded hex classes all
+ * over the UI, so a warning reads on a street-lit phone at 11am as well as it
+ * does in bed at midnight.
+ */
+:root {
+  color-scheme: light;
+  --background: #f3f6fa;
+  --foreground: #0e1318;
+  --card: #ffffff;
+  --card-foreground: #0e1318;
+  --popover: #ffffff;
+  --popover-foreground: #0e1318;
+  --primary: #0f9d58;
+  --primary-foreground: #ffffff;
+  --secondary: #e9eef4;
+  --secondary-foreground: #0e1318;
+  --muted: #eceff4;
+  --muted-foreground: #59636f;
+  --accent: #e4eaf1;
+  --accent-foreground: #0e1318;
+  --destructive: #c62828;
+  --border: #d2dae3;
+  --input: #d2dae3;
+  --ring: #0f9d58;
+  --chart-1: #0f9d58;
+  --chart-2: #b26a00;
+  --chart-3: #0b6e8f;
+  --chart-4: #6d4fc4;
+  --chart-5: #c62828;
+  --radius: 0.75rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0e1318;
+  --sidebar-primary: #0f9d58;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eceff4;
+  --sidebar-accent-foreground: #0e1318;
+  --sidebar-border: #d2dae3;
+  --sidebar-ring: #0f9d58;
+
+  /* semantic accents */
+  --warn: #a15c00;
+  --warn-soft: color-mix(in srgb, #ffb020 22%, transparent);
+  --warn-line: color-mix(in srgb, #a15c00 45%, transparent);
+  --danger: #c62828;
+  --danger-strong: #b3261e;
+  --danger-soft: color-mix(in srgb, #c62828 12%, transparent);
+  --danger-line: color-mix(in srgb, #c62828 45%, transparent);
+  --positive: #0f9d58;
+  --positive-soft: color-mix(in srgb, #0f9d58 14%, transparent);
+  --positive-line: color-mix(in srgb, #0f9d58 45%, transparent);
+  --ink-on-solid: #ffffff;
+}
+
+:root[data-theme="dark"],
 .dark {
   color-scheme: dark;
   --background: #0e1318;
@@ -83,6 +144,41 @@
   --sidebar-accent-foreground: #e9eef3;
   --sidebar-border: #2c3846;
   --sidebar-ring: #2ed573;
+
+  --warn: #ffb020;
+  --warn-soft: color-mix(in srgb, #ffb020 14%, transparent);
+  --warn-line: color-mix(in srgb, #ffb020 50%, transparent);
+  --danger: #ff6b6b;
+  --danger-strong: #ff6157;
+  --danger-soft: color-mix(in srgb, #ff6b6b 14%, transparent);
+  --danger-line: color-mix(in srgb, #ff6b6b 50%, transparent);
+  --positive: #2ed573;
+  --positive-soft: color-mix(in srgb, #2ed573 14%, transparent);
+  --positive-line: color-mix(in srgb, #2ed573 50%, transparent);
+  --ink-on-solid: #0e1318;
+}
+
+/* The theme control: one button, three icons, shown by the CHOICE (not the
+   resolved theme) so "System" is visibly different from "Light" on a light OS. */
+.ti {
+  display: none;
+  line-height: 0;
+}
+:root[data-theme-mode="system"] .ti-system,
+:root[data-theme-mode="light"] .ti-light,
+:root[data-theme-mode="dark"] .ti-dark {
+  display: block;
+}
+
+#theme-chip {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+}
+#theme-chip.show {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 @layer base {

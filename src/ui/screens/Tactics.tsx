@@ -372,15 +372,15 @@ export function Tactics() {
                   style={{ left: `${x}%`, top: `${y}%`, width: "clamp(46px, 15vw, 64px)" }}
                   className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border px-0.5 pb-1 pt-1.5 text-center ${
                     p ? "bg-card/95" : "border-dashed bg-card/60"
-                  } ${p && fit === "ok" ? "border-[#FFB020]" : ""} ${
-                    p && fit === "poor" ? "border-[#FF6157]" : ""
+                  } ${p && fit === "ok" ? "border-[var(--warn)]" : ""} ${
+                    p && fit === "poor" ? "border-[var(--danger)]" : ""
                   } ${p && fit === "nat" ? "border-border" : ""} ${
                     isSel ? "ring-2 ring-primary" : ""
                   }`}
                 >
                   <span
                     className={`block max-w-full truncate text-[10px] font-bold leading-tight ${
-                      unavailable ? "text-[#FF6157]" : ""
+                      unavailable ? "text-[var(--danger)]" : ""
                     }`}
                   >
                     {p ? shortName(p.name) : pos}
@@ -434,7 +434,7 @@ export function Tactics() {
               >
                 <span
                   className={`block max-w-full truncate text-[10px] font-bold leading-tight ${
-                    unavailable ? "text-[#FF6157]" : ""
+                    unavailable ? "text-[var(--danger)]" : ""
                   }`}
                 >
                   {p ? shortName(p.name) : "—"}
@@ -465,8 +465,8 @@ export function Tactics() {
       </div>
 
       {tiredIdxs.length > 0 && (
-        <div className="flex items-center justify-between gap-2 rounded-xl border border-[#FFB020]/40 bg-[#FFB020]/10 px-3 py-2">
-          <p className="text-xs text-[#FFB020]">
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-[var(--warn-line)] bg-[var(--warn-soft)] px-3 py-2">
+          <p className="text-xs text-[var(--warn)]">
             {tiredIdxs.length === 1
               ? "1 starter looks tired or unavailable"
               : `${tiredIdxs.length} starters look tired or unavailable`}
@@ -484,7 +484,7 @@ export function Tactics() {
       )}
 
       {problems.length > 0 && (
-        <p className="rounded-xl border border-[#FFB020]/40 bg-[#FFB020]/10 px-3 py-2 text-xs text-[#FFB020]">
+        <p className="rounded-xl border border-[var(--warn-line)] bg-[var(--warn-soft)] px-3 py-2 text-xs text-[var(--warn)]">
           {problems[0]} — it will be auto-fixed at kick-off if you press Continue.
         </p>
       )}

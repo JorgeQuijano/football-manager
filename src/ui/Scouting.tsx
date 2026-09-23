@@ -135,7 +135,7 @@ export function ScoutingView({ onOpenPlayer }: { onOpenPlayer: (id: string) => v
   return (
     <div className="space-y-5" data-testid="scouting-view">
       {msg && (
-        <p className={`text-[11px] font-semibold ${msg.bad ? "text-[#FF6B6B]" : "text-primary"}`} data-testid="scout-msg">
+        <p className={`text-[11px] font-semibold ${msg.bad ? "text-[var(--danger)]" : "text-primary"}`} data-testid="scout-msg">
           {msg.text}
         </p>
       )}

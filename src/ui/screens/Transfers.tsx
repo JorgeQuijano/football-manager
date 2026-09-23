@@ -321,7 +321,7 @@ export function Transfers() {
   };
 
   const toneClass =
-    deal?.tone === "err" ? "text-[#FF6B6B]" : deal?.tone === "warn" ? "text-[#FFB020]" : "text-primary";
+    deal?.tone === "err" ? "text-[var(--danger)]" : deal?.tone === "warn" ? "text-[var(--warn)]" : "text-primary";
 
   return (
     <div className="space-y-5" data-testid="transfers-screen">
@@ -355,7 +355,7 @@ export function Transfers() {
       </div>
 
       {scoutNote && (
-        <p className={`text-[11px] font-semibold ${scoutNote.bad ? "text-[#FF6B6B]" : "text-primary"}`} data-testid="scout-note">
+        <p className={`text-[11px] font-semibold ${scoutNote.bad ? "text-[var(--danger)]" : "text-primary"}`} data-testid="scout-note">
           {scoutNote.text}
         </p>
       )}
@@ -443,7 +443,7 @@ export function Transfers() {
           {expiring.map((p) => (
             <div
               key={p.id}
-              className="flex items-center justify-between gap-2 rounded-xl border border-[#FFB020]/40 bg-card p-3"
+              className="flex items-center justify-between gap-2 rounded-xl border border-[var(--warn-line)] bg-card p-3"
             >
               <div className="min-w-0">
                 <div className="truncate text-sm font-bold">{p.name}</div>
@@ -656,7 +656,7 @@ export function Transfers() {
                         const est = estimateFor(game, deal.player);
                         const lvl = knowledgeOf(game, deal.player.id);
                         return lvl < 50 ? (
-                          <p className="text-[10px] font-semibold text-[#FFB020]" data-testid="fog-warning">
+                          <p className="text-[10px] font-semibold text-[var(--warn)]" data-testid="fog-warning">
                             Only {lvl}% known — your valuation could be well off. Scout him for a
                             sharper read.
                           </p>

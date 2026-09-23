@@ -4,10 +4,10 @@ import { suitability } from "@/engine";
 export const posOrder: Position[] = ["GK", "DF", "MF", "FW"];
 
 export const posChip: Record<Position, string> = {
-  GK: "bg-[#FFB020]/15 text-[#FFB020]",
+  GK: "bg-[var(--warn-soft)] text-[var(--warn)]",
   DF: "bg-[#4DABF7]/15 text-[#4DABF7]",
-  MF: "bg-[#2ED573]/15 text-[#2ED573]",
-  FW: "bg-[#FF8787]/15 text-[#FF8787]"
+  MF: "bg-[var(--positive-soft)] text-[var(--positive)]",
+  FW: "bg-[var(--danger-soft)] text-[var(--danger)]"
 };
 
 export function shortName(name: string): string {
@@ -24,8 +24,8 @@ export function initials(name: string): string {
 }
 
 export function formColor(result: "W" | "D" | "L"): string {
-  if (result === "W") return "bg-[#2ED573] text-[#06301B]";
-  if (result === "L") return "bg-[#FF6157] text-[#330906]";
+  if (result === "W") return "bg-[var(--positive)] text-[#06301B]";
+  if (result === "L") return "bg-[var(--danger)] text-[#330906]";
   return "bg-[#48545F] text-[#CBD5DC]";
 }
 

@@ -75,11 +75,11 @@ export function MarketBar() {
           </div>
         </div>
         <div className="mt-2 flex items-center justify-between text-[11px] font-semibold">
-          <span className={headroom >= 0 ? "text-muted-foreground" : "text-[#FF6B6B]"}>
+          <span className={headroom >= 0 ? "text-muted-foreground" : "text-[var(--danger)]"}>
             Wage headroom {money(headroom)}/wk
           </span>
           {owed > 0 && (
-            <span className="text-[#FFB020]" data-testid="debts">
+            <span className="text-[var(--warn)]" data-testid="debts">
               {money(owed)} owed in instalments
             </span>
           )}
@@ -430,8 +430,8 @@ export function MarketActions({ player }: { player: Player }) {
       </div>
 
       {!mine && expiring && (
-        <div className="space-y-2 rounded-lg border border-[#FFB020]/40 bg-card p-2">
-          <div className="text-[11px] font-bold text-[#FFB020]">
+        <div className="space-y-2 rounded-lg border border-[var(--warn-line)] bg-card p-2">
+          <div className="text-[11px] font-bold text-[var(--warn)]">
             {pre ? "He's agreed to join you at the end of the season." : "Out of contract in the summer — you can talk to him now."}
           </div>
           {!pre && (

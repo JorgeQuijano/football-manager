@@ -49,19 +49,19 @@ export const BAND_LABEL: Record<AttrBand, string> = {
 
 /** Tailwind colour per band (Tunnel theme). */
 export const BAND_COLOUR: Record<AttrBand, string> = {
-  elite: "text-[#2ED573]",
-  good: "text-[#7BE495]",
+  elite: "text-[var(--positive)]",
+  good: "text-[var(--positive)]",
   average: "text-foreground",
-  poor: "text-[#FFB020]",
-  weak: "text-[#FF6B6B]"
+  poor: "text-[var(--warn)]",
+  weak: "text-[var(--danger)]"
 };
 
 export const BAND_BAR: Record<AttrBand, string> = {
-  elite: "bg-[#2ED573]",
-  good: "bg-[#7BE495]",
+  elite: "bg-[var(--positive)]",
+  good: "bg-[var(--positive)]",
   average: "bg-primary/50",
-  poor: "bg-[#FFB020]",
-  weak: "bg-[#FF6B6B]"
+  poor: "bg-[var(--warn)]",
+  weak: "bg-[var(--danger)]"
 };
 
 /** Per-attribute thresholds across every player in the world. Cached per save object. */

@@ -225,7 +225,7 @@ export function Builder() {
 
       {errors.length > 0 && (
         <p
-          className="mt-3 rounded-xl border border-[#FFB020]/40 bg-[#FFB020]/10 px-3 py-2 text-xs text-[#FFB020]"
+          className="mt-3 rounded-xl border border-[var(--warn-line)] bg-[var(--warn-soft)] px-3 py-2 text-xs text-[var(--warn)]"
           data-testid="bf-error"
         >
           {errors[0]}
