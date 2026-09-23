@@ -5,7 +5,7 @@ import {
   FACILITY_KINDS,
   FACILITY_MAX,
   bankToTransfer,
-  capacityOf,
+  groundCapacity,
   commercialSummary,
   facilityEffectLine,
   facilityLabel,
@@ -64,7 +64,7 @@ export function Club() {
       <header className="px-1">
         <h1 className="text-xl font-extrabold tracking-tight">Club</h1>
         <p className="text-xs text-muted-foreground">
-          {club?.name} · {capacityOf(fac).toLocaleString()} seats
+          {club?.name} · {groundCapacity(game, game.userClubId).toLocaleString()} seats
         </p>
       </header>
 

@@ -1,5 +1,5 @@
 import type { Club, Facilities, SaveGame } from "./types";
-import { capacityOf, facilitiesOf, sponsorWeekly } from "./commercial";
+import { facilitiesOf, groundCapacity, sponsorWeekly } from "./commercial";
 import { squadValue, wageBill } from "./transfers";
 import { overallFor, squadOf } from "./ratings";
 
@@ -179,7 +179,7 @@ export function clubBrief(save: SaveGame, clubId: string): ClubBrief {
     color: club?.color ?? "#2ED573",
     lore,
     stadium: lore.stadium,
-    capacity: capacityOf(fac),
+    capacity: groundCapacity(save, clubId),
     titles: lore.honours,
     wealth,
     squad: squadWord(squadBand),

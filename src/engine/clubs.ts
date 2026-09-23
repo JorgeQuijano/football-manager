@@ -1,5 +1,5 @@
 import type { Club, SaveGame } from "./types";
-import { CLUB_DEFS } from "./generate";
+import { CLUB_DEFS, capacityFor } from "./generate";
 import { CLUB_LORE } from "./onboarding";
 
 /**
@@ -22,6 +22,7 @@ export interface ClubEdit {
   city?: string;
   ground?: string;
   founded?: number;
+  capacity?: number;
 }
 
 export const CLUB_LIMITS = {
@@ -29,7 +30,8 @@ export const CLUB_LIMITS = {
   short: 3,
   city: 20,
   ground: 26,
-  founded: [1850, 2026] as [number, number]
+  founded: [1850, 2026] as [number, number],
+  capacity: [1_000, 120_000] as [number, number]
 };
 
 /** what a club starts as, before any edits */
@@ -44,7 +46,14 @@ export function defaultClub(save: SaveGame, clubId: string): Required<ClubEdit> 
     color: def?.color ?? save.clubs[idx].color,
     city: lore?.city ?? "",
     ground: lore?.stadium ?? "",
-    founded: lore?.founded ?? 1900
+    founded: lore?.founded ?? 1900,
+    // the ground's original size is the generated one, not whatever is stored now
+    capacity: capacityFor(
+      leagueOf(save, clubId),
+      clubId,
+      CLUB_LORE[clubId]?.honours ?? save.clubs[idx].honours ?? 0,
+      save.clubs[idx].strength
+    )
   };
 }
 
@@ -53,10 +62,22 @@ export const cleanShort = (v: string): string =>
   v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, CLUB_LIMITS.short);
 export const cleanCity = (v: string): string => v.replace(/\s+/g, " ").trim().slice(0, CLUB_LIMITS.city);
 export const cleanGround = (v: string): string => v.replace(/\s+/g, " ").trim().slice(0, CLUB_LIMITS.ground);
+export const cleanCapacity = (v: number): number =>
+  Number.isFinite(v)
+    ? Math.max(CLUB_LIMITS.capacity[0], Math.min(CLUB_LIMITS.capacity[1], Math.round(v / 100) * 100))
+    : 12_000;
+
 export const cleanFounded = (v: number): number =>
   Number.isFinite(v) ? Math.max(CLUB_LIMITS.founded[0], Math.min(CLUB_LIMITS.founded[1], Math.round(v))) : 1900;
 
 const isHex = (v: string): boolean => /^#[0-9a-fA-F]{6}$/.test(v);
+
+/** Which nation a club belongs to (its league), for re-deriving generated values. */
+function leagueOf(save: SaveGame, clubId: string): string {
+  if (save.clubs.some((c) => c.id === clubId)) return save.nation ?? "eng";
+  for (const w of save.world ?? []) if (w.clubs.some((c) => c.id === clubId)) return w.id;
+  return save.nation ?? "eng";
+}
 
 export function editClub(input: SaveGame, clubId: string, patch: ClubEdit): SaveGame {
   const save: SaveGame = structuredClone(input);
@@ -83,6 +104,7 @@ export function editClub(input: SaveGame, clubId: string, patch: ClubEdit): Save
     else delete club.ground;
   }
   if (patch.founded !== undefined) club.founded = cleanFounded(patch.founded);
+  if (patch.capacity !== undefined) club.capacity = cleanCapacity(patch.capacity);
   return save;
 }
 
@@ -95,6 +117,7 @@ export function resetClub(input: SaveGame, clubId: string): SaveGame {
   club.name = def.name;
   club.short = def.short;
   club.color = def.color;
+  if (def.capacity) club.capacity = def.capacity;
   delete club.city;
   delete club.ground;
   delete club.founded;
@@ -111,6 +134,7 @@ export function isEdited(club: Club, save: SaveGame): boolean {
     club.color !== def.color ||
     !!club.city ||
     !!club.ground ||
-    club.founded !== undefined
+    club.founded !== undefined ||
+    (def.capacity !== undefined && club.capacity !== def.capacity)
   );
 }

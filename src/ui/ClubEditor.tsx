@@ -2,12 +2,14 @@ import { useState } from "react";
 import { Pencil, RotateCcw, Shield } from "lucide-react";
 import {
   CLUB_LIMITS,
+  cleanCapacity,
   cleanCity,
   cleanFounded,
   cleanGround,
   cleanName,
   cleanShort,
   defaultClub,
+  groundCapacity,
   isEdited,
   loreFor
 } from "@/engine";
@@ -38,6 +40,7 @@ function EditSheet({ clubId, onClose }: { clubId: string; onClose: () => void })
   const [city, setCity] = useState(lore.city);
   const [ground, setGround] = useState(lore.stadium);
   const [founded, setFounded] = useState(String(lore.founded));
+  const [capacity, setCapacity] = useState(String(groundCapacity(game, clubId)));
 
   const save = () => {
     editClub(clubId, {
@@ -46,7 +49,8 @@ function EditSheet({ clubId, onClose }: { clubId: string; onClose: () => void })
       color,
       city: cleanCity(city),
       ground: cleanGround(ground),
-      founded: cleanFounded(Number(founded))
+      founded: cleanFounded(Number(founded)),
+      capacity: cleanCapacity(Number(capacity))
     });
     onClose();
   };
@@ -128,6 +132,24 @@ function EditSheet({ clubId, onClose }: { clubId: string; onClose: () => void })
           </label>
 
           <label className="block">
+            <span className="text-[11px] font-bold uppercase text-muted-foreground">Capacity (seats)</span>
+            <input
+              className={field}
+              data-testid="club-edit-capacity"
+              type="number"
+              inputMode="numeric"
+              min={CLUB_LIMITS.capacity[0]}
+              max={CLUB_LIMITS.capacity[1]}
+              step={100}
+              value={capacity}
+              onChange={(e) => setCapacity(e.target.value)}
+            />
+            <span className="mt-1 block text-[10px] text-muted-foreground">
+              {groundCapacity(game, clubId).toLocaleString()} today, including what the stadium facility has built.
+            </span>
+          </label>
+
+          <label className="block">
             <span className="text-[11px] font-bold uppercase text-muted-foreground">Founded</span>
             <input
               className={field}
@@ -205,7 +227,7 @@ export function ClubsCard() {
                     {c.id === me && <span className="ml-1 text-[10px] font-extrabold uppercase text-primary">you</span>}
                   </span>
                   <span className="block truncate text-[10px] text-muted-foreground">
-                    {lore.city} · {lore.stadium} · est. {lore.founded}
+                    {lore.city} · {lore.stadium} · {groundCapacity(game, c.id).toLocaleString()} seats
                   </span>
                 </span>
                 <Pencil size={12} className="shrink-0 text-muted-foreground" />

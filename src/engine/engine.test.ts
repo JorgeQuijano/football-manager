@@ -76,6 +76,7 @@ import {
   FACILITY_WEEKS,
   bankToTransfer,
   capacityOf,
+  groundCapacity,
   facilitiesOf,
   gateReceipts,
   makeSponsorOffers,
@@ -5745,13 +5746,14 @@ describe("manager onboarding: the club brief and the first day", () => {
     const brief = clubBrief(save, "c1");
     expect(brief.lore.city).toBe("Northport");
     expect(brief.stadium).toBe("The Dockside");
-    expect(brief.capacity).toBe(capacityOf(facilitiesOf(save, "c1")));
+    expect(brief.capacity).toBe(groundCapacity(save, "c1"));
     expect(brief.titles).toBe(CLUB_LORE.c1.honours);
     // every club has lore, a ground and a real capacity
     for (const c of save.clubs) {
       const b = clubBrief(save, c.id);
       expect(b.name).toBe(c.name);
-      expect(b.capacity).toBeGreaterThanOrEqual(8_000);
+      expect(b.capacity).toBe(groundCapacity(save, c.id)); // the brief tells the truth about the ground
+      expect(b.capacity).toBeGreaterThanOrEqual(5_000);
       expect(b.lore.city.length).toBeGreaterThan(2);
     }
   });
@@ -6026,6 +6028,98 @@ describe("height and the aerial game (v0.34.0)", () => {
     const restored = normalizeSave(stripped);
     for (const p of restored.players) {
       expect(p.height).toBe(heightFor(p.id, p.pos));
+    }
+  });
+});
+
+describe("grounds with real sizes (v0.39.0)", () => {
+  it("gives every club its own capacity — no two leagues of clones", () => {
+    const save = newGame(5051);
+    const leagues = [{ name: save.country!, clubs: save.clubs }, ...save.world!.map((w) => ({ name: w.country, clubs: w.clubs }))];
+    for (const lg of leagues) {
+      const seats = lg.clubs.map((c) => c.capacity!);
+      expect(seats.every((v) => v >= 5_000 && v <= 81_000)).toBe(true);
+      // a division is a spread, not one number repeated twenty times
+      expect(new Set(seats).size).toBeGreaterThanOrEqual(18);
+      expect(Math.min(...seats)).toBeLessThan(15_000);
+      expect(Math.max(...seats)).toBeGreaterThan(25_000);
+      // and the biggest ground is at least three times the smallest
+      expect(Math.max(...seats) / Math.min(...seats)).toBeGreaterThan(2.5);
+    }
+  });
+
+  it("makes the famous clubs the big grounds, and keeps the tail long", () => {
+    const save = newGame(5052);
+    const byStanding = [...save.clubs].sort(
+      (a, b) => (b.honours ?? 0) + b.strength / 2 - ((a.honours ?? 0) + a.strength / 2)
+    );
+    const mean = (list: typeof save.clubs) =>
+      list.reduce((n, c) => n + (c.capacity ?? 0), 0) / list.length;
+    expect(mean(byStanding.slice(0, 5))).toBeGreaterThan(mean(byStanding.slice(-5)) + 8_000);
+    // a long tail: most grounds are modest, only a couple are vast
+    const seats = save.clubs.map((c) => c.capacity!).sort((a, b) => a - b);
+    const median = seats[10];
+    expect(seats[seats.length - 1]).toBeGreaterThan(median * 1.8);
+    expect(seats[0]).toBeLessThan(median);
+  });
+
+  it("counts the stadium facility on top of the ground", () => {
+    const save = toLeague(newGame(5053));
+    const cap = groundCapacity(save, save.userClubId);
+    const base = save.clubs.find((c) => c.id === save.userClubId)!.capacity!;
+    const level = save.facilities[save.userClubId].stadium;
+    expect(cap).toBe(Math.round((base + Math.max(0, level - 3) * 2_500) / 100) * 100);
+    // build the stadium up: the ground grows with it
+    const bigger = structuredClone(save);
+    bigger.facilities[bigger.userClubId] = { ...bigger.facilities[bigger.userClubId], stadium: Math.max(4, level + 1) };
+    const add = Math.max(0, bigger.facilities[bigger.userClubId].stadium - 3) * 2_500;
+    expect(groundCapacity(bigger, bigger.userClubId)).toBe(
+      Math.round((base + add) / 100) * 100
+    );
+    expect(groundCapacity(bigger, bigger.userClubId)).toBeGreaterThanOrEqual(cap);
+    // and the gate pays for it: a full house in a bigger ground is worth more
+    const gate = gateReceipts(save);
+    const gateBig = gateReceipts(bigger);
+    expect(gateBig).toBeGreaterThan(gate);
+  });
+
+  it("falls back to the old table for saves made before grounds had sizes", () => {
+    const save = toLeague(newGame(5054));
+    const old = structuredClone(save);
+    for (const c of old.clubs) delete c.capacity;
+    const level = old.facilities[old.userClubId].stadium;
+    // the old table, plus anything the stadium facility has built on top
+    expect(groundCapacity(old, old.userClubId)).toBe(
+      capacityOf({ stadium: level }) + Math.max(0, level - 3) * 2_500
+    );
+    expect(groundCapacity(old, old.userClubId)).toBeGreaterThan(0);
+  });
+
+  it("lets the manager resize a ground, and shows it everywhere", () => {
+    const save = toLeague(newGame(5055));
+    const edited = editClub(save, "c7", { capacity: 44_500 });
+    const c = edited.clubs.find((x) => x.id === "c7")!;
+    expect(c.capacity).toBe(44_500);
+    const level = edited.facilities["c7"].stadium;
+    expect(groundCapacity(edited, "c7")).toBe(44_500 + Math.max(0, level - 3) * 2_500);
+    expect(clubBrief(edited, "c7").capacity).toBe(groundCapacity(edited, "c7"));
+    // silly numbers are cleaned, not stored
+    expect(editClub(save, "c7", { capacity: 40 }).clubs.find((x) => x.id === "c7")!.capacity).toBe(1_000);
+    expect(editClub(save, "c7", { capacity: 400_000 }).clubs.find((x) => x.id === "c7")!.capacity).toBe(120_000);
+    // and reset hands the ground back
+    const reset = resetClub(edited, "c7");
+    expect(reset.clubs.find((x) => x.id === "c7")!.capacity).toBe(save.clubs.find((x) => x.id === "c7")!.capacity);
+    expect(isEdited(reset.clubs.find((x) => x.id === "c7")!, reset)).toBe(false);
+  });
+
+  it("holds the spread for every country, and for old worlds too", () => {
+    for (const nation of ["eng", "esp", "ger", "ita"] as const) {
+      const save = newGame(5060, undefined, nation);
+      const seats = save.clubs.map((c) => c.capacity!);
+      expect(new Set(seats).size).toBeGreaterThanOrEqual(18);
+      expect(Math.min(...seats)).toBeLessThan(15_000);
+      expect(Math.max(...seats)).toBeGreaterThan(25_000);
+      expect(seats.every((v) => v <= 81_000)).toBe(true);
     }
   });
 });
