@@ -105,9 +105,15 @@ type StageInfo = {
 const SPEEDS = [1, 2, 4, 8] as const;
 
 type Phase =
-  | { k: "player"; opp: boolean; slot: number; dur: number }
-  | { k: "point"; x: number; y: number; dur: number }
-  | { k: "hold"; dur: number };
+  | { k: "player"; opp: boolean; slot: number; dur?: number }
+  | { k: "point"; x: number; y: number; dur?: number }
+  /** the ball rides with a player: glued to his feet wherever he runs */
+  | { k: "feet"; slot: number; dur?: number }
+  | { k: "hold"; dur?: number };
+
+/** How fast the ball travels: a pass, a clearance, a shot. Units per second. */
+const BALL_PASS_SPEED = 26;
+const BALL_LOOSE_SPEED = 34;
 
 export function MatchScreen() {
   const game = useGame((s) => s.game)!;
@@ -195,6 +201,7 @@ function LiveMatchScreen() {
     t: 0,
     ballX: 50,
     ballY: 50,
+    roamDamp: 1,
     originX: 50,
     originY: 50,
     time: 0,
@@ -530,9 +537,9 @@ function LiveMatchScreen() {
       }
       // individual wandering — sized by the role's roaming and the player's
       // stamina, offset per player so no two move in lockstep
-      const w1 = Math.sin(C.time * 0.35 + prof.seed * 6.283) * prof.roam * 0.35;
-      const w2 = Math.cos(C.time * 0.27 + prof.seed * 4.712) * prof.roam * 0.25;
-      const j = Math.sin(C.time * 1.4 + prof.seed * 9.42) * 0.3;
+      const w1 = Math.sin(C.time * 0.35 + prof.seed * 6.283) * prof.roam * 0.35 * C.roamDamp;
+      const w2 = Math.cos(C.time * 0.27 + prof.seed * 4.712) * prof.roam * 0.25 * C.roamDamp;
+      const j = Math.sin(C.time * 1.4 + prof.seed * 9.42) * 0.3 * C.roamDamp;
       return { x: clampPos(x + w1 + j), y: clampPos(y + w2 + j * 0.7) };
     };
 
@@ -566,11 +573,15 @@ function LiveMatchScreen() {
         C.stage = null;
       }
       const phases: Phase[] = [];
-      const firstDur = s.sp === "penalty" ? 4.0 : s.sp === "corner" ? 3.0 : s.sp ? 2.8 : 0.16;
+      const setPiece = s.sp === "penalty" || s.sp === "corner" || !!s.sp;
+      const firstDur = s.sp === "penalty" ? 4.0 : s.sp === "corner" ? 3.0 : s.sp ? 2.8 : undefined;
       if (s.p.length) phases.push({ k: "player", opp: false, slot: s.p[0], dur: firstDur });
       for (let i = 0; i + 1 < s.p.length; i++) {
-        phases.push({ k: "player", opp: false, slot: s.p[i + 1], dur: 0.3 });
+        // open play: the ball flies to wherever that player actually is (duration follows the distance)
+        phases.push({ k: "player", opp: false, slot: s.p[i + 1] });
       }
+      // the ball rests at a player's feet before the outcome — never floating in space
+      if (!setPiece && s.p.length) phases.push({ k: "feet", slot: s.p[s.p.length - 1] });
       const up = attacksUp(C.poss);
       const mirror = sideMirror(C.poss);
       const mouthX = s.t !== undefined ? (mirror ? 100 - s.t : s.t) : 50;
@@ -626,6 +637,7 @@ function LiveMatchScreen() {
 
       C.time += dt;
       if (C.transT > 0) C.transT = Math.max(0, C.transT - dt * C.speed);
+      C.roamDamp = 1;
       for (const side of ["home", "away"] as const) {
         const phase = phaseOf(side);
         for (let i = 0; i < 11; i++) {
@@ -671,7 +683,11 @@ function LiveMatchScreen() {
           const isSecondMan = !sideHasBall && i === secondSlot && nearestD < 18;
           let tgt = targetFor(side, i);
           // the man on the ball goes to the ball; the presser goes where it is going
-          if (isCarrier) tgt = { x: tgt.x * 0.25 + C.ballX * 0.75, y: tgt.y * 0.25 + C.ballY * 0.75 };
+          if (isCarrier) {
+            tgt = { x: tgt.x * 0.25 + C.ballX * 0.75, y: tgt.y * 0.25 + C.ballY * 0.75 };
+            // …and he is the anchor for the ball, so he stops wandering while he has it
+            C.roamDamp = 0.15;
+          }
           else if (isPresser) tgt = { x: tgt.x * 0.2 + targetX * 0.8, y: tgt.y * 0.2 + targetY * 0.8 };
           const cur = C.anim.get(key) ?? newMotion(tgt.x, tgt.y, prof.gk ? 0 : Math.PI / 2);
           // reduced motion: no sliding — the picture steps to where the shape says
@@ -716,18 +732,67 @@ function LiveMatchScreen() {
       // no two bodies in the same place
       if (!reducedMotion() && C.anim.size > 1) separate([...C.anim.values()], 1.05);
 
+      // how far is the ball from the nearest player? (debug hook: it should never be far)
+      const nearestGap = () => {
+        let bd = 1e9;
+        for (const body of C.anim.values()) {
+          const d = Math.hypot(body.x - C.ballX, body.y - C.ballY);
+          if (d < bd) bd = d;
+        }
+        return bd;
+      };
+      if (C.playing) {
+        const gap = nearestGap();
+        const dbg = window as unknown as { __fmBallGap?: number; __fmBallGapMax?: number };
+        dbg.__fmBallGap = Math.round(gap * 10) / 10;
+        dbg.__fmBallGapMax = Math.max(dbg.__fmBallGapMax ?? 0, gap);
+      }
+
       if (C.playing && C.si < tl.length) {
         if (!C.phases) enterStroke();
         C.t += dt * C.speed;
+        // Where a phase is sending the ball, and how fast: resolved live, because
+        // the target is a player who is running (v0.41).
+        const targetOf = (ph: Phase): { x: number; y: number; speed: number } | null => {
+          const other: Side = C.poss === "home" ? "away" : "home";
+          if (ph.k === "player") {
+            const sideOfPhase: Side = ph.opp ? other : (C.poss ?? "home");
+            const body = C.anim.get(sideOfPhase + ":" + ph.slot);
+            const staged = stageTarget(sideOfPhase, ph.slot);
+            const pt = body ? { x: body.x, y: body.y } : (staged ?? targetFor(sideOfPhase, ph.slot));
+            return { x: pt.x, y: pt.y, speed: BALL_PASS_SPEED };
+          }
+          if (ph.k === "point") return { x: ph.x, y: ph.y, speed: BALL_LOOSE_SPEED };
+          if (ph.k === "feet") {
+            const body = C.anim.get((C.poss ?? "home") + ":" + ph.slot);
+            if (!body) return null;
+            return {
+              x: clampPos(body.x + Math.cos(body.heading) * 1.15),
+              y: clampPos(body.y + Math.sin(body.heading) * 1.15),
+              speed: 18
+            };
+          }
+          return null; // a hold
+        };
+        const ensureDur = (ph: Phase) => {
+          if (ph.dur !== undefined) return;
+          const t = targetOf(ph);
+          if (!t) {
+            ph.dur = 0.2;
+            return;
+          }
+          const dist = Math.hypot(t.x - C.ballX, t.y - C.ballY);
+          ph.dur = Math.max(0.12, Math.min(1.25, dist / t.speed));
+        };
+
         let guard = 0;
-        while (
-          C.phases &&
-          C.pi < C.phases.length &&
-          C.t >= C.phases[C.pi].dur &&
-          guard++ < 40
-        ) {
+        while (C.phases && C.pi < C.phases.length && guard++ < 40) {
+          const cur0 = C.phases[C.pi];
+          ensureDur(cur0);
+          const curDur = cur0.dur ?? 0.2;
+          if (C.t < curDur) break;
           const ph = C.phases[C.pi];
-          C.t -= ph.dur;
+          C.t -= curDur;
           C.pi++;
           C.originX = C.ballX;
           C.originY = C.ballY;
@@ -753,18 +818,16 @@ function LiveMatchScreen() {
         }
         const ph = C.phases?.[C.pi];
         if (ph) {
-          let to: { x: number; y: number } | null = null;
-          if (ph.k === "player") {
-            const other: Side = C.poss === "home" ? "away" : "home";
-            to = targetFor(ph.opp ? other : (C.poss ?? "home"), ph.slot);
-          } else if (ph.k === "point") {
-            to = { x: ph.x, y: ph.y };
-          }
-          if (to) {
-            const q = Math.min(1, ph.dur ? C.t / ph.dur : 0);
+          const t = targetOf(ph);
+          if (t && ph.k === "feet") {
+            // glued to his boots: the ball travels with the man, so a dribble reads as one action
+            C.ballX = t.x;
+            C.ballY = t.y;
+          } else if (t) {
+            const q = Math.min(1, C.t / (ph.dur ?? 0.2));
             const e = q * q * (3 - 2 * q);
-            C.ballX = C.originX + (to.x - C.originX) * e;
-            C.ballY = C.originY + (to.y - C.originY) * e;
+            C.ballX = C.originX + (t.x - C.originX) * e;
+            C.ballY = C.originY + (t.y - C.originY) * e;
           }
           const cur = tl[C.si];
           if (cur) C.minute = cur.m;

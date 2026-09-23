@@ -872,3 +872,18 @@ A division now reads like a division: a handful of grounds under 12,000, a broad
 **The facility adds on top, and never takes away.** `groundCapacity(save, clubId)` = the club's own capacity **+ 2,500 seats for every stadium level above 3** (levels 1–3 are the ground as it stands). Upgrading the stadium now literally fills seats, and since the gate is `capacity × £30 × how full the house is`, it pays for itself — which is what v0.30's "stadium → gate" always claimed.
 
 **And you can change it.** The club editor gained a **Capacity** field (1,000–120,000, rounded to the hundred), so any ground you dislike can be resized; blanking/resetting hands it back to the generator's number. Old saves keep working: without a stored capacity, the level table is still the fallback.
+
+## 45. The ball follows the players (`MatchScreen`, v0.41)
+
+The complaint was exact: *the ball is passed around but nobody is where it lands.* The cause was a seam between the two layers. The **sim** writes a timeline of strokes — each one a chain of **slots** (`s.p`), i.e. *who* passes and *when* — while the **motion layer** moves the bodies continuously (pressing, drifting, gathering round the ball). The ball renderer took the sim's slot and sent the ball to **that slot's formation coordinate** — a static point the body had long since left. Every pass ended in empty grass, and the ball travelled at a fixed speed regardless of distance, so it also outran everyone.
+
+**What changed — the ball is anchored to the actors, not to the formation:**
+
+- **Live receivers.** A `"player"` phase now resolves its target from the receiver's **motion body** (`C.anim.get(side + ":" + slot)`) every frame, falling back to the staged set-piece spot or the slot only if no body exists. The ball flies to where the man *is*, and he is there when it arrives.
+- **Distance decides the speed.** A phase's duration is computed from the distance at the moment it starts: `dur = clamp(dist / 26, 0.12s, 1.25s)` for passes and `dist / 34` for loose balls. A five-unit square ball and a forty-unit switch no longer take the same time, and the ball cannot outrun the players.
+- **The ball rides at his feet.** A new `"feet"` phase glues the ball to the carrier's position plus a 1.15-unit lead in his facing direction, so a man receiving and dribbling reads as one action instead of a ball floating beside a running dot. Open-play strokes end with this phase, so the ball is at somebody's boots before the outcome plays.
+- **The carrier stops wandering.** While he has the ball his individual wander is damped to 15% (`C.roamDamp`), so a glued ball does not jitter.
+
+**Measured, not eyeballed.** A diagnostic hook (`__fmBallGap` = distance from the ball to the nearest player) sampled at every phase completion, over a full half: the ball now comes to rest **0–1.1 units** from the nearest player (p50 0.1), with **zero** rest points further than 6 units. Before, passes routinely finished tens of units from anyone. The only large gaps left are legitimate: a throw-in travelling to the touchline, and a shot crossing the goalmouth.
+
+The sim is untouched — the timeline, the results and every golden value are exactly as they were. This was a presentation fix in the strict sense: the visuals now *obey* the sim's actor, instead of inventing a destination of their own.

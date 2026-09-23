@@ -13,6 +13,10 @@
 
 export type NationId = "eng" | "esp" | "ger" | "ita";
 
+/** A club as it is stored: seven fields, no keys — the property names are what
+ *  a bundle cannot minify, and eighty clubs is real weight. Decoded immediately. */
+export type ClubTuple = [string, string, string, string, string, number, number];
+
 export interface NationClubDef {
   name: string;
   short: string;
@@ -35,7 +39,7 @@ export interface NationDef {
   clubs: NationClubDef[];
 }
 
-export const NATIONS: NationDef[] = [
+const RAW: Array<Omit<NationDef, "clubs"> & { clubs: ClubTuple[] }> = [
   {
     id: "eng",
     country: "England",
@@ -62,26 +66,26 @@ export const NATIONS: NationDef[] = [
       "Olsen", "Pardo", "Rivas", "Stanton", "Thorne", "Urbina", "Vega", "Walsh", "Whitlock", "Brennan"
     ],
     clubs: [
-      { name: "Northport FC", short: "NOR", color: "#2ED573", city: "Northport", ground: "The Dockside", founded: 1898, honours: 7 },
-      { name: "Ironvale United", short: "IRV", color: "#4DABF7", city: "Ironvale", ground: "Forge Park", founded: 1904, honours: 4 },
-      { name: "Ashford Town", short: "ASH", color: "#FFB020", city: "Ashford", ground: "Watling Road", founded: 1911, honours: 2 },
-      { name: "Westgate Rovers", short: "WGR", color: "#B197FC", city: "Westgate", ground: "The Rovers Bowl", founded: 1922, honours: 1 },
-      { name: "Kingsbury AFC", short: "KGB", color: "#FF8787", city: "Kingsbury", ground: "Crown Lane", founded: 1930, honours: 0 },
-      { name: "Brackenfield City", short: "BRK", color: "#63E6BE", city: "Brackenfield", ground: "The Heath", founded: 1936, honours: 3 },
-      { name: "Stonebridge FC", short: "STB", color: "#FFA94D", city: "Stonebridge", ground: "Bridge End", founded: 1944, honours: 2 },
-      { name: "Marlowe Wanderers", short: "MAR", color: "#74C0FC", city: "Marlowe", ground: "Grange Park", founded: 1951, honours: 0 },
-      { name: "Redmoor Athletic", short: "RDM", color: "#F783AC", city: "Redmoor", ground: "The Quarry", founded: 1963, honours: 0 },
-      { name: "Fairhaven FC", short: "FAI", color: "#C0EB75", city: "Fairhaven", ground: "Seaview", founded: 1970, honours: 0 },
-      { name: "Harborough Rangers", short: "HAR", color: "#FFD43B", city: "Harborough", ground: "The Weir", founded: 1921, honours: 2 },
-      { name: "Ellesmere City", short: "ELL", color: "#8CE99A", city: "Ellesmere", ground: "Lakeside", founded: 1928, honours: 1 },
-      { name: "Cranford Albion", short: "CRA", color: "#A5D8FF", city: "Cranford", ground: "Albion Fields", founded: 1933, honours: 3 },
-      { name: "Thornbury Town", short: "THB", color: "#FFC9C9", city: "Thornbury", ground: "The Warren", founded: 1939, honours: 0 },
-      { name: "Selby Park", short: "SEL", color: "#D0BFFF", city: "Selby", ground: "Park Lane", founded: 1947, honours: 1 },
-      { name: "Glenmoor United", short: "GLN", color: "#FFE066", city: "Glenmoor", ground: "The Bowl", founded: 1954, honours: 0 },
-      { name: "Oxbourne FC", short: "OXB", color: "#96F2D7", city: "Oxbourne", ground: "Riverside", founded: 1959, honours: 2 },
-      { name: "Radcliffe Wanderers", short: "RAD", color: "#FFB4A2", city: "Radcliffe", ground: "Wanderers Way", founded: 1964, honours: 0 },
-      { name: "Wexford Athletic", short: "WEX", color: "#99E9F2", city: "Wexford", ground: "The Harbour", founded: 1968, honours: 0 },
-      { name: "Larkspur Town", short: "LRK", color: "#E599F7", city: "Larkspur", ground: "Meadow End", founded: 1974, honours: 0 }
+      ["Northport FC","NOR","#2ED573","Northport","The Dockside",1898,7],
+      ["Ironvale United","IRV","#4DABF7","Ironvale","Forge Park",1904,4],
+      ["Ashford Town","ASH","#FFB020","Ashford","Watling Road",1911,2],
+      ["Westgate Rovers","WGR","#B197FC","Westgate","The Rovers Bowl",1922,1],
+      ["Kingsbury AFC","KGB","#FF8787","Kingsbury","Crown Lane",1930,0],
+      ["Brackenfield City","BRK","#63E6BE","Brackenfield","The Heath",1936,3],
+      ["Stonebridge FC","STB","#FFA94D","Stonebridge","Bridge End",1944,2],
+      ["Marlowe Wanderers","MAR","#74C0FC","Marlowe","Grange Park",1951,0],
+      ["Redmoor Athletic","RDM","#F783AC","Redmoor","The Quarry",1963,0],
+      ["Fairhaven FC","FAI","#C0EB75","Fairhaven","Seaview",1970,0],
+      ["Harborough Rangers","HAR","#FFD43B","Harborough","The Weir",1921,2],
+      ["Ellesmere City","ELL","#8CE99A","Ellesmere","Lakeside",1928,1],
+      ["Cranford Albion","CRA","#A5D8FF","Cranford","Albion Fields",1933,3],
+      ["Thornbury Town","THB","#FFC9C9","Thornbury","The Warren",1939,0],
+      ["Selby Park","SEL","#D0BFFF","Selby","Park Lane",1947,1],
+      ["Glenmoor United","GLN","#FFE066","Glenmoor","The Bowl",1954,0],
+      ["Oxbourne FC","OXB","#96F2D7","Oxbourne","Riverside",1959,2],
+      ["Radcliffe Wanderers","RAD","#FFB4A2","Radcliffe","Wanderers Way",1964,0],
+      ["Wexford Athletic","WEX","#99E9F2","Wexford","The Harbour",1968,0],
+      ["Larkspur Town","LRK","#E599F7","Larkspur","Meadow End",1974,0],
     ]
   },
   {
@@ -109,26 +113,26 @@ export const NATIONS: NationDef[] = [
       "Valero", "Zamora", "Bustos", "Carrasco", "Domínguez", "Estrada", "Ferrán", "Guzmán", "Lozano", "Marín"
     ],
     clubs: [
-      { name: "Real Valdoro", short: "RVD", color: "#F1F3F5", city: "Valdoro", ground: "El Mirador", founded: 1902, honours: 9 },
-      { name: "Club Atlético Sierramar", short: "SIE", color: "#FF6B6B", city: "Sierramar", ground: "La Ribera Alta", founded: 1908, honours: 6 },
-      { name: "Deportivo Almenara", short: "ALM", color: "#4DABF7", city: "Almenara", ground: "Campo de la Vega", founded: 1912, honours: 4 },
-      { name: "Unión Pedralba", short: "PED", color: "#FFD43B", city: "Pedralba", ground: "Estadio del Río", founded: 1915, honours: 3 },
-      { name: "Racing Torviscal", short: "TOR", color: "#63E6BE", city: "Torviscal", ground: "El Sardinel", founded: 1919, honours: 2 },
-      { name: "CD Miralbueno", short: "MIR", color: "#B197FC", city: "Miralbueno", ground: "Los Almendros", founded: 1923, honours: 2 },
-      { name: "Real San Miguel", short: "RSM", color: "#FFA94D", city: "San Miguel", ground: "La Ermita", founded: 1926, honours: 1 },
-      { name: "CF Cortijo Nuevo", short: "COR", color: "#8CE99A", city: "Cortijo Nuevo", ground: "El Llano", founded: 1929, honours: 1 },
-      { name: "Atlético Oropesa", short: "ORO", color: "#F783AC", city: "Oropesa", ground: "Campo Viejo", founded: 1931, honours: 3 },
-      { name: "CD La Ribera", short: "RIB", color: "#74C0FC", city: "La Ribera", ground: "La Isla", founded: 1934, honours: 0 },
-      { name: "Unión Villalba", short: "VIL", color: "#FFE066", city: "Villalba", ground: "El Prado", founded: 1937, honours: 1 },
-      { name: "Real Punta Verde", short: "PTV", color: "#96F2D7", city: "Punta Verde", ground: "Costa Sur", founded: 1941, honours: 0 },
-      { name: "AD Monteclaro", short: "MON", color: "#FFC9C9", city: "Monteclaro", ground: "El Bosque", founded: 1944, honours: 2 },
-      { name: "Club Laredo del Mar", short: "LAR", color: "#C0EB75", city: "Laredo del Mar", ground: "La Bahía", founded: 1948, honours: 0 },
-      { name: "Deportivo Cañaveral", short: "CAÑ", color: "#E599F7", city: "Cañaveral", ground: "Los Caños", founded: 1952, honours: 1 },
-      { name: "Unión Bajo Ebro", short: "BEB", color: "#99E9F2", city: "Bajo Ebro", ground: "El Azud", founded: 1956, honours: 0 },
-      { name: "CF Tierras Altas", short: "TIA", color: "#D0BFFF", city: "Tierras Altas", ground: "La Cima", founded: 1961, honours: 0 },
-      { name: "Racing Puerto Gris", short: "PGR", color: "#FFB4A2", city: "Puerto Gris", ground: "El Muelle", founded: 1965, honours: 0 },
-      { name: "CD Valle Hondo", short: "VLH", color: "#FFD8A8", city: "Valle Hondo", ground: "La Hondonada", founded: 1969, honours: 0 },
-      { name: "Atlético Nuevo Sur", short: "NSU", color: "#A5D8FF", city: "Nuevo Sur", ground: "Estadio Nuevo", founded: 1975, honours: 0 }
+      ["Real Valdoro","RVD","#F1F3F5","Valdoro","El Mirador",1902,9],
+      ["Club Atlético Sierramar","SIE","#FF6B6B","Sierramar","La Ribera Alta",1908,6],
+      ["Deportivo Almenara","ALM","#4DABF7","Almenara","Campo de la Vega",1912,4],
+      ["Unión Pedralba","PED","#FFD43B","Pedralba","Estadio del Río",1915,3],
+      ["Racing Torviscal","TOR","#63E6BE","Torviscal","El Sardinel",1919,2],
+      ["CD Miralbueno","MIR","#B197FC","Miralbueno","Los Almendros",1923,2],
+      ["Real San Miguel","RSM","#FFA94D","San Miguel","La Ermita",1926,1],
+      ["CF Cortijo Nuevo","COR","#8CE99A","Cortijo Nuevo","El Llano",1929,1],
+      ["Atlético Oropesa","ORO","#F783AC","Oropesa","Campo Viejo",1931,3],
+      ["CD La Ribera","RIB","#74C0FC","La Ribera","La Isla",1934,0],
+      ["Unión Villalba","VIL","#FFE066","Villalba","El Prado",1937,1],
+      ["Real Punta Verde","PTV","#96F2D7","Punta Verde","Costa Sur",1941,0],
+      ["AD Monteclaro","MON","#FFC9C9","Monteclaro","El Bosque",1944,2],
+      ["Club Laredo del Mar","LAR","#C0EB75","Laredo del Mar","La Bahía",1948,0],
+      ["Deportivo Cañaveral","CAÑ","#E599F7","Cañaveral","Los Caños",1952,1],
+      ["Unión Bajo Ebro","BEB","#99E9F2","Bajo Ebro","El Azud",1956,0],
+      ["CF Tierras Altas","TIA","#D0BFFF","Tierras Altas","La Cima",1961,0],
+      ["Racing Puerto Gris","PGR","#FFB4A2","Puerto Gris","El Muelle",1965,0],
+      ["CD Valle Hondo","VLH","#FFD8A8","Valle Hondo","La Hondonada",1969,0],
+      ["Atlético Nuevo Sur","NSU","#A5D8FF","Nuevo Sur","Estadio Nuevo",1975,0],
     ]
   },
   {
@@ -156,26 +160,26 @@ export const NATIONS: NationDef[] = [
       "Sander", "Trautmann", "Uhlig", "Vogel", "Wagner", "Zimmer", "Bergmann", "Dorn", "Fuchs", "Grimm"
     ],
     clubs: [
-      { name: "SV Hohenstadt", short: "HOH", color: "#FF6B6B", city: "Hohenstadt", ground: "Stadion am Berg", founded: 1900, honours: 10 },
-      { name: "FC Neuhafen", short: "NHF", color: "#4DABF7", city: "Neuhafen", ground: "Hafenarena", founded: 1904, honours: 7 },
-      { name: "VfL Lindenberg", short: "LIN", color: "#FFD43B", city: "Lindenberg", ground: "Lindenkampfbahn", founded: 1907, honours: 5 },
-      { name: "TSV Kaltbrunn", short: "KAL", color: "#63E6BE", city: "Kaltbrunn", ground: "Am Kalten Bach", founded: 1911, honours: 3 },
-      { name: "SC Grünfelde", short: "GRÜ", color: "#8CE99A", city: "Grünfelde", ground: "Waldstadion", founded: 1913, honours: 4 },
-      { name: "FC Altmoor", short: "ALT", color: "#B197FC", city: "Altmoor", ground: "Moorweide", founded: 1916, honours: 2 },
-      { name: "SV Rosenfeld", short: "ROS", color: "#F783AC", city: "Rosenfeld", ground: "Rosenarena", founded: 1919, honours: 1 },
-      { name: "VfB Weidenau", short: "WEI", color: "#FFA94D", city: "Weidenau", ground: "Weidenau-Platz", founded: 1922, honours: 2 },
-      { name: "TSV Bassendorf", short: "BAS", color: "#74C0FC", city: "Bassendorf", ground: "Bassenkampfbahn", founded: 1925, honours: 0 },
-      { name: "SC Feldingen", short: "FEL", color: "#FFE066", city: "Feldingen", ground: "Feldstadion", founded: 1928, honours: 1 },
-      { name: "FC Steinbach", short: "STB", color: "#96F2D7", city: "Steinbach", ground: "Steinbruch", founded: 1931, honours: 3 },
-      { name: "SV Kirchhagen", short: "KIR", color: "#FFC9C9", city: "Kirchhagen", ground: "An der Kirche", founded: 1934, honours: 0 },
-      { name: "VfL Dornheim", short: "DOR", color: "#C0EB75", city: "Dornheim", ground: "Dornenkampf", founded: 1937, honours: 2 },
-      { name: "TSV Eichwald", short: "EIC", color: "#E599F7", city: "Eichwald", ground: "Eichenstadion", founded: 1940, honours: 0 },
-      { name: "FC Mühlgrund", short: "MÜH", color: "#99E9F2", city: "Mühlgrund", ground: "Mühlenpark", founded: 1946, honours: 1 },
-      { name: "SV Nordfelde", short: "NOR", color: "#D0BFFF", city: "Nordfelde", ground: "Nordkurve", founded: 1949, honours: 0 },
-      { name: "SC Blankenau", short: "BLA", color: "#FFB4A2", city: "Blankenau", ground: "Blankenberg", founded: 1953, honours: 0 },
-      { name: "FC Osthofen", short: "OST", color: "#FFD8A8", city: "Osthofen", ground: "Ostpark", founded: 1958, honours: 0 },
-      { name: "VfB Lerchenfeld", short: "LER", color: "#A5D8FF", city: "Lerchenfeld", ground: "Lerchenwiese", founded: 1962, honours: 0 },
-      { name: "TSV Sonnenberg", short: "SON", color: "#FFEC99", city: "Sonnenberg", ground: "Sonnenhang", founded: 1968, honours: 0 }
+      ["SV Hohenstadt","HOH","#FF6B6B","Hohenstadt","Stadion am Berg",1900,10],
+      ["FC Neuhafen","NHF","#4DABF7","Neuhafen","Hafenarena",1904,7],
+      ["VfL Lindenberg","LIN","#FFD43B","Lindenberg","Lindenkampfbahn",1907,5],
+      ["TSV Kaltbrunn","KAL","#63E6BE","Kaltbrunn","Am Kalten Bach",1911,3],
+      ["SC Grünfelde","GRÜ","#8CE99A","Grünfelde","Waldstadion",1913,4],
+      ["FC Altmoor","ALT","#B197FC","Altmoor","Moorweide",1916,2],
+      ["SV Rosenfeld","ROS","#F783AC","Rosenfeld","Rosenarena",1919,1],
+      ["VfB Weidenau","WEI","#FFA94D","Weidenau","Weidenau-Platz",1922,2],
+      ["TSV Bassendorf","BAS","#74C0FC","Bassendorf","Bassenkampfbahn",1925,0],
+      ["SC Feldingen","FEL","#FFE066","Feldingen","Feldstadion",1928,1],
+      ["FC Steinbach","STB","#96F2D7","Steinbach","Steinbruch",1931,3],
+      ["SV Kirchhagen","KIR","#FFC9C9","Kirchhagen","An der Kirche",1934,0],
+      ["VfL Dornheim","DOR","#C0EB75","Dornheim","Dornenkampf",1937,2],
+      ["TSV Eichwald","EIC","#E599F7","Eichwald","Eichenstadion",1940,0],
+      ["FC Mühlgrund","MÜH","#99E9F2","Mühlgrund","Mühlenpark",1946,1],
+      ["SV Nordfelde","NOR","#D0BFFF","Nordfelde","Nordkurve",1949,0],
+      ["SC Blankenau","BLA","#FFB4A2","Blankenau","Blankenberg",1953,0],
+      ["FC Osthofen","OST","#FFD8A8","Osthofen","Ostpark",1958,0],
+      ["VfB Lerchenfeld","LER","#A5D8FF","Lerchenfeld","Lerchenwiese",1962,0],
+      ["TSV Sonnenberg","SON","#FFEC99","Sonnenberg","Sonnenhang",1968,0],
     ]
   },
   {
@@ -203,32 +207,43 @@ export const NATIONS: NationDef[] = [
       "Bianco", "Caputo", "D'Amico", "Ferretti", "Giordano", "Leone", "Mazza", "Pellegrini", "Rossetti", "Vitale"
     ],
     clubs: [
-      { name: "AC Valcortese", short: "VCO", color: "#FF6B6B", city: "Valcortese", ground: "Stadio del Valle", founded: 1899, honours: 9 },
-      { name: "US Monterello", short: "MTR", color: "#4DABF7", city: "Monterello", ground: "Campo Monterello", founded: 1903, honours: 7 },
-      { name: "AS Sestobianco", short: "SEB", color: "#F1F3F5", city: "Sestobianco", ground: "Stadio Bianco", founded: 1906, honours: 5 },
-      { name: "SS Roccaverde", short: "ROV", color: "#63E6BE", city: "Roccaverde", ground: "La Rocca", founded: 1909, honours: 4 },
-      { name: "AC Portanova", short: "PTN", color: "#FFD43B", city: "Portanova", ground: "Stadio del Porto", founded: 1912, honours: 3 },
-      { name: "US San Felice", short: "SFE", color: "#B197FC", city: "San Felice", ground: "Campo Felice", founded: 1915, honours: 2 },
-      { name: "AS Castelrosso", short: "CSR", color: "#FFA94D", city: "Castelrosso", ground: "Castello Sud", founded: 1918, honours: 2 },
-      { name: "Calcio Verteramo", short: "VER", color: "#8CE99A", city: "Verteramo", ground: "Stadio Verteramo", founded: 1921, honours: 1 },
-      { name: "SS Lodigiana", short: "LOD", color: "#F783AC", city: "Lodigiana", ground: "Campo Vecchio", founded: 1924, honours: 3 },
-      { name: "US Ponteverde", short: "POV", color: "#74C0FC", city: "Ponteverde", ground: "Ponte Nuovo", founded: 1927, honours: 0 },
-      { name: "AC Santa Chiara", short: "SCH", color: "#FFE066", city: "Santa Chiara", ground: "Stadio Santa Chiara", founded: 1930, honours: 1 },
-      { name: "AS Fiumalba", short: "FAL", color: "#96F2D7", city: "Fiumalba", ground: "Riva del Fiume", founded: 1933, honours: 0 },
-      { name: "SS Montegrappa", short: "MGP", color: "#FFC9C9", city: "Montegrappa", ground: "Campo Alto", founded: 1936, honours: 2 },
-      { name: "US Terrafuoco", short: "TEF", color: "#C0EB75", city: "Terrafuoco", ground: "Stadio Vulcano", founded: 1940, honours: 0 },
-      { name: "AC Bellavista", short: "BLV", color: "#E599F7", city: "Bellavista", ground: "Belvedere", founded: 1944, honours: 1 },
-      { name: "AS Corvara Nuova", short: "COR", color: "#99E9F2", city: "Corvara Nuova", ground: "Campo Nuovo", founded: 1949, honours: 0 },
-      { name: "US Marecchia", short: "MAR", color: "#D0BFFF", city: "Marecchia", ground: "Stadio dell'Argine", founded: 1953, honours: 0 },
-      { name: "SS Poggioalto", short: "PGA", color: "#FFB4A2", city: "Poggioalto", ground: "Poggio", founded: 1957, honours: 0 },
-      { name: "AC Vallecupa", short: "VLC", color: "#FFD8A8", city: "Vallecupa", ground: "Campo Cupo", founded: 1961, honours: 0 },
-      { name: "US Nuova Tarquinia", short: "NTQ", color: "#A5D8FF", city: "Nuova Tarquinia", ground: "Stadio Nuovo", founded: 1971, honours: 0 }
+      ["AC Valcortese","VCO","#FF6B6B","Valcortese","Stadio del Valle",1899,9],
+      ["US Monterello","MTR","#4DABF7","Monterello","Campo Monterello",1903,7],
+      ["AS Sestobianco","SEB","#F1F3F5","Sestobianco","Stadio Bianco",1906,5],
+      ["SS Roccaverde","ROV","#63E6BE","Roccaverde","La Rocca",1909,4],
+      ["AC Portanova","PTN","#FFD43B","Portanova","Stadio del Porto",1912,3],
+      ["US San Felice","SFE","#B197FC","San Felice","Campo Felice",1915,2],
+      ["AS Castelrosso","CSR","#FFA94D","Castelrosso","Castello Sud",1918,2],
+      ["Calcio Verteramo","VER","#8CE99A","Verteramo","Stadio Verteramo",1921,1],
+      ["SS Lodigiana","LOD","#F783AC","Lodigiana","Campo Vecchio",1924,3],
+      ["US Ponteverde","POV","#74C0FC","Ponteverde","Ponte Nuovo",1927,0],
+      ["AC Santa Chiara","SCH","#FFE066","Santa Chiara","Stadio Santa Chiara",1930,1],
+      ["AS Fiumalba","FAL","#96F2D7","Fiumalba","Riva del Fiume",1933,0],
+      ["SS Montegrappa","MGP","#FFC9C9","Montegrappa","Campo Alto",1936,2],
+      ["US Terrafuoco","TEF","#C0EB75","Terrafuoco","Stadio Vulcano",1940,0],
+      ["AC Bellavista","BLV","#E599F7","Bellavista","Belvedere",1944,1],
+      ["AS Corvara Nuova","COR","#99E9F2","Corvara Nuova","Campo Nuovo",1949,0],
+      ["US Marecchia","MAR","#D0BFFF","Marecchia","Stadio dell'Argine",1953,0],
+      ["SS Poggioalto","PGA","#FFB4A2","Poggioalto","Poggio",1957,0],
+      ["AC Vallecupa","VLC","#FFD8A8","Vallecupa","Campo Cupo",1961,0],
+      ["US Nuova Tarquinia","NTQ","#A5D8FF","Nuova Tarquinia","Stadio Nuovo",1971,0],
     ]
   }
 ];
 
+const decodeClub = (t: ClubTuple): NationClubDef => ({
+  name: t[0],
+  short: t[1],
+  color: t[2],
+  city: t[3],
+  ground: t[4],
+  founded: t[5],
+  honours: t[6]
+});
+
+export const NATIONS: NationDef[] = RAW.map((n) => ({ ...n, clubs: n.clubs.map(decodeClub) }));
+
 export const nationById = (id: string): NationDef => NATIONS.find((n) => n.id === id) ?? NATIONS[0];
-export const NATION_IDS: NationId[] = NATIONS.map((n) => n.id);
 
 /** The club ids of a nation: the English league keeps its original c1..c20 ids. */
 export const clubIdFor = (nation: NationId, index: number): string =>
