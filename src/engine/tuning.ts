@@ -7,7 +7,7 @@ export const T = {
   attrRange: [42, 82] as [number, number],
   ageRange: [17, 35] as [number, number],
   /** per-club strength offsets at generation (top clubs first on the list) */
-  strengthOffsets: [8, 6, 4, 2, 0, 0, -2, -3, -5, -6],
+  strengthOffsets: [8, 7, 6, 5, 3, 2, 1, 0, 0, -1, -1, -2, -3, -3, -4, -5, -5, -6, -7, -8],
 
   /** match engine */
   baseChancePerMinute: 0.108,

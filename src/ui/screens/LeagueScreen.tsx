@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { SeasonRecord } from "@/engine";
-import { computeTable, conditionLine, conditionsFor, money, ordinal, rating1, ratingAvg, topScorers, weatherOf } from "@/engine";
+import { seasonRounds, computeTable, conditionLine, conditionsFor, money, ordinal, rating1, ratingAvg, topScorers, weatherOf } from "@/engine";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataHub } from "@/ui/DataHub";
@@ -30,7 +30,7 @@ export function LeagueScreen() {
     <div>
       <h1 className="text-lg font-bold">League One</h1>
       <p className="text-xs text-muted-foreground">
-        Season {game.season} · {game.round > 18 ? "Complete" : `Round ${game.round} next`}
+        Season {game.season} · {game.round > seasonRounds(game) ? "Complete" : `Round ${game.round} of ${seasonRounds(game)}`}
       </p>
 
       <Tabs value={tab} onValueChange={(v) => setTab(String(v))} className="mt-3">

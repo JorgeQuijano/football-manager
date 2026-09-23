@@ -796,3 +796,20 @@ The Cup runs on the same day clock v0.35 built. It is the reason the clock exist
 **Settling.** When the round's book closes: prize money for going through (£150k / £350k / £750k / £1.5m to the winner), a news line, and the next round is drawn. If the manager has no tie in a round (he is out, or he has a bye) the round still happens — `tickCup` runs inside `completeRound` so the bracket never stalls waiting for a man who isn't in it. Settling is **idempotent** (`cup.settled`): a round pays out and draws exactly once, whether the manager played it or the engine did.
 
 **Where it is visible.** The League screen has a **Cup** tab: status, the bracket by round with the manager's ties highlighted, penalties inline, past winners from `history.cups`. Old saves get a cup drawn on load (`normalizeSave`); a new season draws a fresh one in `nextSeason`.
+
+## 42. A twenty-club division, and clubs you can edit (v0.37)
+
+**Twenty clubs.** `CLUB_DEFS` now carries twenty (name, short, colour) and `T.strengthOffsets` spreads them from +8 to −8, so the division has a real hierarchy: three or four sides who expect trophies, a broad middle, and a bottom third fighting for their lives. That is **38 rounds, 380 fixtures, 440 players** — every club plays every other home and away.
+
+**The cup with twenty.** The knockout format follows the size of the league: the **eight lowest-seeded** clubs play the preliminary round (four ties), the four winners join the twelve byes in a **round of sixteen** (eight ties), then quarters, semis and the final — five rounds, sixteen ties, every club in it. Weeks **5 / 11 / 18 / 26 / 34** on the same Wednesday clock.
+
+**The rest of the bookkeeping follows the world, not a constant.** `seasonRounds` is `(clubs − 1) × 2`; prize money has twenty places; end-of-season awards want **half a season of football** (`awardMinApps`) instead of a fixed eight appearances; the league header reads "Round 12 of 38". Nothing else in the engine cared how many clubs there are — that was the point of building it that way.
+
+**Old saves keep their world.** Clubs, players and fixtures live *in the save*, so an existing career carries on as a ten-club league with 18 rounds; only new games are born into the twenty-club division. No migration, no half-converted tables.
+
+**Editing clubs** (`clubs.ts`, `ui/ClubEditor.tsx`). On the Club screen there is now **The league** — twenty rows, each opening an editor for that club's public details: **name, three-letter code, colour, city, ground, founding year.**
+
+- **Only what a nameplate is made of.** Strength, preferred formation and facilities are not editable — a rename must never be a cheat, only a story.
+- **Blank means "the club's own".** Clearing City or Ground hands that field back to `CLUB_LORE`, so an edit is reversible field by field, and **Reset** hands the whole club back to the generator.
+- **Cleaned, not trusted.** Names collapse whitespace and cap at 30 characters; the code uppercases and strips to letters/digits; a blank name and a non-hex colour are *refused* rather than stored; the founding year clamps to 1850–2026.
+- **It is world data, not a skin.** The edit is written into `save.clubs`, so the brief, the table, the diary, the cup draw and the commentary all follow it — and it carries into the next season.

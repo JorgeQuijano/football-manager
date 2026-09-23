@@ -1,3 +1,4 @@
+import { ClubsCard } from "@/ui/ClubEditor";
 import { useState } from "react";
 import { Building2, HardHat, Landmark, PiggyBank, Store } from "lucide-react";
 import {
@@ -209,6 +210,8 @@ export function Club() {
           stadium fills the gate.
         </p>
       </section>
+
+      <ClubsCard />
 
       {note && (
         <p className="px-1 text-xs font-semibold text-primary" data-testid="club-note">

@@ -142,12 +142,25 @@ const leaderScore = (p: Player, captain?: string, vice?: string): number =>
 
 export function leaders(save: SaveGame, clubId: string): Player[] {
   const club = clubId;
-  const captain = save.captain && save.players.some((p) => p.id === save.captain && p.clubId === club) ? save.captain : undefined;
+  const captain =
+    save.captain && save.players.some((p) => p.id === save.captain && p.clubId === club) ? save.captain : undefined;
   const vice = save.vice && save.players.some((p) => p.id === save.vice && p.clubId === club) ? save.vice : undefined;
-  return [...save.players]
+  const pool = [...save.players]
     .filter((p) => p.clubId === club)
-    .sort((a, b) => leaderScore(b, captain, vice) - leaderScore(a, captain, vice) || (a.id < b.id ? -1 : 1))
-    .slice(0, 3);
+    .sort((a, b) => leaderScore(b, captain, vice) - leaderScore(a, captain, vice) || (a.id < b.id ? -1 : 1));
+  // the armband means something: whoever wears it leads the room, whatever his numbers say
+  const room: Player[] = [];
+  const wear = (id?: string) => {
+    const man = id ? pool.find((p) => p.id === id) : undefined;
+    if (man && !room.includes(man)) room.push(man);
+  };
+  wear(captain);
+  wear(vice);
+  for (const p of pool) {
+    if (room.length >= 3) break;
+    if (!room.includes(p)) room.push(p);
+  }
+  return room.slice(0, 3);
 }
 
 export interface SocialGroup {

@@ -1,5 +1,5 @@
 import { Trophy } from "lucide-react";
-import { CUP_DAY, CUP_WEEK, cupStatus, cupView, type CupTie } from "@/engine";
+import { CUP_DAY, cupStatus, cupView, type CupTie } from "@/engine";
 import { Card, CardContent } from "@/components/ui/card";
 import { useGame } from "@/state/store";
 
@@ -61,7 +61,7 @@ export function CupPanel() {
             <p className="text-[10px] text-muted-foreground">
               {winner
                 ? `${winner.name} lift it · ${game.season}`
-                : `Ties on the Wednesday of league weeks ${Object.values(CUP_WEEK).join(", ")}`}
+                : `Ties on the Wednesday of weeks ${view.map((r) => r.week).join(", ")}`}
             </p>
           </div>
         </CardContent>

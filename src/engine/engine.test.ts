@@ -28,7 +28,8 @@ import { LOAN, bidForLoan, exerciseLoanOption, loanAsk, loanRollover, loanCount,
 import { dealCost, dealValue, termsDemand } from "./transfers";
 import { INBOX_CAP, inboxFor, inboxUnread, markAllInboxRead, openInboxItem, pushInbox } from "./inbox";
 import { PRE_ROUNDS, makeFriendlies, preseasonState } from "./preseason";
-import { CUP_DAY, completeCupTie, cupStatus, makeCup, resolveTie, tickCup, tieAsFixture, userCupTie } from "./cup";
+import { CUP_DAY, CUP_WEEK, completeCupTie, cupStatus, makeCup, resolveTie, tickCup, tieAsFixture, userCupTie } from "./cup";
+import { editClub, isEdited, resetClub } from "./clubs";
 import { shootout } from "./match";
 import { fmtShort as fmtShortCal, friendlyDate } from "./calendar";
 import type { Activity, Facilities } from "./types";
@@ -236,6 +237,7 @@ import {
   ordinal,
   payPrize,
   prizeFor,
+  PRIZE_MONEY,
   totalsFor,
   topScorers
 } from "./history";
@@ -312,9 +314,9 @@ describe("rng", () => {
 describe("generation", () => {
   const save = newGame(2024);
 
-  it("creates a 10-club league with 22 players per club", () => {
-    expect(save.clubs).toHaveLength(10);
-    expect(save.players).toHaveLength(220);
+  it("creates a 20-club league with 22 players per club", () => {
+    expect(save.clubs).toHaveLength(20);
+    expect(save.players).toHaveLength(440);
     for (const club of save.clubs) {
       expect(squadOf(save.players, club.id)).toHaveLength(22);
     }
@@ -340,16 +342,16 @@ describe("generation", () => {
     }
   });
 
-  it("fixtures: 18 rounds, each club home 9 / away 9, every pair twice", () => {
+  it("fixtures: 38 rounds, each club home 19 / away 19, every pair twice", () => {
     const league = save.fixtures.filter((f) => !f.friendly);
-    expect(league).toHaveLength(90);
+    expect(league).toHaveLength(380);
     const rounds = new Set(league.map((f) => f.round));
-    expect(rounds.size).toBe(18);
+    expect(rounds.size).toBe(38);
     for (const club of save.clubs) {
       const mine = league.filter((f) => f.homeId === club.id || f.awayId === club.id);
-      expect(mine).toHaveLength(18);
-      expect(mine.filter((f) => f.homeId === club.id)).toHaveLength(9);
-      expect(mine.filter((f) => f.awayId === club.id)).toHaveLength(9);
+      expect(mine).toHaveLength(38);
+      expect(mine.filter((f) => f.homeId === club.id)).toHaveLength(19);
+      expect(mine.filter((f) => f.awayId === club.id)).toHaveLength(19);
     }
     // three pre-season friendlies, all involving you
     const friendlies = save.fixtures.filter((f) => f.friendly);
@@ -367,10 +369,10 @@ describe("generation", () => {
 describe("season", () => {
   it("completes with consistent table", () => {
     const save = playSeason(newGame(2024));
-    expect(save.round).toBe(19);
+    expect(save.round).toBe(seasonRounds(save) + 1);
     const table = computeTable(save.fixtures, save.clubs);
     for (const row of table) {
-      expect(row.p).toBe(18);
+      expect(row.p).toBe(seasonRounds(save));
       expect(row.pts).toBe(row.w * 3 + row.d);
       expect(row.gd).toBe(row.gf - row.ga);
     }
@@ -404,7 +406,9 @@ describe("season", () => {
     let matches = 0;
     let homeWins = 0;
     let awayWins = 0;
-    for (let seed = 1; seed <= 24; seed++) {
+    // eight twenty-club seasons is 3,040 matches — the same sample the ten-club
+    // world got from twenty-four seasons, for a quarter of the engine time
+    for (let seed = 1; seed <= 8; seed++) {
       const save = playSeason(newGame(seed * 101));
       for (const f of save.fixtures.filter((x) => !x.friendly)) {
         matches++;
@@ -444,7 +448,7 @@ describe("season", () => {
     // the new season opens in pre-season: three friendlies, then the league
     expect(s2.round).toBe(PRE_ROUNDS[0]);
     expect(s2.phase).toBe("pre");
-    expect(s2.fixtures.filter((f) => !f.friendly)).toHaveLength(90);
+    expect(s2.fixtures.filter((f) => !f.friendly)).toHaveLength(380);
     expect(s2.fixtures.every((f) => !f.played)).toBe(true);
     const league = toLeague(s2);
     expect(league.round).toBe(1);
@@ -1881,6 +1885,7 @@ describe("set piece creator", () => {
   it("falls back to the best available when the nominated taker is not playing", () => {
     const base = newGame(43);
     const benchId = base.lineup.bench.find(Boolean)!;
+    const onPitch = new Set(base.lineup.starters.filter(Boolean));
     const planOf = (clubId: string): SetPiecePlan =>
       clubId === base.userClubId
         ? { ...base.setpieces, takers: { corner: benchId, freekick: benchId, penalty: benchId } }
@@ -1891,7 +1896,11 @@ describe("set piece creator", () => {
       for (const e of state.events) {
         if ((e.type === "corner" || e.type === "freekick") && e.clubId === base.userClubId) {
           seen++;
-          expect(e.playerId).not.toBe(benchId);
+          // before the substitutions he is genuinely off the pitch, so a man on it takes it
+          if (e.minute < 55) {
+            expect(e.playerId).not.toBe(benchId);
+            expect(onPitch.has(e.playerId!)).toBe(true);
+          }
         }
       }
     }
@@ -2650,7 +2659,9 @@ describe("history, records & awards", () => {
     expect(prizeFor(1)).toBeGreaterThan(prizeFor(2));
     expect(prizeFor(2)).toBeGreaterThan(prizeFor(10));
     expect(prizeFor(0)).toBe(prizeFor(1));
-    expect(prizeFor(99)).toBe(prizeFor(10));
+    expect(prizeFor(99)).toBe(prizeFor(PRIZE_MONEY.length));
+    expect(prizeFor(20)).toBeGreaterThan(0);
+    expect(prizeFor(19)).toBeGreaterThan(prizeFor(20));
     expect(ordinal(1)).toBe("1st");
     expect(ordinal(2)).toBe("2nd");
     expect(ordinal(3)).toBe("3rd");
@@ -3042,7 +3053,7 @@ describe("on-pitch realism", () => {
     // weather varies round to round, and the pitches wear through the season
     const s = newGame(11);
     const weathers = new Set<string>();
-    for (let r = 1; r <= 18; r++) weathers.add(conditionsFor(s, r).weather);
+    for (let r = 1; r <= seasonRounds(s); r++) weathers.add(conditionsFor(s, r).weather);
     expect(weathers.size).toBeGreaterThan(1);
     expect(conditionsFor(s, 1).pitch).toBe("good");
     expect(conditionsFor(s, 15).pitch).toBe("heavy");
@@ -3455,11 +3466,11 @@ describe("calendar", () => {
     expect(roundDate(1, 18)).toEqual(addDays({ y: 2026, m: 7, d: 8 }, 119)); // 5 Dec 2026
     expect(roundDate(2, 1)).toEqual({ y: 2027, m: 7, d: 8 });
     expect(dayOfWeek(roundDate(1, 7))).toBe(6); // every match day is a Saturday
-    expect(seasonRoundsOf(save)).toBe(18);
+    expect(seasonRoundsOf(save)).toBe(38);
     // a full month of paging for one season
     const months = seasonMonths(save);
     expect(months[0]).toEqual({ y: 2026, m: 6 }); // July 2026 — pre-season opens here
-    expect(months[months.length - 1]).toEqual({ y: 2026, m: 11 }); // December 2026
+    expect(months[months.length - 1]).toEqual({ y: 2027, m: 3 }); // April 2027 — the 38th round
   });
 
   it("marks match days, training days and rest days", () => {
@@ -3489,7 +3500,7 @@ describe("calendar", () => {
 
     // outside the season there is no calendar at all
     expect(dayFor(save, addDays(sat, -30))).toBeNull();
-    expect(dayFor(save, addDays(sat, 200))).toBeNull();
+    expect(dayFor(save, addDays(sat, 400))).toBeNull(); // the season runs to April now
   });
 
   it("carries results into the past and leaves the future open", () => {
@@ -3515,7 +3526,7 @@ describe("calendar", () => {
     expect(dayAt(9).events).toContain("Winter window opens");
     expect(dayAt(10).events).toContain("Winter window closes");
     expect(dayAt(5).events).toEqual([]);
-    expect(dayAt(18).events).toContain("Final day");
+    expect(dayAt(seasonRoundsOf(save)).events).toContain("Final day");
     // window markers sit on match day, not across the whole week
     expect(midweek(1).events).toEqual([]);
     expect(midweek(3).events).toEqual([]);
@@ -4866,8 +4877,9 @@ describe("individual players: bodies, targets, retraining, moves, discipline & t
   it("the armband: the captain leads the room and wears it on the pitch", () => {
     const save = fresh();
     const squad = squadOf(save.players, save.userClubId);
-    const kid = squad.sort((a, b) => a.age - b.age)[0];
-    const vet = squad.sort((a, b) => b.age - a.age)[0];
+    const leaders = new Set(roomLeaders(save, save.userClubId).map((x) => x.id));
+    const kid = squad.filter((x) => !leaders.has(x.id)).sort((a, b) => a.age - b.age)[0];
+    const vet = squad.filter((x) => x.id !== kid.id).sort((a, b) => b.age - a.age)[0];
     const made = setArmband(save, kid.id, "captain");
     expect(made.resp.ok).toBe(true);
     expect(made.save.captain).toBe(kid.id);
@@ -5063,7 +5075,7 @@ describe("pre-season & form: friendly weeks and the hot/cold hand", () => {
     expect(fmtShortCal(friendlyDate(1, 1))).toMatch(/25 Jul/);
     expect(fmtShortCal(friendlyDate(1, 2))).toMatch(/1 Aug/);
     // the league fixtures are still all there, untouched
-    expect(save.fixtures.filter((f) => f.round > 0)).toHaveLength(seasonRounds(save) * 5);
+    expect(save.fixtures.filter((f) => f.round > 0)).toHaveLength(seasonRounds(save) * (save.clubs.length / 2));
   });
 
   it("a friendly builds legs and form but never the record books", () => {
@@ -5202,7 +5214,7 @@ describe("pre-season & form: friendly weeks and the hot/cold hand", () => {
     const fs = next.fixtures.filter((f) => f.friendly);
     expect(fs).toHaveLength(3);
     expect(fs.every((f) => !f.played)).toBe(true);
-    expect(next.fixtures.filter((f) => f.round > 0)).toHaveLength(seasonRounds(next) * 5);
+    expect(next.fixtures.filter((f) => f.round > 0)).toHaveLength(seasonRounds(next) * (next.clubs.length / 2));
   }, 30_000);
 
   it("stays deterministic through pre-season and the league", () => {
@@ -5398,14 +5410,18 @@ describe("motivation: talks, meetings and the big stage", () => {
     // round 1 with nobody having played: not a big match yet
     expect(bigMatchFor(save, fx)).toBeNull();
     // build a table where you and the opponent are both up top late in the season
-    const played = { ...save, round: 16 };
+    const rounds = seasonRounds(save);
+    const played = { ...save, round: rounds - 2 };
     const target = played.fixtures.find(
-      (f) => f.round === 16 && !f.played && (f.homeId === played.userClubId || f.awayId === played.userClubId)
+      (f) =>
+        f.round === played.round &&
+        !f.played &&
+        (f.homeId === played.userClubId || f.awayId === played.userClubId)
     )!;
     const oppId = target.homeId === played.userClubId ? target.awayId : target.homeId;
     const withResults = structuredClone(played);
     for (const f of withResults.fixtures) {
-      if (f.round > 15 || f.played) continue;
+      if (f.round >= played.round || f.played) continue;
       const mineHome = f.homeId === withResults.userClubId;
       const oppHome = f.homeId === oppId;
       f.played = true;
@@ -5539,7 +5555,7 @@ describe("discipline: the fifth booking and the straight red", () => {
 
   it("a season's football produces real bans somewhere in the division", () => {
     let save = toLeague(fresh());
-    for (let i = 0; i < 18; i++) save = playRound(save).save;
+    for (let i = 0; i < seasonRounds(save); i++) save = playRound(save).save;
     const booked = save.players.filter((p) => (p.yellows ?? 0) >= 5);
     expect(booked.length).toBeGreaterThan(0);
     // and the accumulators are exactly the ones walking the tightrope or banned
@@ -5712,7 +5728,7 @@ describe("the club: sponsorship, the account and the campus", () => {
     let save = toLeague(fresh());
     save.sponsor = { name: "Season Co", weekly: 180_000, seasons: 2, until: save.season + 2, bonus: 0 };
     const start = save.finances[save.userClubId].balance;
-    for (let i = 0; i < 18; i++) save = playRound(save).save;
+    for (let i = 0; i < seasonRounds(save); i++) save = playRound(save).save;
     const end = save.finances[save.userClubId].balance;
     expect(end).toBeGreaterThan(start); // a mid club is cash-generative on this model
     expect(end).toBeLessThan(start + 40_000_000); // …but not silly
@@ -5792,10 +5808,10 @@ describe("manager onboarding: the club brief and the first day", () => {
   it("day-one advice reads the club it is given", () => {
     const save = newGame(997, "c1");
     const rich = sponsorHint(save, "c1");
-    const poor = sponsorHint(save, save.clubs[9].id);
+    const poor = sponsorHint(save, save.clubs[save.clubs.length - 1].id);
     expect(rich).not.toBe(poor);
     expect(wagePressure(save, "c1").length).toBeGreaterThan(10);
-    expect(wagePressure(save, save.clubs[9].id).length).toBeGreaterThan(10);
+    expect(wagePressure(save, save.clubs[save.clubs.length - 1].id).length).toBeGreaterThan(10);
     // a band is always one of the five, for any value
     const bands = new Set(["elite", "strong", "good", "modest", "limited"]);
     for (const v of [0, 1, 5, 10, 50, 100]) {
@@ -6012,6 +6028,138 @@ describe("height and the aerial game (v0.34.0)", () => {
   });
 });
 
+describe("a twenty-club league (v0.37.0)", () => {
+  it("has twenty clubs, each playing every other twice — a 38-round season", () => {
+    const save = toLeague(newGame(3030));
+    expect(save.clubs).toHaveLength(20);
+    expect(seasonRounds(save)).toBe(38);
+    const league = save.fixtures.filter((f) => !f.friendly);
+    expect(league).toHaveLength(380); // 20 clubs, 19 opponents, home and away
+    const perClub = new Map<string, number>();
+    for (const f of league) {
+      perClub.set(f.homeId, (perClub.get(f.homeId) ?? 0) + 1);
+      perClub.set(f.awayId, (perClub.get(f.awayId) ?? 0) + 1);
+    }
+    expect([...perClub.values()].every((n) => n === 38)).toBe(true);
+    // and nobody plays themselves, nobody twice in a round
+    for (let r = 1; r <= 38; r++) {
+      const round = league.filter((f) => f.round === r);
+      expect(round).toHaveLength(10);
+      const ids = round.flatMap((f) => [f.homeId, f.awayId]);
+      expect(new Set(ids).size).toBe(20);
+    }
+  });
+
+  it("gives every club a full squad and every club a brief", () => {
+    const save = toLeague(newGame(3031));
+    const perClub = new Map<string, number>();
+    for (const pl of save.players) perClub.set(pl.clubId, (perClub.get(pl.clubId) ?? 0) + 1);
+    expect([...perClub.values()]).toEqual(Array.from({ length: 20 }, () => 22));
+    for (const c of save.clubs) {
+      const brief = clubBrief(save, c.id);
+      expect(brief.name).toBe(c.name);
+      expect(brief.lore.city.length).toBeGreaterThan(1);
+      expect(brief.capacity).toBeGreaterThan(0);
+    }
+  });
+
+  it("runs the cup over five rounds: prelim of eight, then a round of sixteen", () => {
+    const save = toLeague(newGame(3032));
+    const prelim = save.cup!.ties.filter((t) => t.round === "prelim");
+    expect(prelim).toHaveLength(4);
+    const inPrelim = new Set(prelim.flatMap((t) => [t.homeId, t.awayId]));
+    expect(inPrelim.size).toBe(8);
+    expect(save.clubs.length - inPrelim.size).toBe(12); // the byes
+    // settle the prelim and the round of sixteen appears, eight ties strong
+    const clone: any = JSON.parse(JSON.stringify({ ...save, round: CUP_WEEK.prelim }));
+    tickCup(clone);
+    expect(clone.cup.ties.filter((t: any) => t.round === "r16")).toHaveLength(8);
+  });
+
+  it("plays a whole twenty-club season: the cup finishes with one winner", () => {
+    let save = toLeague(newGame(3033));
+    let guard = 0;
+    const started = Date.now();
+    while (save.round <= 38 && guard++ < 60) {
+      const tie = userCupTie(save);
+      if (tie) {
+        const r = resolveTie(save, tie);
+        save = completeCupTie({ ...save, live: undefined }, { homeGoals: r.homeGoals, awayGoals: r.awayGoals, updates: [], ratings: {} } as any, r.pens);
+      }
+      save = playRound(save).save;
+    }
+    const ms = Date.now() - started;
+    expect(save.cup!.winnerId).toBeTruthy();
+    expect(save.history.cups?.length).toBe(1);
+    // twenty clubs is twice the world (380 matches, 440 players). What must not
+    // change is the cost of a single match: judge that, and report the season.
+    const matches = 38 * 10;
+    // eslint-disable-next-line no-console
+    console.info(`[perf] twenty-club season: ${ms} ms for ${matches} matches (${(ms / matches).toFixed(1)} ms/match)`);
+    expect(ms / matches).toBeLessThan(25);
+  });
+
+  it("edits a club: name, colour, city and ground, and the brief follows", () => {
+    const save = toLeague(newGame(3034));
+    const before = clubBrief(save, "c4");
+    const edited = editClub(save, "c4", {
+      name: "Testville FC",
+      short: "tst",
+      color: "#123456",
+      city: "Testville",
+      ground: "The Test Bowl",
+      founded: 1999
+    });
+    const c = edited.clubs.find((x) => x.id === "c4")!;
+    expect(c.name).toBe("Testville FC");
+    expect(c.short).toBe("TST"); // upper-cased
+    expect(c.color).toBe("#123456");
+    expect(c.city).toBe("Testville");
+    expect(c.ground).toBe("The Test Bowl");
+    expect(c.founded).toBe(1999);
+    const after = clubBrief(edited, "c4");
+    expect(after.name).toBe("Testville FC");
+    expect(after.lore.city).toBe("Testville");
+    expect(after.lore.stadium).toBe("The Test Bowl");
+    expect(after.lore.founded).toBe(1999);
+    // the rest of the world is untouched, and so is the game: strength and formation
+    expect(edited.clubs.find((x) => x.id === "c5")!.name).toBe(save.clubs.find((x) => x.id === "c5")!.name);
+    expect(c.strength).toBe(save.clubs.find((x) => x.id === "c4")!.strength);
+    expect(c.formation).toBe(save.clubs.find((x) => x.id === "c4")!.formation);
+    expect(before.name).not.toBe(after.name);
+  });
+
+  it("cleans what the manager types, and never lets a club be erased", () => {
+    const save = toLeague(newGame(3035));
+    const messy = editClub(save, "c6", { name: "  Two   Spaces  ", short: "a1!", city: "", ground: "   " });
+    const c = messy.clubs.find((x) => x.id === "c6")!;
+    expect(c.name).toBe("Two Spaces");
+    expect(c.short).toBe("A1");
+    expect(c.city).toBeUndefined(); // blanked = back to the club's own
+    expect(c.ground).toBeUndefined();
+    expect(clubBrief(messy, "c6").lore.city).toBe(clubBrief(save, "c6").lore.city);
+    // an empty name is refused outright — a club always has a name
+    const nameless = editClub(save, "c6", { name: "   " });
+    expect(nameless.clubs.find((x) => x.id === "c6")!.name).toBe(save.clubs.find((x) => x.id === "c6")!.name);
+    // a rubbish colour is refused too
+    const badColour = editClub(save, "c6", { color: "red" });
+    expect(badColour.clubs.find((x) => x.id === "c6")!.color).toBe(save.clubs.find((x) => x.id === "c6")!.color);
+  });
+
+  it("resets a club to the generator, and edits survive the season turning over", () => {
+    const save = toLeague(newGame(3036));
+    const edited = editClub(save, "c7", { name: "Renamed", city: "Somewhere" });
+    expect(isEdited(edited.clubs.find((c) => c.id === "c7")!, edited)).toBe(true);
+    const reset = resetClub(edited, "c7");
+    expect(reset.clubs.find((c) => c.id === "c7")!.name).toBe(save.clubs.find((c) => c.id === "c7")!.name);
+    expect(isEdited(reset.clubs.find((c) => c.id === "c7")!, reset)).toBe(false);
+    // and an edit is part of the world: it carries into the next season
+    const next = nextSeason(edited);
+    expect(next.clubs.find((c) => c.id === "c7")!.name).toBe("Renamed");
+    expect(clubBrief(next, "c7").lore.city).toBe("Somewhere");
+  });
+});
+
 describe("the Challenge Cup: mid-week knockout (v0.36.0)", () => {
   /** play league rounds up to (not including) a round number */
   const toRound = (seed: number, round: number) => {
@@ -6050,19 +6198,19 @@ describe("the Challenge Cup: mid-week knockout (v0.36.0)", () => {
     const s = toLeague(newGame(2020));
     const a = makeCup(s);
     const b = makeCup(s);
-    expect(a.ties).toHaveLength(2);
+    expect(a.ties).toHaveLength(4); // eight clubs in the preliminary, twelve byes
     expect(JSON.stringify(a)).toBe(JSON.stringify(b)); // same seed, same draw
     const inPrelim = new Set(a.ties.flatMap((t) => [t.homeId, t.awayId]));
-    expect(inPrelim.size).toBe(4);
+    expect(inPrelim.size).toBe(8);
     for (const t of a.ties) expect(t.homeId).not.toBe(t.awayId);
   });
 
-  it("every club is in the cup — six byes, four in the preliminary", () => {
+  it("every club is in the cup — twelve byes, eight in the preliminary", () => {
     const s = toLeague(newGame(2021));
     const prelim = s.cup!.ties.filter((t) => t.round === "prelim");
     const inPrelim = new Set(prelim.flatMap((t) => [t.homeId, t.awayId]));
-    expect(inPrelim.size).toBe(4);
-    expect(s.clubs.length - inPrelim.size).toBe(6); // the rest go straight to the quarters
+    expect(inPrelim.size).toBe(8);
+    expect(s.clubs.length - inPrelim.size).toBe(12); // the rest go straight to the round of sixteen
   });
 
   it("a cup tie turns Wednesday into a match day", () => {
@@ -6103,10 +6251,16 @@ describe("the Challenge Cup: mid-week knockout (v0.36.0)", () => {
   });
 
   it("the bracket runs on its own when the manager is not holding it up", () => {
-    const save = toRound(2024, 8); // the quarter-final week
+    // walk to the quarter-final week, playing the manager's own ties on the way
+    let save = toLeague(newGame(2024));
+    let walk = 0;
+    while (save.round < CUP_WEEK.qf && walk++ < 40) {
+      save = playTie(save);
+      save = playRound(save).save;
+    }
     const clone: any = JSON.parse(JSON.stringify(save));
     const qf = clone.cup.ties.filter((t: any) => t.round === "qf");
-    expect(qf.length).toBe(4); // eight clubs: two prelim winners, six byes
+    expect(qf.length).toBe(4); // eight clubs: the round of sixteen winners
     // say the manager has played his (or is out): the round must settle itself
     const mine = qf.find((t: any) => t.homeId === clone.userClubId || t.awayId === clone.userClubId);
     if (mine && !mine.played) {
@@ -6125,7 +6279,7 @@ describe("the Challenge Cup: mid-week knockout (v0.36.0)", () => {
   it("a season ends with one winner, remembered in the history", () => {
     let save = toLeague(newGame(2025));
     let guard = 0;
-    while (save.round <= 18 && guard++ < 40) {
+    while (save.round <= seasonRounds(save) && guard++ < 90) {
       save = playTie(save);
       save = playRound(save).save;
     }

@@ -3,7 +3,7 @@ import { hashSeed, mulberry32 } from "./rng";
 
 /**
  * Double round-robin (circle method): every club plays every other twice,
- * once at home, once away. 10 clubs -> 18 rounds, 90 fixtures.
+ * once at home, once away. 20 clubs -> 38 rounds, 380 fixtures.
  */
 export function buildFixtures(clubs: Club[], season: number, seed: number): Fixture[] {
   const rng = mulberry32(hashSeed(seed, "fixtures", season));

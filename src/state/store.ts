@@ -19,6 +19,8 @@ import {
   changeMinute,
   completeCupTie,
   completeRound,
+  editClub as editClubEngine,
+  resetClub as resetClubEngine,
   CUP_DAY,
   finalizeLive,
   fixLineup,
@@ -50,6 +52,7 @@ import type { BidResponse } from "@/engine";
 import type {
   Activity,
   AttrKey,
+  ClubEdit,
   CornerRoutine,
   DayReport,
   FacilityKind,
@@ -167,6 +170,10 @@ interface AppState {
   setPlayhead: (m: number) => void;
   /** one-week plan override (a cup week's lighter load) */
   setWeekOverride: (plan: Activity[] | null) => void;
+  /** rename / recolour / move a club (v0.37) */
+  editClub: (clubId: string, patch: ClubEdit) => void;
+  /** hand a club back to the generator */
+  resetClub: (clubId: string) => void;
 
   startNextSeason: () => void;
   setScreen: (s: Screen) => void;
@@ -578,6 +585,22 @@ export const useGame = create<AppState>()((set, get) => ({
       lastPlayheadPersist = now;
       schedulePersist(get().game);
     }
+  },
+
+  editClub: (clubId: string, patch: ClubEdit) => {
+    const { game } = get();
+    if (!game) return;
+    const save = editClubEngine(game, clubId, patch);
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  resetClub: (clubId: string) => {
+    const { game } = get();
+    if (!game) return;
+    const save = resetClubEngine(game, clubId);
+    set({ game: save });
+    schedulePersist(save);
   },
 
   setWeekOverride: (plan: Activity[] | null) => {

@@ -28,7 +28,17 @@ export const CLUB_DEFS: ReadonlyArray<{ name: string; short: string; color: stri
   { name: "Stonebridge FC", short: "STB", color: "#FFA94D" },
   { name: "Marlowe Wanderers", short: "MAR", color: "#74C0FC" },
   { name: "Redmoor Athletic", short: "RDM", color: "#F783AC" },
-  { name: "Fairhaven FC", short: "FAI", color: "#C0EB75" }
+  { name: "Fairhaven FC", short: "FAI", color: "#C0EB75" },
+  { name: "Harborough Rangers", short: "HAR", color: "#FFD43B" },
+  { name: "Ellesmere City", short: "ELL", color: "#8CE99A" },
+  { name: "Cranford Albion", short: "CRA", color: "#A5D8FF" },
+  { name: "Thornbury Town", short: "THB", color: "#FFC9C9" },
+  { name: "Selby Park", short: "SEL", color: "#D0BFFF" },
+  { name: "Glenmoor United", short: "GLN", color: "#FFE066" },
+  { name: "Oxbourne FC", short: "OXB", color: "#96F2D7" },
+  { name: "Radcliffe Wanderers", short: "RAD", color: "#FFB4A2" },
+  { name: "Wexford Athletic", short: "WEX", color: "#99E9F2" },
+  { name: "Larkspur Town", short: "LRK", color: "#E599F7" }
 ];
 
 const FIRST = [

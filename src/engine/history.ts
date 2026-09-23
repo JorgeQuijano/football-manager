@@ -15,17 +15,23 @@ import { pushNews } from "./training";
 
 /** Prize money by final league position (1st → 8m … 10th → 700k). */
 export const PRIZE_MONEY = [
-  8_000_000, 5_000_000, 3_600_000, 2_800_000, 2_200_000, 1_800_000, 1_400_000, 1_100_000, 900_000, 700_000
+  8_000_000, 5_000_000, 3_600_000, 2_800_000, 2_200_000, 1_800_000, 1_400_000, 1_100_000, 900_000, 700_000,
+  560_000, 460_000, 380_000, 320_000, 270_000, 230_000, 200_000, 175_000, 155_000, 140_000
 ];
 
 export const prizeFor = (position: number): number =>
   PRIZE_MONEY[Math.min(Math.max(1, position), PRIZE_MONEY.length) - 1];
+
+/** how many clubs the league has (the season length is 2n-2) */
+const clubsIn = (save: SaveGame): number => save.clubs?.length ?? 10;
 
 /** Team of the Season shape (4-3-3). */
 export const TOTS_SHAPE: Position[] = ["GK", "DF", "DF", "DF", "DF", "MF", "MF", "MF", "FW", "FW", "FW"];
 
 /** Minimum league appearances for end-of-season awards. */
 export const AWARD_MIN_APPS = 8;
+/** Awards want half a season of football — 8 apps was half of eighteen rounds (v0.37) */
+export const awardMinApps = (seasonRounds: number): number => Math.max(AWARD_MIN_APPS, Math.round(seasonRounds / 2));
 /** Minimum minutes in a match to be eligible for Player of the Round. */
 export const POTR_MIN_MINUTES = 45;
 
@@ -105,7 +111,7 @@ export function roundAwards(save: SaveGame): void {
       const head = awards.rounds[0];
       if (head && head.season === save.season && head.round === save.round) awards.rounds[0] = entry;
       else awards.rounds.unshift(entry);
-      awards.rounds = awards.rounds.slice(0, 18);
+      awards.rounds = awards.rounds.slice(0, Math.max(18, save.clubs.length * 2 - 2));
     }
   }
 }
@@ -141,7 +147,7 @@ export function recordSeason(save: SaveGame): void {
     .sort((a, b) => b.goals - a.goals || b.assists - a.assists || (a.id < b.id ? -1 : 1))[0];
 
   const rated = [...save.players]
-    .filter((p) => p.apps >= AWARD_MIN_APPS && (p.ratingCount ?? 0) > 0)
+    .filter((p) => p.apps >= awardMinApps(clubsIn(save) * 2 - 2) && (p.ratingCount ?? 0) > 0)
     .map((p) => ({ p, avg: (p.ratingSum ?? 0) / (p.ratingCount ?? 1) }))
     .sort((a, b) => b.avg - a.avg || b.p.apps - a.p.apps || (a.p.id < b.p.id ? -1 : 1));
 
