@@ -173,6 +173,65 @@ function makeFacilities(clubs: Club[]): Record<string, Facilities> {
 }
 
 /** The leagues outside yours: real clubs, real squads, light results (v0.38). */
+/**
+ * Seats per ground (v0.39).
+ *
+ * Capacity used to fall out of the stadium facility level — five values, so
+ * almost every club ended up on 12,000 seats. It is now the club's own: seeded
+ * off its id (never an RNG draw, so existing worlds and streams do not move),
+ * scaled by what the club has actually won and how strong the squad is, drawn
+ * from a long-tailed distribution so a division contains 5,000-seat grounds,
+ * a crowd of mid-sized ones, and one or two cathedrals.
+ */
+const CROWD_SCALE: Record<string, number> = { eng: 1.0, esp: 0.95, ger: 1.14, ita: 0.92 };
+const CROWD_BOUNDS: Record<string, [number, number]> = {
+  eng: [5_000, 74_000],
+  esp: [6_000, 81_000],
+  ger: [8_000, 81_000],
+  ita: [7_000, 76_000]
+};
+
+/** One standard normal from two uniforms (the id hash is our only randomness). */
+function gauss(a: number, b: number): number {
+  return Math.sqrt(-2 * Math.log(Math.max(1e-9, a))) * Math.cos(2 * Math.PI * b);
+}
+
+/**
+ * Seats for one ground. Anchored on what the club has won and how good the squad
+ * is (a minnow ≈ 8,500 seats, a nine-title giant ≈ 70,000), multiplied by a
+ * log-normal draw so the spread has a real tail — a division ends up with small
+ * grounds, a crowd of mid-sized ones and one or two cathedrals, and no two clubs
+ * share a number. Quantised to a quarter-thousand so it reads like a real
+ * capacity rather than a random float.
+ */
+export function capacityFor(nationId: string, clubId: string, honours: number, strength: number): number {
+  const rng = mulberry32(hashSeed(clubId, "capacity"));
+  const [lo, hi] = CROWD_BOUNDS[nationId] ?? [5_000, 74_000];
+  const prestige = honours * 2.6 + strength * 1.1;
+  const anchor = (8_500 + Math.max(0, prestige) * 1_650) * (CROWD_SCALE[nationId] ?? 1);
+  const draw = Math.exp(0.38 * gauss(rng(), rng()));
+  const jitter = 0.95 + rng() * 0.1;
+  const raw = anchor * draw * jitter;
+  const q = raw < 20_000 ? 250 : 500;
+  return Math.max(lo, Math.min(hi, Math.round(raw / q) * q));
+}
+
+/** No two clubs in a league share a capacity: nudge the collisions apart. */
+export function dedupeCapacities(clubs: Club[]): void {
+  const seen = new Map<number, number>();
+  for (const club of clubs) {
+    if (club.capacity === undefined) continue;
+    const hits = seen.get(club.capacity) ?? 0;
+    seen.set(club.capacity, hits + 1);
+    if (hits === 0) continue;
+    let bumped = club.capacity + hits * 250;
+    const seenBumped = new Set(seen.keys());
+    while (seenBumped.has(bumped)) bumped += 250;
+    club.capacity = bumped;
+    seen.set(bumped, 1);
+  }
+}
+
 export function makeWorldLeagues(
   seed: number,
   exclude: string,
@@ -194,7 +253,8 @@ export function makeWorldLeagues(
       city: def.city,
       ground: def.ground,
       founded: def.founded,
-      honours: def.honours
+      honours: def.honours,
+      capacity: capacityFor(other.id, clubIdFor(other.id, i), def.honours, T.strengthOffsets[i] ?? 0)
     }));
     const wp: Player[] = [];
     for (const club of wc) {
@@ -205,6 +265,7 @@ export function makeWorldLeagues(
         }
       });
     }
+    dedupeCapacities(wc);
     clubs.push(...wc);
     players.push(...wp);
     leagues.push({
@@ -235,7 +296,8 @@ export function newGame(seed: number, userClubId?: string, nationId?: string): S
       city: def.city,
       ground: def.ground,
       founded: def.founded,
-      honours: def.honours
+      honours: def.honours,
+      capacity: capacityFor(n.id, clubIdFor(n.id, i), def.honours, T.strengthOffsets[i] ?? 0)
     }));
 
   const makeSquad = (clubs: Club[], pools: { first: string[]; last: string[] }): Player[] => {
@@ -252,6 +314,7 @@ export function newGame(seed: number, userClubId?: string, nationId?: string): S
   };
 
   const clubs = makeClubs(nation);
+  dedupeCapacities(clubs);
   const players = makeSquad(clubs, { first: nation.first, last: nation.last });
 
   const chosen = userClubId && clubs.some((c) => c.id === userClubId) ? userClubId : clubs[0].id;

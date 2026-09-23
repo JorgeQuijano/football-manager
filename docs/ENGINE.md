@@ -846,3 +846,29 @@ So a four-league world costs about what one league did: **40 matches a week acro
 **Where you can see it.** The League screen has a **league switcher**: your own league (full tabs) or any of the three abroad (table, latest results, leading scorers, and an honest note that coverage there is light). `allPlayers`/`playerAnywhere`/`leagueOfClub` give the rest of the game a way to ask about the continent — the market hooks into them next.
 
 **Attributes that fit the shirt.** The generator now puts position-*irrelevant* attributes in a **low band** rather than a gentle offset: an outfielder's reflexes and handling sit at 18–34, a keeper's shooting at 18–30 and his pace at 30–46. Previously a good outfielder could carry keeper-grade reflexes (47+) and a top keeper could shoot like a midfielder. Traits were already position-gated; there is now a sweep test over all 1,760 players in all four leagues asserting the shape: keepers shoot far less than forwards, keepers keep better than anyone, defenders defend better than forwards.
+
+## 44. Grounds with real sizes (`capacityFor`, v0.39)
+
+Capacity used to fall out of the **stadium facility level** — a five-entry table (`[0, 8k, 12k, 16k, 20k, 24k]`) — and since most clubs sat at level 2, most of the league read "12,000 seats". Every ground now has its own size.
+
+**How a ground is sized.** Seeded off the **club id** (`hashSeed(clubId, "capacity")` — a hash, never an RNG draw, so no existing stream or world moves), anchored on what the club has actually won and how strong its squad is, then multiplied by a log-normal draw for the tail:
+
+```
+anchor = 8,500 + (honours × 2.6 + strength × 1.1) × 1,650      ≈ 8.5k for a minnow, ≈70k for a nine-title giant
+seats  = anchor × exp(0.38 · N(0,1)) × (0.95…1.05)
+```
+
+Quantised to the nearest 250 (or 500 above 20,000) so it reads like a real capacity, clamped to the nation's bounds, and **de-duplicated inside the league** (`dedupeCapacities`) so no two clubs share a number.
+
+| Nation | Bounds | Crowd scale |
+|---|---|---|
+| England | 5,000 – 74,000 | 1.00 |
+| Spain | 6,000 – 81,000 | 0.95 |
+| Germany | 8,000 – 81,000 | 1.14 |
+| Italy | 7,000 – 76,000 | 0.92 |
+
+A division now reads like a division: a handful of grounds under 12,000, a broad middle, and one or two cathedrals. The famous clubs **tend** to be the big ones (the top five by honours and squad average more than the bottom five) but nothing is guaranteed — a small club can own a big old ground.
+
+**The facility adds on top, and never takes away.** `groundCapacity(save, clubId)` = the club's own capacity **+ 2,500 seats for every stadium level above 3** (levels 1–3 are the ground as it stands). Upgrading the stadium now literally fills seats, and since the gate is `capacity × £30 × how full the house is`, it pays for itself — which is what v0.30's "stadium → gate" always claimed.
+
+**And you can change it.** The club editor gained a **Capacity** field (1,000–120,000, rounded to the hundred), so any ground you dislike can be resized; blanking/resetting hands it back to the generator's number. Old saves keep working: without a stored capacity, the level table is still the fallback.

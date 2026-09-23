@@ -397,6 +397,8 @@ export interface Club {
   founded?: number;
   /** league titles before you arrived */
   honours?: number;
+  /** seats: every ground is its own size (v0.39) */
+  capacity?: number;
 }
 
 /** A league you are not managing in (engine/world.ts, v0.38). */

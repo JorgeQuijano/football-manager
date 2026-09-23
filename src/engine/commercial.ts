@@ -1,4 +1,5 @@
-import type { Build, Facilities, Player, SaveGame, SponsorOffer } from "./types";
+import type {
+  Club, Build, Facilities, Player, SaveGame, SponsorOffer } from "./types";
 import { hashSeed, mulberry32 } from "./rng";
 import { pushInbox } from "./inbox";
 import { pushNews } from "./training";
@@ -10,8 +11,35 @@ export const FACILITY_KINDS = ["stadium", "training", "youth", "medical"] as con
 export type FacilityKind = (typeof FACILITY_KINDS)[number];
 
 const CAPACITY = [0, 8_000, 12_000, 16_000, 20_000, 24_000];
+/** The old level-to-seats table: a fallback for saves made before grounds had sizes. */
 export function capacityOf(f: Pick<Facilities, "stadium">): number {
   return CAPACITY[Math.max(1, Math.min(FACILITY_MAX, f.stadium))];
+}
+
+/** What a stadium level is worth in seats once the ground is big enough to extend. */
+export const SEATS_PER_LEVEL = 2_500;
+
+/** Every club in the world, yours or abroad. */
+function clubAnywhere(save: SaveGame, clubId: string): Club | undefined {
+  return (
+    save.clubs?.find((c) => c.id === clubId) ??
+    (save.world ?? []).flatMap((w) => w.clubs).find((c) => c.id === clubId)
+  );
+}
+
+/**
+ * The real size of a ground (v0.39): the club's own capacity, plus the
+ * extensions the stadium facility has built on top of it. Levels 1–3 are the
+ * ground as it stands; 4 and 5 add 2,500 and 5,000 seats, so a club with a
+ * 9,000-seat ground that builds out ends up with 14,000 — the upgrade is felt in
+ * the crowd (and in the gate receipts).
+ */
+export function groundCapacity(save: SaveGame, clubId: string): number {
+  const club = clubAnywhere(save, clubId);
+  const fac = facilitiesOf(save, clubId);
+  const base = club?.capacity ?? capacityOf(fac);
+  const built = save.facilities?.[clubId] ? Math.max(0, fac.stadium - 3) * SEATS_PER_LEVEL : 0;
+  return Math.max(1_000, Math.round((base + built) / 100) * 100);
 }
 
 /** One-off cost of the next upgrade, and how long the builders need. */
@@ -113,7 +141,7 @@ export function merchWeekly(save: SaveGame): number {
 
 /** Gate: only home matchdays pay, capacity × ticket price × how full it is. */
 export function gateReceipts(save: SaveGame): number {
-  const cap = capacityOf(facilitiesOf(save, save.userClubId));
+  const cap = groundCapacity(save, save.userClubId);
   const fans = save.media?.fans ?? 50;
   const fill = Math.max(0.55, Math.min(1, 0.62 + (fans - 50) * 0.006));
   return Math.round((cap * 30 * fill) / 10_000) * 10_000;
