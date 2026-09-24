@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GAIT, gaitBand, jockeyDistance, newMotion, separate, stepPlayer } from "./motion";
+import { FRAME_MAX_DT, frameStep } from "./frame-clock";
 
 const angDiff = (a: number, b: number) => {
   let d = (a - b) % (Math.PI * 2);
@@ -120,5 +121,36 @@ describe("match-feel motion: bodies with physics, not sliders", () => {
     run(m, 50, 54, 3, { faceX: 40, faceY: 60 });
     const want = Math.atan2(60 - m.y, 40 - m.x);
     expect(angDiff(m.heading, want)).toBeLessThan(0.35);
+  });
+});
+
+describe("pause freezes the whole board (v0.42.1)", () => {
+  it("hands the tick no time at all while paused, and refreshes the timestamp", () => {
+    const paused = frameStep(5_000, 4_000, false);
+    expect(paused.dt).toBe(0); // the bodies, intents, ball phases and flashes all ride on this
+    expect(paused.last).toBe(5_000); // …so a long pause cannot become a jump on resume
+    // simulate the pause: the loop keeps running and refreshing `last` each frame
+    let last = paused.last;
+    for (let t2 = 5_016; t2 < 20_000; t2 += 16) last = frameStep(t2, last, false).last;
+    const resumed = frameStep(20_016, last, true);
+    expect(resumed.dt).toBeGreaterThan(0);
+    expect(resumed.dt).toBeLessThan(0.05); // a normal frame after 15 s of sitting still — not a jump
+    expect(resumed.dt).toBeLessThanOrEqual(FRAME_MAX_DT);
+  });
+
+  it("clamps a stalled frame instead of teleporting everyone", () => {
+    expect(frameStep(10_000, 9_000, true).dt).toBe(FRAME_MAX_DT);
+  });
+
+  it("with no time, a body does not move — ball parked, men parked", () => {
+    const m = newMotion(50, 50);
+    run(m, 50, 50, 0.5); // get it moving
+    const before = { x: m.x, y: m.y };
+    for (let i = 0; i < 120; i++) stepPlayer(m, 30, 30, { dt: 0, pace: 1, stamina: 100, urgency: 1 });
+    expect(m.x).toBe(before.x);
+    expect(m.y).toBe(before.y);
+    // …and it starts moving again the moment time comes back
+    run(m, 30, 30, 1.5);
+    expect(Math.hypot(m.x - before.x, m.y - before.y)).toBeGreaterThan(2);
   });
 });

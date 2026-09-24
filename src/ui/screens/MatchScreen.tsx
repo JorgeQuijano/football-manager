@@ -43,6 +43,7 @@ import {
 import { useGame } from "@/state/store";
 import { posChip } from "@/ui/format";
 import { InstructionsPanel, LeverTabs, Nudges, OppositionPanel, TalkPanel } from "@/ui/MatchLevers";
+import { frameStep } from "../frame-clock";
 import { drawFrame, slotScreen, type Frame, type FramePlayer } from "@/ui/matchPitch";
 import { jockeyDistance, newMotion, separate, stepPlayer, type Motion } from "@/ui/motion";
 import { armbandIn } from "@/engine";
@@ -941,9 +942,17 @@ function LiveMatchScreen() {
     };
 
     const loop = (now: number) => {
-      const dt = Math.min(0.1, (now - last) / 1000);
-      last = now;
-      tick(dt);
+      /**
+       * A pause freezes the WHOLE board (v0.42.1). The stroke machine was gated
+       * on the clock, but `stepPlayer` integrates every frame, so pausing left
+       * the ball parked and the players still jogging about. Freezing here — and
+       * refreshing `last` either way — means every consumer of `dt` (bodies,
+       * intents, ball phases, flashes, the playhead) stops together, and a
+       * resume takes a normal-sized step instead of a time jump.
+       */
+      const { dt, last: nextLast } = frameStep(now, last, clock.current.playing);
+      last = nextLast;
+      if (dt > 0) tick(dt);
       const cv = canvasRef.current;
       if (cv) {
         const col = colorsRef.current;
