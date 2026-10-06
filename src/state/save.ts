@@ -12,6 +12,8 @@ import {
   ensureDev,
   emptyAwards,
   emptyHistory,
+  playerAnywhere,
+  worldTopUp,
   emptyMedia,
   FANS_START,
   heightFor,
@@ -251,8 +253,11 @@ export function normalizeSave(save: SaveGame): SaveGame {
       save.players.some((p) => p.id === o.playerId && p.clubId === save.userClubId)
   );
   if (!Array.isArray(save.transferLog)) save.transferLog = [];
-  if (save.pending && !save.players.some((p) => p.id === save.pending!.playerId)) {
-    save.pending = undefined;
+  if (save.pending) {
+    const target = playerAnywhere(save, save.pending.playerId);
+    // a fee agreed for a foreign player is still a fee agreed (v0.43) — but if he
+    // is gone, or he has moved club since, the deal is dead
+    if (!target || (save.pending.fromClubId && target.clubId !== save.pending.fromClubId)) save.pending = undefined;
   }
   if (!Array.isArray(save.customFormations)) save.customFormations = [];
   save.customFormations = save.customFormations.filter(
@@ -315,6 +320,25 @@ export function normalizeSave(save: SaveGame): SaveGame {
     for (const c of outside.clubs) {
       if (!save.finances[c.id]) save.finances[c.id] = { transfer: 2_000_000, wageBudget: 250_000, balance: 4_000_000 };
     }
+  }
+
+  // the continent's rosters, kept honest (v0.43)
+  if (Array.isArray(save.world) && save.world.length) {
+    const mine = new Set(save.players.map((p) => p.id));
+    for (const w of save.world) {
+      if (!Array.isArray(w.players)) w.players = [];
+      const ids = new Set(w.clubs.map((c) => c.id));
+      const skip = (p: { id: string; clubId: string }) => mine.has(p.id) || !ids.has(p.clubId) || p.clubId === save.userClubId;
+      const kept = w.players.filter((p) => !skip(p));
+      // only drop the cached squad powers if the roster actually moved: a cache
+      // reset on every load is churn (and made normalize non-idempotent)
+      if (kept.length !== w.players.length) {
+        w.players = kept;
+        w.power = {};
+      }
+    }
+    // a club that sold a man still has to field eleven
+    worldTopUp(save);
   }
 
   return save;

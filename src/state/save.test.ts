@@ -161,3 +161,53 @@ describe("normalizeSave", () => {
     expect(fixed2.scouting.knowledge["ghost"]).toBeUndefined();
   });
 });
+
+describe("normalizeSave: the continent's rosters (v0.43)", () => {
+  it("never leaves a man in two places: your league wins", () => {
+    const save = newGame(31);
+    const mine = save.players.filter((p) => p.clubId === save.userClubId)[0];
+    // an old save (or a bad edit) has him in a foreign squad as well
+    save.world![0].players.push({ ...JSON.parse(JSON.stringify(mine)) });
+    expect(save.world![0].players.some((p) => p.id === mine.id)).toBe(true);
+    const fixed = normalizeSave(save);
+    expect(fixed.world![0].players.some((p) => p.id === mine.id)).toBe(false);
+    expect(fixed.players.filter((p) => p.id === mine.id)).toHaveLength(1);
+  });
+
+  it("drops a continental player whose club does not exist", () => {
+    const save = newGame(33);
+    const ghost = JSON.parse(JSON.stringify(save.world![0].players[0]));
+    ghost.id = "ghost-1";
+    ghost.clubId = "esp-99";
+    save.world![0].players.push(ghost);
+    const fixed = normalizeSave(save);
+    expect(fixed.world![0].players.some((p) => p.id === "ghost-1")).toBe(false);
+  });
+
+  it("refills a raided continental squad so the light model always has an XI", () => {
+    const save = newGame(35);
+    const club = save.world![0].clubs[2];
+    save.world![0].players = save.world![0].players.filter((p) => p.clubId !== club.id);
+    const fixed = normalizeSave(save);
+    expect(fixed.world![0].players.filter((p) => p.clubId === club.id).length).toBe(16);
+  });
+
+  it("keeps a fee agreed for a player abroad, and drops it if he has moved", () => {
+    const save = newGame(37);
+    const abroad = save.world![0].players.find((p) => p.clubId === save.world![0].clubs[0].id)!;
+    save.pending = { playerId: abroad.id, fee: 9_000_000, fromClubId: abroad.clubId, terms: { fee: 9_000_000 } };
+    const kept = normalizeSave(save);
+    expect(kept.pending?.playerId).toBe(abroad.id);
+    // …but a pending deal for a man who has since moved club is dead
+    kept.pending!.fromClubId = save.world![0].clubs[1].id;
+    const dropped = normalizeSave(kept);
+    expect(dropped.pending).toBeUndefined();
+  });
+
+  it("touches nothing on a fresh save", () => {
+    const save = newGame(39);
+    const before = JSON.stringify(save.world);
+    const fixed = normalizeSave(JSON.parse(JSON.stringify(save)) as typeof save);
+    expect(JSON.stringify(fixed.world)).toBe(before);
+  });
+});

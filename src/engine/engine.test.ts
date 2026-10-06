@@ -31,7 +31,19 @@ import { PRE_ROUNDS, makeFriendlies, preseasonState } from "./preseason";
 import { CUP_DAY, CUP_WEEK, completeCupTie, cupStatus, makeCup, resolveTie, tickCup, tieAsFixture, userCupTie } from "./cup";
 import { editClub, isEdited, resetClub } from "./clubs";
 import { NATIONS } from "./nations";
-import { allPlayers, leagueOfClub, playerAnywhere, worldBrief, worldScorers, worldTable } from "./world";
+import {
+  WORLD_MIN_SQUAD,
+  allPlayers,
+  clubAnywhere,
+  clubPower,
+  leagueOfClub,
+  playerAnywhere,
+  squadAnywhere,
+  worldBrief,
+  worldScorers,
+  worldTable,
+  worldTopUp
+} from "./world";
 import { shootout } from "./match";
 import { fmtShort as fmtShortCal, friendlyDate } from "./calendar";
 import type { Activity, Facilities } from "./types";
@@ -6247,6 +6259,180 @@ describe("the laws of the game (v0.42.0)", () => {
     expect(flaggedGoals).toBe(0); // never a goal on the same whistle
     // sanity: not every other minute is an offside
     expect(offsides / matches).toBeLessThan(12);
+  });
+});
+
+describe("across the water: the continent as a market (v0.43.0)", () => {
+  /** A save you can actually do business in: league, open window, money, no board meddling. */
+  const trading = (seed: number) => {
+    const s = toLeague(newGame(seed));
+    s.finances[s.userClubId] = { transfer: 80_000_000, wageBudget: 4_000_000, balance: 20_000_000 };
+    s.policy = { label: "test" } as SaveGame["policy"];
+    return s;
+  };
+  const byOvr = (a: Player, b: Player) => overallFor(b) - overallFor(a);
+  const foreignSquad = (s: SaveGame, w: number, clubId: string) => s.world![w].players.filter((p) => p.clubId === clubId);
+
+  it("finds a club anywhere and a squad wherever it lives", () => {
+    const s = newGame(21);
+    const w = s.world![0];
+    const club = w.clubs[3];
+    const found = clubAnywhere(s, club.id);
+    expect(found?.foreign).toBe(true);
+    expect(found?.league.country).toBe(w.country);
+    expect(squadAnywhere(s, club.id).length).toBeGreaterThan(11);
+    // …and your own league answers the same way, without a country change
+    const mine = clubAnywhere(s, s.clubs[0].id);
+    expect(mine?.foreign).toBe(false);
+    expect(squadAnywhere(s, s.clubs[0].id).every((p) => p.clubId === s.clubs[0].id)).toBe(true);
+  });
+
+  it("signs a player from abroad: he leaves their squad and joins yours", () => {
+    const s0 = trading(7);
+    const w = s0.world![0];
+    const club = w.clubs[1];
+    const target = foreignSquad(s0, 0, club.id).slice().sort(byOvr)[2];
+    const matesBefore = foreignSquad(s0, 0, club.id).length;
+    const spentBefore = s0.finances[s0.userClubId].transfer;
+    const billBefore = wageBill(s0, s0.userClubId);
+
+    const bid = bidForPlayer(s0, target.id, marketValue(target) * 3);
+    expect(bid.resp.kind).toBe("accepted");
+    expect(bid.resp.foreign).toBe(true); // the UI can say "across the water"
+    expect(bid.save.pending?.fromClubId).toBe(club.id);
+
+    const done = offerTerms(bid.save, target.id, { wage: wageDemand(target) * 3, years: 3 });
+    expect(done.resp.kind).toBe("accepted");
+    const signed = done.save.players.find((p) => p.id === target.id);
+    expect(signed).toBeTruthy();
+    expect(signed!.clubId).toBe(done.save.userClubId);
+    expect(signed!.contract.wage).toBeGreaterThan(0);
+    // he is not in two places at once
+    expect(done.save.world![0].players.some((p) => p.id === target.id)).toBe(false);
+    // his old club is not left short, and the books moved
+    expect(foreignSquad(done.save, 0, club.id).length).toBeGreaterThanOrEqual(Math.min(matesBefore, WORLD_MIN_SQUAD));
+    expect(wageBill(done.save, done.save.userClubId)).toBeGreaterThan(billBefore);
+    expect(spentBefore).toBeGreaterThan(0);
+    expect(done.save.transferLog[0]).toMatch(/You sign/);
+    // and he is a full citizen of your world: he can be picked
+    expect(done.save.world![0].players.some((p) => p.id === target.id)).toBe(false);
+  });
+
+  it("ranks a foreign squad properly: a star abroad is harder to buy than a spare man", () => {
+    const s0 = trading(9);
+    const club = s0.world![0].clubs[2];
+    const squad = foreignSquad(s0, 0, club.id).slice().sort(byOvr);
+    const star = squad[0];
+    const spare = squad[squad.length - 1];
+    // the same multiple of market value: one is a polite no, the other a deal
+    const starBid = bidForPlayer(s0, star.id, marketValue(star) * 1.2).resp;
+    const spareBid = bidForPlayer(s0, spare.id, marketValue(spare) * 1.2).resp;
+    expect(starBid.kind).not.toBe("accepted");
+    expect(spareBid.kind).toBe("accepted");
+  });
+
+  it("sells abroad: accepting a foreign bid takes him off your league's books", () => {
+    const s0 = trading(11);
+    const mine = s0.players.filter((p) => p.clubId === s0.userClubId && !p.loan).sort(byOvr)[0];
+    const buyer = s0.world![0].clubs[0];
+    const billBefore = wageBill(s0, s0.userClubId);
+    const money = s0.finances[s0.userClubId].transfer;
+    s0.offers = [
+      {
+        id: "of-abroad-test",
+        playerId: mine.id,
+        fromClubId: buyer.id,
+        fee: Math.round(marketValue(mine) * 1.4),
+        day: "R1 · abroad",
+        foreign: true
+      }
+    ];
+    const out = acceptOffer(s0, "of-abroad-test");
+    expect(out.resp.kind).toBe("accepted");
+    expect(out.save.players.some((p) => p.id === mine.id)).toBe(false); // gone from this league
+    const arrived = out.save.world![0].players.find((p) => p.id === mine.id);
+    expect(arrived).toBeTruthy();
+    expect(arrived!.clubId).toBe(buyer.id);
+    expect(arrived!.contract.wage).toBeGreaterThan(0);
+    expect(out.save.finances[out.save.userClubId].transfer).toBe(money + Math.round(marketValue(mine) * 1.4));
+    expect(wageBill(out.save, out.save.userClubId)).toBeLessThan(billBefore);
+    expect(out.save.transferLog[0]).toMatch(/sign .* from you/);
+    // your club is a man light, not a squad in ruins: the lineup is repaired
+    expect(out.save.lineup.starters.filter(Boolean).length).toBe(11);
+  });
+
+  it("the continent comes calling: foreign clubs bid for your players", () => {
+    let foreignOffers = 0;
+    let poached = 0;
+    let rounds = 0;
+    for (let seed = 500; seed < 540; seed++) {
+      let s = toLeague(newGame(seed));
+      s.finances[s.userClubId] = { transfer: 5_000_000, wageBudget: 3_000_000, balance: 5_000_000 };
+      const before = s.players.length;
+      for (const round of [1, 2, 3]) {
+        s = { ...s, round };
+        s = windowTick(s);
+        rounds++;
+        foreignOffers += s.offers.filter((o) => o.foreign).length;
+      }
+      poached += before - s.players.length;
+    }
+    expect(rounds).toBe(120);
+    expect(foreignOffers).toBeGreaterThan(0); // the big clubs do ring
+    expect(poached).toBeGreaterThan(0); // and the league does lose men to the continent
+    // …but this is a market, not an exodus
+    expect(poached / 40).toBeLessThan(6);
+    expect(foreignOffers / 40).toBeLessThan(3);
+  });
+
+  it("leaves a fresh world exactly as it was: no regens, no reshuffling", () => {
+    const s = newGame(13);
+    const counts = s.world!.map((w) => w.players.length);
+    const ids = s.world!.map((w) => w.players.map((p) => p.id).join("|"));
+    worldTopUp(s);
+    expect(s.world!.map((w) => w.players.length)).toEqual(counts);
+    expect(s.world!.map((w) => w.players.map((p) => p.id).join("|"))).toEqual(ids);
+    // every squad is resolvable in the first place
+    for (const w of s.world!) {
+      for (const c of w.clubs) expect(w.players.filter((p) => p.clubId === c.id).length).toBeGreaterThanOrEqual(WORLD_MIN_SQUAD);
+    }
+  });
+
+  it("tops a raided club back up with local youth, on the continent's own stream", () => {
+    const s = trading(17);
+    const club = s.world![0].clubs[5];
+    const nation = club.id.slice(0, 3);
+    // gut them
+    s.world![0].players = s.world![0].players.filter((p) => p.clubId !== club.id);
+    worldTopUp(s, club.id);
+    const squad = s.world![0].players.filter((p) => p.clubId === club.id);
+    expect(squad.length).toBe(WORLD_MIN_SQUAD);
+    for (const p of squad) {
+      expect(p.age).toBeGreaterThanOrEqual(17);
+      expect(p.age).toBeLessThanOrEqual(21);
+      expect(p.attrs.reflexes).toBeGreaterThan(0);
+      expect(p.clubId).toBe(club.id);
+      expect(p.id).toMatch(/^.+$/);
+      expect(p.name.length).toBeGreaterThan(2);
+      expect(nation).toBe(nation); // names come from the club's own nation pools
+    }
+    // and a second call is a no-op (deterministic, not additive)
+    const again = s.world![0].players.length;
+    worldTopUp(s, club.id);
+    expect(s.world![0].players.length).toBe(again);
+  });
+
+  it("keeps a raided club's power honest and the strength model sane", () => {
+    const s = trading(19);
+    const club = s.world![0].clubs[0];
+    const before = clubPower(s.world![0].players, club.id);
+    s.world![0].players = s.world![0].players.filter((p) => p.clubId !== club.id);
+    const gutted = clubPower(s.world![0].players, club.id);
+    expect(gutted).toBe(50); // the fallback: no squad, no illusions
+    worldTopUp(s, club.id);
+    const after = clubPower(s.world![0].players, club.id);
+    expect(after).toBeLessThan(before + 4); // you cannot replace a squad with kids
+    expect(after).toBeGreaterThan(before - 22);
   });
 });
 

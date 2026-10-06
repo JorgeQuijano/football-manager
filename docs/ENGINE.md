@@ -903,3 +903,50 @@ The engine used to *flavour* the rules rather than apply them: offside was a dic
 Calibration is intact: the laws remove chances (an offside voids a move) but the goal band holds, and the audit test asserts **zero goals on the same whistle as a flag**.
 
 `docs/LAWS.md` is the auditable inventory — modelled, approximated, not modelled.
+
+## 47. Across the water — the continent as a market (`world.ts` + `transfers.ts`, v0.43)
+
+v0.38 built three foreign leagues and deliberately left one door shut: nothing
+could move between them and your league. The squads were real, the tables were
+real, the scoring charts were real people — and you could never sign any of them.
+
+**A club, a squad and a league, found anywhere.** `clubAnywhere(save, clubId)`
+returns `{club, league, foreign}`, `squadAnywhere` returns a squad whether it
+lives in `save.players` or `save.world`, and `findWorldClub` says which league a
+foreign club belongs to. Every lookup that used to be `save.clubs.find(…)` plus a
+non-null assertion in the transfer path now goes through those, which is what
+makes a foreign deal possible at all.
+
+**Buying abroad.** `bidForPlayer` finds the target with `playerAnywhere` and
+ranks him with `sellerAppetite`, which now reads his *own* squad (`squadAnywhere`)
+— a top-two man at Sporting Lisboa is as reluctant as a top-two man at home, and
+that only works if you rank him among the men he actually trains with. On
+agreement, `offerTerms` takes him **out of the world** (`removeFromWorld`) and
+**into `save.players`** under your club id: same player, same id, so his goals,
+apps, records and career follow him across the water. His old club is topped back
+up, and a news line goes out.
+
+**Selling abroad.** A foreign bid (`TransferOffer.foreign`) is settled by
+`acceptOffer`, which splices him out of `save.players` and adds him to the
+buyer's world squad (`addToWorld`) — he is genuinely gone: off your wage bill,
+and off this league's scoresheets, where the light model may now credit him a
+golden boot you have to watch from afar.
+
+**The continent comes calling.** `windowTick` gained a block that runs on its own
+seeded stream — `hashSeed(seed, "abroad", season, round)` — for the same reason the
+world has one: foreign interest must not shift a single draw in your own league's
+window. It produces (a) incoming foreign bids for your best players, gated by the
+suitor's squad power, and (b) continental poaching of your *league's* other clubs,
+one deal a round at most. The effect is a world that moves: your rivals lose men
+to Spain and have to cope.
+
+**Roster hygiene.** `worldTopUp` keeps every foreign squad at `WORLD_MIN_SQUAD`
+(16) using the club's own nation name pools, so the light model always has an XI
+even after a raid; `normalizeSave` removes a player who somehow exists in two
+places (your league wins), drops continental players at clubs that do not exist,
+tops thin squads up, and — since the cache reset was making normalization
+non-idempotent — only clears a league's power cache when the roster actually moved.
+
+**Loans between leagues are deliberately not wired** (the UI says so): a loan
+would need the loan rollover, wage shares and the option-fee machinery to
+understand a club that is not in `save.clubs`, and that is a version of its own.

@@ -1,5 +1,6 @@
-import type { Club, Fixture, Player, SaveGame, TableRow, WorldLeague } from "./types";
-import type { NationId } from "./nations";
+import type { Club, Fixture, Player, Position, SaveGame, TableRow, WorldLeague } from "./types";
+import { NATIONS, type NationId } from "./nations";
+import { makePlayer } from "./generate";
 import { hashSeed, mulberry32 } from "./rng";
 import { overallFor } from "./ratings";
 import { buildFixtures } from "./league";
@@ -209,4 +210,104 @@ export function worldBrief(
 /** Build a world league's fixtures for a season (same generator as yours). */
 export function worldFixtures(clubs: Club[], season: number, seed: number): Fixture[] {
   return buildFixtures(clubs, season, seed);
+}
+
+/* ------------------------------------------------------------------ *
+ * Across the water (v0.43): the continent as a place you can do business
+ * ------------------------------------------------------------------ */
+
+/** A squad abroad is kept at least this deep, so the light model always has an XI. */
+export const WORLD_MIN_SQUAD = 16;
+
+/** Find a club anywhere on the continent, with its league. */
+export function clubAnywhere(
+  save: SaveGame,
+  clubId: string
+): { club: Club; league: { id: string; name: string; country: string }; foreign: boolean } | undefined {
+  const home = save.clubs.find((c) => c.id === clubId);
+  if (home) {
+    return {
+      club: home,
+      league: { id: save.nation ?? "eng", name: save.leagueName ?? "League One", country: save.country ?? "England" },
+      foreign: false
+    };
+  }
+  const w = findWorldClub(save, clubId);
+  return w ? { club: w.club, league: { id: w.w.id, name: w.w.name, country: w.w.country }, foreign: true } : undefined;
+}
+
+/** The world league (and club) a club id belongs to, if it is abroad. */
+export function findWorldClub(
+  save: SaveGame,
+  clubId: string
+): { w: WorldLeague; club: Club } | undefined {
+  for (const w of save.world ?? []) {
+    const club = w.clubs.find((c) => c.id === clubId);
+    if (club) return { w, club };
+  }
+  return undefined;
+}
+
+/** A club's squad, wherever the club lives. */
+export function squadAnywhere(save: SaveGame, clubId: string): Player[] {
+  if (save.clubs.some((c) => c.id === clubId)) return save.players.filter((p) => p.clubId === clubId);
+  const w = findWorldClub(save, clubId);
+  return w ? w.w.players.filter((p) => p.clubId === clubId) : [];
+}
+
+/** Take a player out of the continent (he is coming home with you). */
+export function removeFromWorld(save: SaveGame, playerId: string): Player | undefined {
+  for (const w of save.world ?? []) {
+    const i = w.players.findIndex((p) => p.id === playerId);
+    if (i >= 0) {
+      const [p] = w.players.splice(i, 1);
+      w.power = {}; // the squad changed: clubPower must be recomputed
+      return p;
+    }
+  }
+  return undefined;
+}
+
+/** Move a player abroad (he is leaving your league). */
+export function addToWorld(save: SaveGame, player: Player, clubId: string): boolean {
+  const w = findWorldClub(save, clubId);
+  if (!w) return false;
+  player.clubId = clubId;
+  w.w.players.push(player);
+  w.w.power = {};
+  return true;
+}
+
+/**
+ * Keep every squad abroad resolvable. Selling a star to nobody is how a
+ * continent rots: any club under WORLD_MIN_SQUAD gets a young local — derived
+ * from the club's own nation pools, on a stream of its own so no existing
+ * world, fixture or golden value moves.
+ */
+export function worldTopUp(save: SaveGame, onlyClubId?: string): void {
+  for (const w of save.world ?? []) {
+    const nation = NATIONS.find((n) => n.id === w.id);
+    const needs = w.clubs
+      .filter((c) => !onlyClubId || c.id === onlyClubId)
+      .map((c) => ({ club: c, have: w.players.filter((p) => p.clubId === c.id).length }))
+      .filter((x) => x.have < WORLD_MIN_SQUAD);
+    for (const { club, have } of needs) {
+      for (let slot = have, n = 0; slot < WORLD_MIN_SQUAD; slot++, n++) {
+        const pos = (["GK", "DF", "DF", "MF", "MF", "FW"] as Position[])[n % 6];
+        const rng = mulberry32(hashSeed(save.seed, "worldregen", club.id, save.season, slot));
+        const p = makePlayer(rng, club.id, 100 + slot, pos, club.strength - 2, {
+          first: nation?.first ?? [],
+          last: nation?.last ?? []
+        });
+        p.age = 17 + Math.floor(rng() * 4);
+        w.players.push(p);
+      }
+      w.power = {};
+    }
+  }
+}
+
+/** Everyone abroad, for a screen that wants to browse the continent. */
+export function worldClubs(save: SaveGame): Array<{ id: string; name: string; country: string; clubs: Club[] }> {
+  return (save.world ?? []).map((w) => ({ id: w.id, name: w.name, country: w.country, clubs: w.clubs }));
 }
