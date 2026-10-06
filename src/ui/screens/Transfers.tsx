@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import type { Player } from "@/engine";
 import {
@@ -23,6 +23,7 @@ import {
   SheetHeader,
   SheetTitle
 } from "@/components/ui/sheet";
+import { clubAnywhere, playerAnywhere, squadAnywhere, worldClubs } from "@/engine/world";
 import { useGame } from "@/state/store";
 import { posChip, shortName } from "@/ui/format";
 import { ScoutingView, Stars } from "@/ui/Scouting";
@@ -100,8 +101,26 @@ export function Transfers() {
   const fin = game.finances[game.userClubId];
   const bill = wageBill(game, game.userClubId);
   const headroom = wageHeadroom(game, game.userClubId);
-  const others = game.clubs.filter((c) => c.id !== game.userClubId);
+  // the continent is browsable now (v0.43): pick a league, then a club
+  const leagues = useMemo(
+    () => [
+      { id: "home", name: game.leagueName ?? "Your league", country: game.country ?? "" },
+      ...worldClubs(game).map((w) => ({ id: w.id, name: w.name, country: w.country }))
+    ],
+    [game]
+  );
+  const [browseLeague, setBrowseLeague] = useState("home");
+  const abroad = browseLeague !== "home";
+  const others = useMemo(() => {
+    if (!abroad) return game.clubs.filter((c) => c.id !== game.userClubId);
+    return worldClubs(game).find((w) => w.id === browseLeague)?.clubs ?? [];
+  }, [game, abroad, browseLeague]);
   const [browseId, setBrowseId] = useState(others[0]?.id ?? "");
+  // …and the club list follows the league
+  useEffect(() => {
+    const first = others.find((c) => c.id !== game.userClubId)?.id ?? others[0]?.id ?? "";
+    if (!others.some((c) => c.id === browseId)) setBrowseId(first);
+  }, [browseLeague, browseId, others, game.userClubId]);
   const [deal, setDeal] = useState<Deal | null>(null);
   const [tab, setTab] = useState<"market" | "scouting" | "search">("market");
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -374,8 +393,7 @@ export function Transfers() {
         <div className="flex items-center justify-between gap-2 rounded-xl border border-primary/40 bg-card p-3 text-sm">
           <span data-testid="pending-note">
             Fee agreed with{" "}
-            {game.clubs.find((c) => c.id === game.players.find((p) => p.id === game.pending!.playerId)?.clubId)?.short ??
-              "a club"}{" "}
+            {clubAnywhere(game, playerAnywhere(game, game.pending.playerId)?.clubId ?? "")?.club.short ?? "a club"}{" "}
             for {money(game.pending.fee)} — personal terms pending.
           </span>
           <Button size="sm" variant="outline" data-testid="clear-pending" onClick={cancelDeal}>
@@ -391,7 +409,7 @@ export function Transfers() {
           </h2>
           {game.offers.map((o) => {
             const p = game.players.find((x) => x.id === o.playerId);
-            const from = game.clubs.find((c) => c.id === o.fromClubId);
+            const from = clubAnywhere(game, o.fromClubId)?.club;
             if (!p || !from) return null;
             return (
               <div
@@ -402,6 +420,14 @@ export function Transfers() {
                 <div className="min-w-0">
                   <div className="truncate text-sm font-bold">
                     {p.name} <span className="text-muted-foreground">→ {from.short}</span>
+                    {o.foreign && (
+                      <span
+                        className="ml-1.5 rounded px-1.5 py-0.5 text-[9px] font-black uppercase text-[var(--warn)] ring-1 ring-[var(--warn-line)]"
+                        data-testid={`offer-abroad-${o.id}`}
+                      >
+                        abroad
+                      </span>
+                    )}
                   </div>
                   <div className="text-[11px] text-muted-foreground">
                     {p.pos} · OVR {to20ovr(overallFor(p))} ·{" "}
@@ -470,6 +496,19 @@ export function Transfers() {
           Scout a club
         </h2>
         <select
+          data-testid="browse-league"
+          value={browseLeague}
+          onChange={(e) => setBrowseLeague(e.target.value)}
+          className="h-11 w-full rounded-lg border border-border bg-card px-3 text-sm font-semibold"
+        >
+          {leagues.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+              {l.country ? ` · ${l.country}` : ""}
+            </option>
+          ))}
+        </select>
+        <select
           data-testid="browse-club"
           value={browseId}
           onChange={(e) => setBrowseId(e.target.value)}
@@ -486,7 +525,13 @@ export function Transfers() {
             The window is shut — offers can be made when it reopens.
           </p>
         )}
-        <LoanTargets clubId={browseId} onLoan={openLoan} />
+        {abroad ? (
+          <p className="text-[11px] font-semibold text-muted-foreground" data-testid="abroad-note">
+            Loans between leagues aren't part of the rules here — sign him or leave him alone.
+          </p>
+        ) : (
+          <LoanTargets clubId={browseId} onLoan={openLoan} />
+        )}
         <div className="space-y-1.5">
           {browse.map((p) => {
             const est = estimateFor(game, p);
@@ -630,7 +675,7 @@ export function Transfers() {
                     return `${deal.player.pos} · age ${deal.player.age} · ${ovr} · ${
                       deal.player.clubId === ""
                         ? "free agent"
-                        : (game.clubs.find((c) => c.id === deal.player.clubId)?.name ?? "")
+                        : (clubAnywhere(game, deal.player.clubId)?.club.name ?? "")
                     }`;
                   })()}
                 </SheetDescription>

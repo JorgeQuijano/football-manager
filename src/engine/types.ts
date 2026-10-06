@@ -382,6 +382,8 @@ export interface TransferOffer {
   loan?: { wageShare: number; fee: number; optionFee?: number };
   /** the bidding club has triggered a release clause — refusing is not an option */
   clause?: boolean;
+  /** the bid comes from another league (v0.43): accepting sends him abroad */
+  foreign?: boolean;
 }
 
 export interface Club {

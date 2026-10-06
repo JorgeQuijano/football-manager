@@ -3,6 +3,16 @@ import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
 import { fixLineup, overallFor, squadOf } from "./ratings";
 import { peakFor, pushNews } from "./training";
 import { addDebt, noteSigning, paySellOn, poachTick, policyCheck } from "./market";
+import {
+  addToWorld,
+  clubAnywhere,
+  clubPower,
+  findWorldClub,
+  playerAnywhere,
+  removeFromWorld,
+  squadAnywhere,
+  worldTopUp
+} from "./world";
 import { pushInbox } from "./inbox";
 import { loanOutTick, sendOnLoan } from "./loans";
 import { builtinFormation, resolveFormation } from "./formations";
@@ -167,9 +177,15 @@ export interface BidResponse {
   message: string;
   /** a counter-offer's wage-share demand (loans) */
   share?: number;
+  /** the deal crosses the water: the seller (or buyer) is in another league */
+  foreign?: boolean;
 }
 
-const resp = (kind: BidResponse["kind"], message: string, extra?: { fee?: number; wage?: number; share?: number }): BidResponse => ({
+const resp = (
+  kind: BidResponse["kind"],
+  message: string,
+  extra?: { fee?: number; wage?: number; share?: number; foreign?: boolean }
+): BidResponse => ({
   kind,
   message,
   ...(extra ?? {})
@@ -190,7 +206,8 @@ const userFix = (save: SaveGame) => {
 
 /** How reluctant is the seller? Rank 1-2 in their squad = they'd rather keep him. */
 function sellerAppetite(save: SaveGame, p: Player): number {
-  const mates = squadOf(save.players, p.clubId).slice().sort((a, b) => overallFor(b) - overallFor(a));
+  // …and a foreign squad lives in save.world, so rank him among the men he trains with
+  const mates = squadAnywhere(save, p.clubId).slice().sort((a, b) => overallFor(b) - overallFor(a));
   const rank = mates.findIndex((m) => m.id === p.id);
   if (rank <= 1) return 1.35;
   if (rank <= 5) return 1.1;
@@ -248,7 +265,9 @@ export function bidForPlayer(
   offer: number | DealTerms
 ): { save: SaveGame; resp: BidResponse } {
   const terms = normTerms(offer);
-  const p = input.players.find((x) => x.id === playerId);
+  // he may be a foreign player: the continent is a market now (v0.43)
+  const p = playerAnywhere(input, playerId);
+  const seller0 = p ? clubAnywhere(input, p.clubId) : undefined;
   const fail = (m: string) => ({ save: input, resp: resp("rejected", m) });
   if (!p || p.clubId === "" || p.clubId === input.userClubId) return fail("He isn't available.");
   if (p.loan) return fail("He is out on loan — you'd have to wait for him to come back.");
@@ -272,11 +291,14 @@ export function bidForPlayer(
   if (offered >= ask * 1.02) {
     const save = structuredClone(input);
     save.pending = { playerId, fee: terms.fee, fromClubId: p.clubId, terms };
-    const seller = save.clubs.find((c) => c.id === p.clubId)!;
+    const seller = clubAnywhere(save, p.clubId)?.club;
     const structure = (terms.instalments ?? 1) > 1 ? ` over ${terms.instalments} seasons` : "";
+    const across = seller0?.foreign ? ` (${seller0.league.country} — a job across the water)` : "";
     return {
       save,
-      resp: resp("accepted", `${seller.short} accept ${money(terms.fee)}${structure}. Agree personal terms to finish the deal.`)
+      resp: resp("accepted", `${seller?.short ?? "They"} accept ${money(terms.fee)}${structure}. Agree personal terms to finish the deal.${across}`, {
+        foreign: !!seller0?.foreign
+      })
     };
   }
   if (offered >= ask * 0.82) {
@@ -304,8 +326,12 @@ export function offerTerms(
   if (!pd || pd.playerId !== playerId) {
     return { save: input, resp: resp("rejected", "No fee has been agreed for this player yet.") };
   }
-  const p = input.players.find((x) => x.id === playerId);
-  if (!p || p.clubId === "" ) return { save: input, resp: resp("rejected", "He isn't available.") };
+  // the player may be abroad: he is in save.world, not save.players (v0.43)
+  const p = playerAnywhere(input, playerId);
+  if (!p || p.clubId === "") return { save: input, resp: resp("rejected", "He isn't available.") };
+  if (pd.fromClubId && p.clubId !== pd.fromClubId) {
+    return { save: input, resp: resp("rejected", "He has moved since you agreed that fee.") };
+  }
   const demand = termsDemand(p, t, wageDemand(p));
   const rng = rngFor(input, "terms", playerId, t.wage, t.years ?? 3, t.signingBonus ?? 0);
   const want = demand * (0.98 + rng() * 0.08);
@@ -318,9 +344,13 @@ export function offerTerms(
   }
   if (t.wage >= want * 1.02) {
     const save = structuredClone(input);
-    const pp = save.players.find((x) => x.id === playerId)!;
+    // if he was abroad, he leaves his world squad and joins yours — same player,
+    // same id, so his goals, records and career follow him across the water
+    const fromAbroad = findWorldClub(save, p!.clubId) !== undefined;
+    const pp = fromAbroad ? (removeFromWorld(save, playerId) ?? structuredClone(p!)) : save.players.find((x) => x.id === playerId)!;
+    if (fromAbroad) save.players.push(pp);
     const sellerId = pp.clubId;
-    const seller = save.clubs.find((c) => c.id === sellerId)!;
+    const seller = clubAnywhere(save, sellerId)?.club;
     const terms = pd.terms ?? { fee: pd.fee };
     const inst = Math.max(1, Math.min(TF.maxInstalments, terms.instalments ?? 1));
     const signingBonus = Math.max(0, Math.round(t.signingBonus ?? 0));
@@ -356,8 +386,12 @@ export function offerTerms(
     noteSigning(save, pp, terms.fee);
     logLine(
       save,
-      `R${save.round}: You sign ${pp.name} from ${seller.short} for ${money(terms.fee)}${structure} (${money(pp.contract.wage)}/wk to season ${pp.contract.until}${signingBonus ? `, ${money(signingBonus)} signing bonus` : ""}).`
+      `R${save.round}: You sign ${pp.name} from ${seller?.short ?? "abroad"} for ${money(terms.fee)}${structure} (${money(pp.contract.wage)}/wk to season ${pp.contract.until}${signingBonus ? `, ${money(signingBonus)} signing bonus` : ""}).`
     );
+    if (fromAbroad) {
+      worldTopUp(save, sellerId); // the club he left is not left short
+      pushNews(save, `${pp.name} arrives from ${seller?.name ?? "abroad"} — ${money(terms.fee)} to ${seller?.short ?? "them"}.`);
+    }
     save.pending = undefined;
     save.offers = save.offers.filter((o) => o.playerId !== playerId); // rivals drop out
     userFix(save);
@@ -500,18 +534,29 @@ export function acceptOffer(input: SaveGame, offerId: string): { save: SaveGame;
   }
 
   const save = structuredClone(input);
-  const pp = save.players.find((x) => x.id === o.playerId)!;
-  const buyer = save.clubs.find((c) => c.id === o.fromClubId)!;
+  const buyerInfo = clubAnywhere(save, o.fromClubId);
+  const abroad = !!buyerInfo?.foreign;
+  const pp = abroad && save.players.find((x) => x.id === o.playerId)
+    ? (() => {
+        // he leaves your league entirely: out of save.players, into the buyer's squad
+        const i = save.players.findIndex((x) => x.id === o.playerId);
+        const [gone] = save.players.splice(i, 1);
+        return gone;
+      })()
+    : save.players.find((x) => x.id === o.playerId)!;
+  const buyer = buyerInfo?.club;
   const rng = rngFor(input, "sold", o.playerId);
   pp.clubId = o.fromClubId;
   pp.loan = undefined;
   pp.transferListed = undefined;
+  pp.transferRequest = undefined;
   pp.contract = { wage: wageDemand(pp), until: save.season + 2 + Math.floor(rng() * 3) };
+  if (abroad) addToWorld(save, pp, o.fromClubId);
   save.finances[save.userClubId].transfer += o.fee;
   if (save.finances[o.fromClubId]) save.finances[o.fromClubId].transfer = Math.max(0, save.finances[o.fromClubId].transfer - o.fee);
   logLine(
     save,
-    `R${save.round}: ${buyer.short} sign ${pp.name} from you for ${money(o.fee)}${o.clause ? " (release clause)" : ""}.`
+    `R${save.round}: ${buyer?.short ?? o.fromClubId} sign ${pp.name} from you for ${money(o.fee)}${o.clause ? " (release clause)" : ""}${abroad ? ` — ${buyerInfo?.league.country}, and gone from this league` : ""}.`
   );
   // a clause we promised a previous club pays out of this sale
   if (pp.sellOnTo) {
@@ -521,7 +566,15 @@ export function acceptOffer(input: SaveGame, offerId: string): { save: SaveGame;
   save.offers = save.offers.filter((x) => x.playerId !== o.playerId);
   if (save.pending?.playerId === o.playerId) save.pending = undefined;
   userFix(save);
-  return { save, resp: resp("accepted", `${pp.name} joins ${buyer.short} for ${money(o.fee)}.`) };
+  return {
+    save,
+    resp: resp(
+      "accepted",
+      abroad
+        ? `${pp.name} joins ${buyer?.name ?? o.fromClubId} in ${buyerInfo?.league.country} for ${money(o.fee)} — he is off your wage bill and off this league's scoresheets.`
+        : `${pp.name} joins ${buyer?.short ?? o.fromClubId} for ${money(o.fee)}.`
+    )
+  };
 }
 
 
@@ -602,6 +655,66 @@ export function windowTick(input: SaveGame): SaveGame {
       day: `R${save.round} · release clause`
     });
     pushNews(save, `${club.short} have triggered ${p.name}'s ${money(clause)} release clause.`);
+  }
+
+  // --- the continent comes calling (v0.43) ---
+  // A separate RNG stream, for the same reason the world has one: adding foreign
+  // interest must not shift a single draw in your own league's window.
+  {
+    const frng = mulberry32(hashSeed(save.seed, "abroad", save.season, save.round));
+    const yourStrength = save.clubs.find((u) => u.id === save.userClubId)?.strength ?? 0;
+    const abroadP = squadOf(save.players, save.userClubId).filter(
+      (p) => !p.loan && !p.transferListed && marketValue(p) >= 900_000
+    );
+    const foreignClubs = (save.world ?? []).flatMap((w) =>
+      // reuse the world's power cache when it has one (playWorldRound fills it)
+      w.clubs.map((c) => ({ w, c, power: w.power?.[c.id] ?? clubPower(w.players, c.id) }))
+    );
+    // the best of Europe only shop at a club of comparable standing
+    const suitors = foreignClubs.filter((x) => x.power >= 62 + yourStrength * 0.6);
+    if (abroadP.length && suitors.length && save.offers.length < 3 && frng() < 0.3) {
+      const sorted = abroadP.slice().sort((a, b) => overallFor(b) - overallFor(a));
+      const target = sorted[Math.floor(frng() * Math.min(3, sorted.length))];
+      if (!save.offers.some((o) => o.playerId === target.id)) {
+        const suitor = pick(frng, suitors.slice(0, 5));
+        // a foreign bid is real money: 0.9–1.45× value, and a want-away goes cheaper
+        const cut = target.transferRequest ? 0.85 : target.transferListed ? 0.95 : 1;
+        const fee = roundTo(marketValue(target) * (0.9 + frng() * 0.55) * cut, 10_000);
+        save.offers.push({
+          id: `of-${save.season}-${save.round}-x${save.offers.length}`,
+          playerId: target.id,
+          fromClubId: suitor.c.id,
+          fee,
+          day: `R${save.round} · ${suitor.w.country}`,
+          foreign: true
+        });
+        pushNews(save, `${suitor.c.name} (${suitor.w.country}) have bid ${money(fee)} for ${target.name}.`);
+      }
+    }
+    // and your league loses men to the continent: one poaching a round, at most
+    if (frng() < 0.25) {
+      const prey = save.players.filter(
+        (p) => p.clubId !== "" && p.clubId !== save.userClubId && !p.loan && marketValue(p) >= 700_000
+      );
+      if (prey.length) {
+        const target = prey[Math.floor(frng() * prey.length)];
+        const suitor = pick(frng, foreignClubs.slice(0, Math.max(1, foreignClubs.length)));
+        const fee = roundTo(marketValue(target) * (1 + frng() * 0.4), 10_000);
+        const from = clubAnywhere(save, target.clubId)?.club;
+        const i = save.players.findIndex((x) => x.id === target.id);
+        if (i >= 0 && suitor) {
+          const [gone] = save.players.splice(i, 1);
+          gone.clubId = suitor.c.id;
+          gone.contract = { wage: wageDemand(gone), until: save.season + 2 + Math.floor(frng() * 3) };
+          addToWorld(save, gone, suitor.c.id);
+          worldTopUp(save, gone.clubId === suitor.c.id ? from?.id : undefined);
+          logLine(
+            save,
+            `R${save.round}: ${suitor.c.short} (${suitor.w.country}) sign ${gone.name} from ${from?.short ?? "a rival"} for ${money(fee)}.`
+          );
+        }
+      }
+    }
   }
 
   // --- incoming offers for the user's players (a transfer request draws bids) ---

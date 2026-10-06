@@ -25,7 +25,7 @@ const EN = NATIONS[0];
 const FIRST = EN.first;
 const LAST = EN.last;
 
-function makePlayer(
+export function makePlayer(
   rng: Rng,
   clubId: string,
   idx: number,
