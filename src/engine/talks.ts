@@ -6,10 +6,12 @@ import type {
   PiEffect,
   Player,
   PlayerInstruction,
+  RoleId,
   ShoutKind,
   TalkKind,
   TalkStage
 } from "./types";
+import { ROLE_DEFS } from "./roles";
 
 /**
  * Match-day levers: what you tell your team and what you tell them about theirs.
@@ -71,6 +73,14 @@ export function oiLabel(oi: OppInstruction | undefined): string {
 
 /** The instructions `side` has set on `id`. */
 export const oiOn = (side: MatchSideState, id: string): OppInstruction | undefined => side.oi?.[id];
+
+/**
+ * How much the instructions set against him keep him out of the move (v0.47).
+ * With the chance dice gone, the shooter pick no longer exists to carry the
+ * marking penalty — the possession model itself is where a marked man loses
+ * his touches, so `playMove` weighs every receiver by this.
+ */
+export const oiInvolve = (opp: MatchSideState, id: string): number => oiEffect(oiOn(opp, id)).involve;
 
 // --- player instructions -----------------------------------------------------------
 
@@ -299,6 +309,21 @@ export const shoutBy = (kind: ShoutKind): ShoutDef => SHOUTS.find((s) => s.kind 
 
 // --- what the assistant tells you ---------------------------------------------------
 
+/**
+ * The model's own idea of danger, used by the assistant's tip and the AI plan
+ * alike: the most advanced role first (shot + finish weights), then the best
+ * shooter. Raw shooting+pace can single out a man the shape never puts near
+ * the shooting range, which makes the marking lever look broken (v0.47).
+ */
+const dangerRank = (
+  a: { role?: RoleId; p: Player },
+  b: { role?: RoleId; p: Player }
+): number => {
+  const aw = a.role ? ROLE_DEFS[a.role].shot + ROLE_DEFS[a.role].finish : 0;
+  const bw = b.role ? ROLE_DEFS[b.role].shot + ROLE_DEFS[b.role].finish : 0;
+  return bw - aw || b.p.attrs.shooting + b.p.attrs.pace - (a.p.attrs.shooting + a.p.attrs.pace);
+};
+
 export interface Advice {
   kind: "tired" | "booked" | "threat" | "quiet" | "keeper" | "ref" | "ball" | "talk" | "shape";
   text: string;
@@ -355,12 +380,13 @@ export function assistantAdvice(
     }
   }
 
-  // the biggest threat on the other side
+  // the biggest threat on the other side — ranked the way the model finds
+  // danger: the most advanced role first, then the best shooter (v0.47;
+  // raw shooting+pace can single out a man the shape never puts near range)
   const threat = opp.slots
-    .filter((x): x is string => !!x)
-    .map((id) => ({ id, p: players.get(id) }))
-    .filter((x): x is { id: string; p: Player } => !!x.p)
-    .sort((a, b) => b.p.attrs.shooting + b.p.attrs.pace - (a.p.attrs.shooting + a.p.attrs.pace))[0];
+    .map((id, slot) => ({ id, p: id ? players.get(id) : undefined, role: opp.roles[slot] }))
+    .filter((x): x is { id: string; p: Player; role: RoleId } => !!x.id && !!x.p)
+    .sort(dangerRank)[0];
   const already = threat && opp.oi?.[threat.id];
   if (threat && !already && ctx.minute >= 15) {
     out.push({
@@ -410,13 +436,13 @@ export function halfTimeReport(
 /**
  * A simple AI plan: it puts an instruction on your most dangerous player and
  * presses the ones who are happy to be pressed. Deterministic from the squad.
+ * `roles` is the opponent's XI role list (same order as the XI), so the star
+ * pick matches how the model actually finds danger.
  */
-export function aiOppInstructions(opponentXI: Player[]): Record<string, OppInstruction> {
+export function aiOppInstructions(opponentXI: Player[], roles?: RoleId[]): Record<string, OppInstruction> {
   const out: Record<string, OppInstruction> = {};
-  const ranked = [...opponentXI].sort(
-    (a, b) => b.attrs.shooting + b.attrs.pace + b.attrs.passing - (a.attrs.shooting + a.attrs.pace + a.attrs.passing)
-  );
-  const star = ranked[0];
+  const ranked = opponentXI.map((p, i) => ({ p, role: roles?.[i] })).sort(dangerRank);
+  const star = ranked[0]?.p;
   if (star) out[star.id] = { mark: "tight", show: "outside" };
   const playmaker = [...opponentXI].sort((a, b) => b.attrs.passing - a.attrs.passing)[0];
   if (playmaker && playmaker.id !== star?.id) out[playmaker.id] = { press: "often" };

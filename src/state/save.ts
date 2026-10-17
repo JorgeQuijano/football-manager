@@ -7,8 +7,10 @@ import {
   DEFAULT_PLAN,
   builtinFormation,
   cleanSetPieces,
+  CONF_START,
   contractFor,
   defaultRoleFor,
+  ensureCareer,
   ensureDev,
   emptyAwards,
   emptyHistory,
@@ -20,6 +22,7 @@ import {
   policyFor,
   HEADLINES_CAP,
   MORALE_START,
+  REP_START,
   RESPECT_START,
   freshFinances,
   hashSeed,
@@ -29,6 +32,7 @@ import {
   ROLE_GROUPS,
   scoutingBudgetFor,
   squadOf,
+  styleFor,
   TRAITS,
   traitsFor,
   validateFormation
@@ -252,7 +256,46 @@ export function normalizeSave(save: SaveGame): SaveGame {
       typeof o.fee === "number" &&
       save.players.some((p) => p.id === o.playerId && p.clubId === save.userClubId)
   );
+  // the manager's career (v0.44): backfill, clamp, and drop dead approaches
+  ensureCareer(save);
+  {
+    const c = save.career!;
+    if (typeof c.reputation !== "number" || !Number.isFinite(c.reputation)) c.reputation = REP_START;
+    c.reputation = Math.max(5, Math.min(95, c.reputation));
+    if (typeof c.confidence !== "number" || !Number.isFinite(c.confidence)) c.confidence = CONF_START;
+    c.confidence = Math.max(0, Math.min(100, c.confidence));
+    if (c.warning !== 0 && c.warning !== 1 && c.warning !== 2) c.warning = 0;
+    const dis = c.dismissed;
+    if (dis && (typeof dis.season !== "number" || typeof dis.round !== "number" || !save.clubs.some((x) => x.id === dis.clubId))) {
+      c.dismissed = null;
+    }
+    if (!Array.isArray(c.stints)) c.stints = [];
+    c.stints = c.stints.filter(
+      (s) => s && typeof s.clubId === "string" && typeof s.from === "number" && save.clubs.some((x) => x.id === s.clubId)
+    );
+    if (!c.stints.length) c.stints = [{ clubId: save.userClubId, from: save.season }];
+    if (!Array.isArray(c.offers)) c.offers = [];
+    // an approach is only live in pre-season (round < 0)
+    c.offers =
+      save.round < 0
+        ? c.offers.filter(
+            (o) =>
+              o &&
+              typeof o.id === "string" &&
+              typeof o.clubId === "string" &&
+              typeof o.season === "number" &&
+              save.clubs.some((x) => x.id === o.clubId) &&
+              o.clubId !== save.userClubId
+          )
+        : [];
+  }
   if (!Array.isArray(save.transferLog)) save.transferLog = [];
+  // playing styles (v0.45): every club has an identity, and your lineup has a style
+  if (save.lineup) save.lineup.style = save.lineup.style ?? "balanced";
+  for (const c of save.clubs ?? []) if (!c.style) c.style = styleFor(c);
+  if (Array.isArray(save.world)) {
+    for (const w of save.world) for (const c of w.clubs ?? []) if (!c.style) c.style = styleFor(c);
+  }
   if (save.pending) {
     const target = playerAnywhere(save, save.pending.playerId);
     // a fee agreed for a foreign player is still a fee agreed (v0.43) — but if he
@@ -298,6 +341,7 @@ export function normalizeSave(save: SaveGame): SaveGame {
     save.lineup = autoLineup(squadOf(save.players, save.userClubId), builtinFormation("4-3-3"), {
       mentality: save.lineup?.mentality ?? "bal"
     });
+    save.lineup.style = save.lineup.style ?? "balanced";
     return save;
   }
 

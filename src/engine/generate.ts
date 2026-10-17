@@ -1,7 +1,7 @@
 import type { Club, WorldLeague, Facilities, FormationId, Lineup, Player, Position, SaveGame } from "./types";
 import { hashSeed, mulberry32, pick, randInt, type Rng } from "./rng";
 import { traitsFor } from "./traits";
-import { FORMATIONS, T } from "./tuning";
+import { FORMATIONS, T, styleFor } from "./tuning";
 import { autoLineup } from "./ratings";
 import { builtinFormation } from "./formations";
 import { buildFixtures } from "./league";
@@ -15,6 +15,7 @@ import { FACILITY_MAX, makeSponsorOffers } from "./commercial";
 import { defaultSetPieces } from "./setpieces";
 import { initScouting } from "./scouting";
 import { emptyAwards, emptyHistory } from "./history";
+import { freshCareer } from "./career";
 import { emptyMedia, makePress } from "./media";
 import { policyFor } from "./market";
 import { NATIONS, clubIdFor, nationById, type NationDef } from "./nations";
@@ -250,6 +251,7 @@ export function makeWorldLeagues(
       color: def.color,
       strength: T.strengthOffsets[i] ?? 0,
       formation: pick(worldRng, Object.keys(FORMATIONS)) as FormationId,
+      style: styleFor({ id: clubIdFor(other.id, i), strength: T.strengthOffsets[i] ?? 0 }),
       city: def.city,
       ground: def.ground,
       founded: def.founded,
@@ -292,6 +294,7 @@ export function newGame(seed: number, userClubId?: string, nationId?: string): S
       color: def.color,
       strength: T.strengthOffsets[i] ?? 0,
       formation: pick(rng, Object.keys(FORMATIONS)) as FormationId,
+      style: styleFor({ id: clubIdFor(n.id, i), strength: T.strengthOffsets[i] ?? 0 }),
       // the public details are part of the club: editable, and real for every nation
       city: def.city,
       ground: def.ground,
@@ -326,6 +329,7 @@ export function newGame(seed: number, userClubId?: string, nationId?: string): S
     players.filter((p) => p.clubId === chosen),
     builtinFormation("4-3-3")
   );
+  lineup.style = "balanced";
 
   // the rest of Europe (v0.38): built from its own stream, so your league is
   // byte-for-byte what it was before the continent existed
@@ -362,6 +366,7 @@ export function newGame(seed: number, userClubId?: string, nationId?: string): S
     setpieces: defaultSetPieces(),
     scouting: initScouting(seed, finances[chosen]?.transfer ?? 1_000_000),
     history: emptyHistory(),
+    career: freshCareer(chosen),
     awards: emptyAwards(),
     media: emptyMedia(),
     debts: [],

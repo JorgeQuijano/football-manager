@@ -12,6 +12,7 @@ export * from "./setpieces";
 export * from "./stats";
 export * from "./scouting";
 export * from "./history";
+export * from "./career";
 export * from "./morale";
 export * from "./conditions";
 export * from "./media";

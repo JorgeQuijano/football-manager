@@ -44,9 +44,11 @@ import { useGame } from "@/state/store";
 import { posChip } from "@/ui/format";
 import { InstructionsPanel, LeverTabs, Nudges, OppositionPanel, TalkPanel } from "@/ui/MatchLevers";
 import { frameStep } from "../frame-clock";
-import { drawFrame, slotScreen, type Frame, type FramePlayer } from "@/ui/matchPitch";
+import { drawFrame, type Frame, type FramePlayer } from "@/ui/matchPitch";
 import { jockeyDistance, newMotion, separate, stepPlayer, type Motion } from "@/ui/motion";
 import { armbandIn } from "@/engine";
+import { shapeFor, ysInOtherFrame, type Pt } from "@/engine/positions";
+import { offsideLine } from "@/engine/laws";
 
 /** Respect the accessibility toggle from the Help screen (localStorage "fm-motion"). */
 const reducedMotion = (): boolean => {
@@ -442,6 +444,39 @@ function LiveMatchScreen() {
       const m = sideMirror(side);
       return { x: m ? 100 - pt.x : pt.x, y: up ? pt.y : 100 - pt.y };
     };
+    // ---- the sim's own geometry (engine/positions.ts, v0.46 Stage 3) ---------
+    // The picture must agree with the match: every player's base position is the
+    // same `shapeFor` the possession model plays against — attack shapes hold
+    // the opponents' offside line, defend shapes are the live block. Cached per
+    // frame: the ball and the phases only change once a frame anyway.
+    let frameDefend = new Map<Side, Pt[]>();
+    let frameAttack = new Map<Side, Pt[]>();
+    const attacking = (side: Side) => {
+      const ph = phaseOf(side);
+      return ph === "in" || ph === "break";
+    };
+    const defendShapeOf = (side: Side): Pt[] => {
+      let sh = frameDefend.get(side);
+      if (!sh) {
+        const b = ownBall(side);
+        sh = shapeFor(sideOf(side), { ball: [b.x, b.y], phase: "defend" });
+        frameDefend.set(side, sh);
+      }
+      return sh;
+    };
+    const ownShape = (side: Side): Pt[] => {
+      if (!attacking(side)) return defendShapeOf(side);
+      let sh = frameAttack.get(side);
+      if (!sh) {
+        const other: Side = side === "home" ? "away" : "home";
+        // the attackers hold the same line the sim makes them hold
+        const lineY = offsideLine(ysInOtherFrame(defendShapeOf(other)));
+        const b = ownBall(side);
+        sh = shapeFor(sideOf(side), { ball: [b.x, b.y], phase: "attack", offsideLine: lineY });
+        frameAttack.set(side, sh);
+      }
+      return sh;
+    };
     const decideFor = (side: Side, slot: number, phase: GamePhase) => {
       const sd = sideOf(side);
       const key = side + ":" + slot;
@@ -452,13 +487,15 @@ function LiveMatchScreen() {
       }
       const prof = profRef.current.map.get(key) ?? DEFAULT_PROFILE;
       const ball = ownBall(side);
-      const cd = sd.coords[slot];
+      // the live shape, not the formation template: intents read the same
+      // geometry the possession model plays against (v0.46 Stage 3)
+      const sp = ownShape(side)[slot] ?? sd.coords[slot];
       const pick = decideIntent(
         prof,
         {
           phase,
           mentality: sd.mentality,
-          slot: { x: cd[0], y: cd[1] },
+          slot: { x: sp[0], y: sp[1] },
           ball,
           prog: 1 - ball.y / 100,
           traits: (profRef.current.tmap.get(key) ?? []) as TraitId[]
@@ -475,12 +512,11 @@ function LiveMatchScreen() {
     };
 
     /**
-     * Live position target for a slot. Engine-owned per-role instructions
-     * (`motionFor`: press/support/push/drop/width/roam per role, scaled by pace
-     * and physical) select behaviour by phase — in possession roles push up,
-     * offer for the ball and hold or leave their width; out of possession they
-     * drop into shape and the most eager roles press; during transition the
-     * turnover winner breaks and the loser recovers at sprint pace.
+     * Live position target for a slot. The base is the sim's own shape
+     * (`shapeFor`, engine/positions.ts) — the same eleven the possession model
+     * plays against, holding the same offside line — and the per-role
+     * instructions (`motionFor`: width, support, press) modulate it, plus the
+     * player's own intent for this moment and a little wander.
      */
     const targetFor = (side: Side, slot: number) => {
       // set plays: hold the staged shape (corner box, penalty arc, free-kick wall)
@@ -488,25 +524,20 @@ function LiveMatchScreen() {
       if (staged) return staged;
       const sd = sideOf(side);
       const prof = profRef.current.map.get(side + ":" + slot) ?? DEFAULT_PROFILE;
-      const base = slotScreen(sd, slot, sideMirror(side));
+      // the base is the sim's own shape (engine/positions.ts): the possession
+      // model and the picture place the same eleven the same way (v0.46 Stage 3)
+      const shapePt = ownShape(side)[slot] ?? sd.coords[slot];
+      const base = screenFromOwn(side, { x: shapePt[0], y: shapePt[1] });
       const up = attacksUp(side);
       const dir = up ? -1 : 1;
       const bx = C.ballX;
       const by = C.ballY;
-      const prog = (up ? 100 - by : by) / 100; // 0 = deep in own half → 1 = opponent box
       const phase = phaseOf(side);
       let x = base.x;
-      let y = base.y + dir * (prog - 0.5) * (prof.gk ? 10 : 30);
-      // role depth for the phase (positive = toward the opponent goal)
-      let depth: number;
-      if (phase === "break") depth = prof.push * 0.7 + prof.break * 9;
-      else if (phase === "in") depth = prof.push * (0.5 + 0.5 * prog);
-      else if (phase === "recover") depth = -prof.drop - prof.recovery * 9;
-      else depth = -prof.drop * (0.5 + 0.5 * (1 - prog));
+      let y = base.y;
       // team mentality shifts the whole block: attacking sits higher, defensive deeper
-      if (sd.mentality === "att") depth += 4;
-      else if (sd.mentality === "def") depth -= 5;
-      y += dir * depth * (prof.gk ? 0.25 : 1);
+      const ment = sd.mentality === "att" ? 4 : sd.mentality === "def" ? -5 : 0;
+      y += dir * ment * (prof.gk ? 0.25 : 1);
       // role width: hold the line or come inside
       const sideSign = base.x >= 50 ? 1 : -1;
       x += sideSign * prof.width * 11 * (phase === "in" || phase === "break" ? 1 : 0.5);
@@ -639,6 +670,9 @@ function LiveMatchScreen() {
       C.time += dt;
       if (C.transT > 0) C.transT = Math.max(0, C.transT - dt * C.speed);
       C.roamDamp = 1;
+      // a fresh frame of geometry: the ball and the phases have moved
+      frameDefend = new Map();
+      frameAttack = new Map();
       for (const side of ["home", "away"] as const) {
         const phase = phaseOf(side);
         for (let i = 0; i < 11; i++) {

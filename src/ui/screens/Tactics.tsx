@@ -16,6 +16,9 @@ import {
   resolveFormation,
   ROLE_DEFS,
   squadOf,
+  STYLE_IDS,
+  STYLES,
+  styleOf,
   T,
   validateLineup
 } from "@/engine";
@@ -38,6 +41,7 @@ export function Tactics() {
   const game = useGame((s) => s.game)!;
   const setFormation = useGame((s) => s.setFormation);
   const setMentality = useGame((s) => s.setMentality);
+  const setStyle = useGame((s) => s.setStyle);
   const autoPick = useGame((s) => s.autoPick);
   const applySuggestions = useGame((s) => s.applySuggestions);
   const swapSlots = useGame((s) => s.swapSlots);
@@ -281,6 +285,39 @@ export function Tactics() {
             {m.label}
           </button>
         ))}
+      </div>
+
+      <div className="space-y-1.5" data-testid="style-picker">
+        <div className="flex items-baseline justify-between">
+          <div className="eyebrow">Playing style</div>
+          <span className="text-[10px] text-muted-foreground" data-testid="style-note">
+            Attack ×{styleOf(lineup.style).att.toFixed(2)} · Defence ×
+            {styleOf(lineup.style).def.toFixed(2)}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {STYLE_IDS.map((id) => {
+            const s = STYLES[id];
+            const active = (lineup.style ?? "balanced") === id;
+            return (
+              <button
+                key={id}
+                data-testid={`style-${id}`}
+                onClick={() => setStyle(id)}
+                className={`rounded-xl border p-2.5 text-left transition-colors ${
+                  active ? "border-primary bg-primary/10" : "border-border bg-card"
+                }`}
+              >
+                <span className={`block text-sm font-bold ${active ? "text-primary" : ""}`}>
+                  {s.label}
+                </span>
+                <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
+                  {s.blurb}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <button

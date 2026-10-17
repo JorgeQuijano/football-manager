@@ -1,5 +1,12 @@
 export type Position = "GK" | "DF" | "MF" | "FW";
 export type Mentality = "def" | "bal" | "att";
+
+/**
+ * A team's playing style (v0.45) — the identity that shapes how the ball moves:
+ * patient short passing, long direct balls, a high press, a deep block, or the
+ * counter. The manager picks theirs in Tactics; every AI club has its own.
+ */
+export type TacticStyle = "balanced" | "tiki_taka" | "direct" | "gegenpress" | "park_bus" | "counter";
 export type FormationId = "4-4-2" | "4-3-3" | "4-2-3-1" | "3-5-2" | "5-3-2";
 export type RoleId =
   | "keeper"
@@ -393,6 +400,8 @@ export interface Club {
   color: string; // chip color
   strength: number; // generation-time offset
   formation: FormationId; // preferred formation (AI)
+  /** the club's playing identity (v0.45) — AI clubs keep theirs; yours is set in Tactics */
+  style?: TacticStyle;
   /** the public details the manager can edit (v0.37): blank = the club's own lore */
   city?: string;
   ground?: string;
@@ -541,7 +550,7 @@ export interface MatchResult {
 
 // --- live match (pauseable, resumable, renderable) ---------------------------------
 
-export type StrokeOut = "turnover" | "out" | "foul" | "goal" | "save" | "block" | "miss" | "offside";
+export type StrokeOut = "turnover" | "out" | "foul" | "goal" | "save" | "block" | "miss" | "offside" | "held";
 
 /** Set-piece tags: staging + commentary hints for the 2D view. */
 export type SetPiece = "corner" | "freekick" | "penalty" | "goalkick" | "throw";
@@ -627,6 +636,14 @@ export interface Stroke {
   vr?: "stands" | "overturned" | "restored";
   /** shots only: the chance's expected goals (the model's own probability) */
   xg?: number;
+  /** attempted pass distances in pitch units (possession model, v0.46) — one per attempt */
+  pd?: number[];
+  /** forward delta per attempt (+ = forward) in the attacker's frame (v0.46) */
+  pf?: number[];
+  /** completed passes out of `pd` (possession model, v0.46) */
+  pc?: number;
+  /** where a turnover was won: y in the WINNER's attacking frame (possession model, v0.46) */
+  ty?: number;
 }
 
 // --- match-day levers (v0.23): opposition instructions, player instructions, talks, shouts ----
@@ -676,6 +693,7 @@ export interface MatchSideState {
   coords: [number, number][]; // formation x/y per slot (x: 0-100 L→R, y: 0-100 opp goal→own goal)
   bench: string[]; // player ids still available to come on
   mentality: Mentality;
+  style: TacticStyle; // the side's playing style (v0.45)
   plan: SetPiecePlan; // set-piece routines, takers and familiarity
   goals: number;
   subs: number; // substitutions used (max T.maxSubs)
@@ -711,6 +729,8 @@ export interface MatchState {
 
   cond: MatchConditions;
   rngState: number;
+  /** the seed the calibrated chance rolls are keyed to (v0.45) */
+  flowSeed?: number;
   userSide?: "home" | "away";
   home: MatchSideState;
   away: MatchSideState;
@@ -734,6 +754,10 @@ export interface MatchState {
   shots?: MatchShot[];
   /** per player: which side (0 home / 1 away) and natural position — for post-match ratings */
   pin: Record<string, { s: 0 | 1; pos: Position }>;
+  /** where and when the ball last changed hands (v0.45) — the transition window */
+  lastTurnover?: { side: "home" | "away"; y: number; minute: number };
+  /** who has the ball and where it is (that side's own frame, 0 = own goal) — carried across minutes (v0.48) */
+  ballSpot?: { side: "home" | "away"; y: number; contest?: boolean };
 }
 
 /** A manager action applied mid-match; replayed deterministically when re-simulating. */
@@ -785,6 +809,8 @@ export interface Lineup {
   bench: (string | null)[]; // 7 slots
   mentality: Mentality;
   roles: RoleId[]; // one per starter slot
+  /** the manager's playing style (v0.45) — see engine/tuning.ts STYLES */
+  style?: TacticStyle;
 }
 
 export interface TableRow {
@@ -932,6 +958,45 @@ export interface MediaState {
   skipped: number;
 }
 
+// --- the manager's career (engine/career.ts, v0.44) -----------------------------------
+
+/** One spell in charge of a club. */
+export interface Stint {
+  clubId: string;
+  /** the first season in charge */
+  from: number;
+  /** the last season in charge (written at every rollover) */
+  until?: number;
+}
+
+/** An approach from another club, waiting for an answer. */
+export interface JobOffer {
+  id: string;
+  clubId: string;
+  /** the season the offer is for */
+  season: number;
+  /** the new board's expectation, in words */
+  expectation: string;
+  /** the new squad, in the scouts' words */
+  squad: string;
+}
+
+/** The manager's standing: your name in the game, the board's patience, the jobs that follow. */
+export interface CareerState {
+  /** reputation across the game, 0-100 (50 = a steady hand with a modest record) */
+  reputation: number;
+  /** the current board's confidence, 0-100 (60 = a fresh start) */
+  confidence: number;
+  /** escalation: 0 none, 1 concerned, 2 final warning */
+  warning: 0 | 1 | 2;
+  /** set when the board have seen enough — the run is over */
+  dismissed?: { season: number; round: number; clubId: string } | null;
+  /** every spell in charge, oldest first */
+  stints: Stint[];
+  /** approaches for the new season, waiting for an answer */
+  offers: JobOffer[];
+}
+
 export interface SaveGame {
   saveVersion: 1;
   seed: number;
@@ -984,6 +1049,8 @@ export interface SaveGame {
   debts?: Debt[];
   /** the board's line in the market this season */
   policy?: BoardPolicy;
+  /** the manager's career: reputation, the board's patience, the sack (engine/career.ts, v0.44) */
+  career?: CareerState;
   /** free transfers agreed for the end of the season */
   preContracts?: PreContract[];
   /** the club inbox, newest first (engine/inbox.ts) */

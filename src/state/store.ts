@@ -6,12 +6,14 @@ import type {
   Lineup,
   MatchResult,
   Mentality,
+  TacticStyle,
   Player,
   RoleId,
   SaveGame
 } from "@/engine";
 import {
   acceptOffer,
+  acceptJob,
   addLiveChange,
   autoLineup,
   bidForPlayer,
@@ -22,8 +24,10 @@ import {
   editClub as editClubEngine,
   resetClub as resetClubEngine,
   CUP_DAY,
+  declineJob as declineJobEngine,
   finalizeLive,
   fixLineup,
+  freshCareer,
   isAvailable,
   newGame,
   nextSeason,
@@ -176,9 +180,14 @@ interface AppState {
   resetClub: (clubId: string) => void;
 
   startNextSeason: () => void;
+  /** take another club's approach (v0.44) */
+  takeJob: (offerId: string) => void;
+  /** turn an approach down (v0.44) */
+  declineJob: (offerId: string) => void;
   setScreen: (s: Screen) => void;
   setFormation: (f: string) => void;
   setMentality: (m: Mentality) => void;
+  setStyle: (s: TacticStyle) => void;
   setRole: (index: number, role: RoleId) => void;
   assignPlayer: (kind: "xi" | "bench", index: number, playerId: string) => void;
   clearSlot: (kind: "xi" | "bench", index: number) => void;
@@ -313,7 +322,8 @@ export const useGame = create<AppState>()((set, get) => ({
   startNewGame: (clubId) => {
     const { preview } = get();
     if (preview) {
-      const game: SaveGame = { ...preview, userClubId: clubId, onboarded: false };
+      // the preview world was built for the first club — the career starts at the chosen one
+      const game: SaveGame = { ...preview, userClubId: clubId, onboarded: false, career: freshCareer(clubId) };
       set({ game, preview: null, screen: "welcome", reveal: null, builderFor: null, lastDay: null });
       schedulePersist(game);
       return;
@@ -620,6 +630,24 @@ export const useGame = create<AppState>()((set, get) => ({
     schedulePersist(save);
   },
 
+  takeJob: (offerId) => {
+    const { game } = get();
+    if (!game) return;
+    const res = acceptJob(game, offerId);
+    if (!res.ok) return;
+    set({ game: res.save, reveal: null, screen: "home" });
+    schedulePersist(res.save);
+  },
+
+  declineJob: (offerId) => {
+    const { game } = get();
+    if (!game) return;
+    const res = declineJobEngine(game, offerId);
+    if (!res.ok) return;
+    set({ game: res.save });
+    schedulePersist(res.save);
+  },
+
   setScreen: (screen) => set({ screen }),
 
   setFormation: (formation) => {
@@ -638,6 +666,14 @@ export const useGame = create<AppState>()((set, get) => ({
     const { game } = get();
     if (!game) return;
     const save = { ...game, lineup: { ...game.lineup, mentality } };
+    set({ game: save });
+    schedulePersist(save);
+  },
+
+  setStyle: (style) => {
+    const { game } = get();
+    if (!game) return;
+    const save = { ...game, lineup: { ...game.lineup, style } };
     set({ game: save });
     schedulePersist(save);
   },

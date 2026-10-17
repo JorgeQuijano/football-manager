@@ -1,4 +1,4 @@
-import type { MatchSideState, MatchState, Player } from "./types";
+import type { MatchSideState, MatchState, Player, Position } from "./types";
 import { T } from "./tuning";
 import type { Rng } from "./rng";
 
@@ -35,9 +35,6 @@ export interface OffsideRuling {
   reason: "beyond" | "level" | "behind" | "own-half" | "backward" | "restart" | "keeper" | "no-line";
 }
 
-/** Depth: y=0 is the goal a side attacks, y=100 its own. */
-const depth = (side: MatchSideState, slot: number): number => side.coords[slot]?.[1] ?? 50;
-
 /** Do the rules even allow offside from this restart? */
 export const OFFSIDE_FROM: Record<string, boolean> = {
   open: true,
@@ -48,44 +45,36 @@ export const OFFSIDE_FROM: Record<string, boolean> = {
 };
 
 /**
- * The defending side's offside line: the second-last defender, or the halfway
- * line if that defender is deeper than halfway (you cannot be offside in your
- * own half).
+ * The defending side's offside line, in the attacker's frame: level with the
+ * second-last defender, and never in the attacker's own half. `ys` are the
+ * defenders' live depths (0 = the goal being attacked) — since v0.46 the line
+ * is read from where the players actually stand, not from their formation
+ * slots, so a high press defends with a high line and a bus with a deep one.
  */
-export function offsideLine(defSide: MatchSideState, onPitch: Array<{ slot: number; p: Player }>): number {
-  const men = onPitch
-    .map((x) => ({ slot: x.slot, y: depth(defSide, x.slot), isGk: x.p.pos === "GK" }))
-    .sort((a, b) => a.y - b.y); // nearest their own goal first
-  if (men.length < 2) return 50;
+export function offsideLine(ys: number[]): number {
+  if (ys.length < 2) return 50;
+  const sorted = [...ys].sort((a, b) => a - b);
   // the last man is usually the keeper; the second-last is the line
-  const second = men[1];
-  // you cannot be offside in your own half, so the line never retreats past halfway
-  return Math.min(second.y, 50);
+  return Math.min(sorted[1], 50);
 }
 
 export function checkOffside(
-  atkSide: MatchSideState,
-  defSide: MatchSideState,
-  defenders: Array<{ slot: number; p: Player }>,
-  attackers: Array<{ slot: number; p: Player }>,
-  passerSlot: number | undefined,
-  receiverSlot: number | undefined,
+  receiverPos: Position | undefined,
+  passerY: number | undefined,
+  receiverY: number | undefined,
+  line: number,
   restart = "open"
 ): OffsideRuling {
   if (!OFFSIDE_FROM[restart]) return { offside: false, tight: false, line: 50, reason: "restart" };
-  if (passerSlot === undefined || receiverSlot === undefined) {
-    return { offside: false, tight: false, line: 50, reason: "no-line" };
+  if (passerY === undefined || receiverY === undefined) {
+    return { offside: false, tight: false, line, reason: "no-line" };
   }
-  const receiver = attackers.find((x) => x.slot === receiverSlot);
-  if (!receiver || receiver.p.pos === "GK") {
-    return { offside: false, tight: false, line: 50, reason: "keeper" };
+  if (receiverPos === "GK") {
+    return { offside: false, tight: false, line, reason: "keeper" };
   }
-  const line = offsideLine(defSide, defenders);
-  const ry = depth(atkSide, receiverSlot);
-  const py = depth(atkSide, passerSlot);
-  if (ry >= 50) return { offside: false, tight: false, line, reason: "own-half" };
-  if (ry >= py) return { offside: false, tight: false, line, reason: "backward" }; // the pass was not forward
-  const beyond = line - ry; // positive = past the line, toward the goal they attack
+  if (receiverY >= 50) return { offside: false, tight: false, line, reason: "own-half" };
+  if (receiverY >= passerY) return { offside: false, tight: false, line, reason: "backward" }; // the pass was not forward
+  const beyond = line - receiverY; // positive = past the line, toward the goal they attack
   if (beyond > T.offsideTolerance) return { offside: true, tight: beyond < T.offsideTight, line, reason: "beyond" };
   return { offside: false, tight: beyond > -T.offsideTight, line, reason: beyond < 0 ? "behind" : "level" };
 }
