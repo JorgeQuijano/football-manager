@@ -16,9 +16,7 @@ import {
   friendlyDate,
   formOf,
   squadOf,
-  bandFor,
-  expectationFor,
-  squadValue
+  boardTarget
 } from "@/engine";
 import { useGame } from "@/state/store";
 import { formColor, initials, ordinal, shortName } from "@/ui/format";
@@ -27,6 +25,7 @@ import { SettingsSheet } from "@/ui/sheets";
 import { WeekCard } from "@/ui/Week";
 import { MediaCard } from "@/ui/Press";
 import { MatchStakes, MeetingCard } from "@/ui/Motivation";
+import { BoardCard, JobOffers } from "@/ui/Career";
 
 export function Home() {
   const game = useGame((s) => s.game)!;
@@ -83,7 +82,7 @@ export function Home() {
             {ordinal(mine.position)} · {mine.pts} pts · Season {game.season}
           </div>
           <div className="truncate text-[10px] text-muted-foreground/80" data-testid="board-expectation">
-            Board: {expectationFor(bandFor(squadValue(game, game.userClubId), game.clubs.map((c) => squadValue(game, c.id))))}
+            Board: {boardTarget(game).text}
           </div>
         </div>
         <button
@@ -131,6 +130,10 @@ export function Home() {
         <MeetingCard />
       <WeekCard />
       </div>
+
+      <JobOffers />
+
+      <BoardCard />
 
       {game.round < 0 && (
         <Card className="mt-4 border-primary/40">

@@ -1,13 +1,13 @@
-import { useEffect } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { useGame } from "@/state/store";
 import { BottomNav } from "@/ui/BottomNav";
 import { Builder } from "@/ui/screens/Builder";
+import { CareerOver } from "@/ui/screens/CareerOver";
 import { Club } from "@/ui/screens/Club";
 import { Home } from "@/ui/screens/Home";
 import { Help } from "@/ui/screens/Help";
 import { Inbox } from "@/ui/screens/Inbox";
 import { LeagueScreen } from "@/ui/screens/LeagueScreen";
-import { MatchScreen } from "@/ui/screens/MatchScreen";
 import { NewGame } from "@/ui/screens/NewGame";
 import { Welcome } from "@/ui/screens/Welcome";
 import { WeekBar } from "@/ui/Week";
@@ -17,6 +17,18 @@ import { Squad } from "@/ui/screens/Squad";
 import { Tactics } from "@/ui/screens/Tactics";
 import { Training } from "@/ui/screens/Training";
 import { Transfers } from "@/ui/screens/Transfers";
+
+// the match view (pitch, levers, talks) is the heaviest screen and is only
+// needed once a match is open: keep it out of the initial bundle (v0.46)
+const MatchScreen = lazy(() =>
+  import("@/ui/screens/MatchScreen").then((m) => ({ default: m.MatchScreen }))
+);
+
+const ScreenFallback = () => (
+  <div className="grid min-h-dvh place-items-center bg-background text-sm text-muted-foreground">
+    Loading…
+  </div>
+);
 
 export default function App() {
   const loaded = useGame((s) => s.loaded);
@@ -37,8 +49,15 @@ export default function App() {
   }
 
   if (!game || screen === "new") return <NewGame />;
+  // the run can end mid-season: the board's decision outranks whatever screen was open (v0.44)
+  if (game.career?.dismissed) return <CareerOver />;
   if (screen === "welcome") return <Welcome />;
-  if (screen === "match") return <MatchScreen />;
+  if (screen === "match")
+    return (
+      <Suspense fallback={<ScreenFallback />}>
+        <MatchScreen />
+      </Suspense>
+    );
   if (screen === "seasonEnd") return <SeasonEnd />;
   if (screen === "builder") return <Builder />;
   if (screen === "inbox") return <main className="mx-auto w-full max-w-lg px-4 pb-24 pt-4"><Inbox /></main>;

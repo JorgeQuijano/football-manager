@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { SeasonRecord } from "@/engine";
-import { seasonRounds, computeTable, conditionLine, conditionsFor, money, ordinal, rating1, ratingAvg, topScorers, weatherOf } from "@/engine";
+import { seasonRounds, computeTable, conditionLine, conditionsFor, money, ordinal, rating1, ratingAvg, reputationLabel, topScorers, weatherOf } from "@/engine";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataHub } from "@/ui/DataHub";
@@ -333,6 +333,36 @@ export function LeagueScreen() {
                     <div>Prize money {money(career.prize)}</div>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-3" data-testid="hist-manager">
+                <div className="flex items-baseline justify-between">
+                  <span className="eyebrow">The manager</span>
+                  <span className="text-xs font-bold tnum" data-testid="hist-reputation">
+                    {game.career?.reputation ?? 50} · {reputationLabel(game.career?.reputation ?? 50)}
+                  </span>
+                </div>
+                <div className="mt-2 space-y-1">
+                  {(game.career?.stints ?? []).map((s, i) => {
+                    const sc = game.clubs.find((x) => x.id === s.clubId);
+                    const span =
+                      s.until === undefined || s.until === s.from ? `Season ${s.from}` : `Seasons ${s.from}–${s.until}`;
+                    return (
+                      <div key={`${s.clubId}-${i}`} className="flex items-center justify-between text-xs">
+                        <span className="font-semibold">{sc?.name ?? s.clubId}</span>
+                        <span className="text-muted-foreground">{span}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {game.career?.dismissed && (
+                  <p className="mt-1.5 text-[11px] font-semibold text-[var(--danger)]">
+                    Sacked by {game.clubs.find((x) => x.id === game.career!.dismissed!.clubId)?.name ?? "the board"} in
+                    season {game.career.dismissed.season}.
+                  </p>
+                )}
               </CardContent>
             </Card>
 

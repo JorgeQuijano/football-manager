@@ -1,4 +1,4 @@
-import type { Lineup, MatchResult, Player, Position, RoleId, SaveGame } from "./types";
+import type { Lineup, MatchResult, Player, Position, RoleId, SaveGame, TacticStyle } from "./types";
 import { hashSeed, mulberry32 } from "./rng";
 import { autoLineup, fixLineup, isAvailable, squadOf } from "./ratings";
 import { builtinFormation, resolveFormation } from "./formations";
@@ -28,6 +28,7 @@ import { formFreshnessTick, recordForm } from "./stats";
 import { moveTick, retrainTick, settleTargets } from "./individual";
 import { pushInbox } from "./inbox";
 import { bigMatchFor, settlePledges } from "./motivation";
+import { careerReview, careerTick } from "./career";
 
 export function seasonRounds(save: Pick<SaveGame, "clubs">): number {
   return (save.clubs.length - 1) * 2;
@@ -37,6 +38,7 @@ export interface Resolved {
   xi: Player[];
   bench: Player[];
   mentality: "def" | "bal" | "att";
+  style: TacticStyle;
   roles: RoleId[];
   coords: [number, number][];
   poss: Position[];
@@ -70,6 +72,7 @@ export function resolveSide(save: SaveGame, clubId: string): Resolved {
     xi,
     bench,
     mentality: clubId === save.userClubId ? save.lineup.mentality : "bal",
+    style: (clubId === save.userClubId ? save.lineup.style : club.style) ?? "balanced",
     roles,
     coords: def.slots.map((s) => [s.x, s.y] as [number, number]),
     poss: def.slots.map((s) => s.pos)
@@ -90,6 +93,8 @@ export const matchInputs = (save: SaveGame, round: number, homeId: string, awayI
     awayBench: away.bench,
     homeMentality: home.mentality,
     awayMentality: away.mentality,
+    homeStyle: home.style,
+    awayStyle: away.style,
     homeRoles: home.roles,
     awayRoles: away.roles,
     homeCoords: home.coords,
@@ -296,6 +301,8 @@ export function completeRound(input: SaveGame, userResult?: MatchResult): SaveGa
   withTransfers.round = round + 1;
   // media: results move the fans, promises come due, the next conference is booked
   mediaTick(withTransfers, withTransfers.lastResults);
+  // the board watched too: confidence moves, warnings land, the sack can come (v0.44)
+  careerTick(withTransfers);
   return withTransfers;
 }
 
@@ -342,6 +349,8 @@ export function completeFriendly(input: SaveGame, userResult?: MatchResult): Sav
     // the flag drops: the league begins
     save.round = 1;
     save.phase = "league";
+    // job offers die at the opener: a pre-season is how long a vacancy waits (v0.44)
+    if (save.career) save.career.offers = [];
     pushNews(save, "Pre-season is over — the league season starts this weekend.");
   }
   void after;
@@ -379,6 +388,9 @@ export function nextSeason(input: SaveGame): SaveGame {
   // remember the season that just finished (career totals, records, awards) — before
   // retirements remove players and before the season counters reset
   recordSeason(save);
+  // the career review reads the finished table and the club rosters (still last
+  // season's): reputation, the board's verdict, and the offers that follow (v0.44)
+  careerReview(save);
   save.season += 1;
   save.round = PRE_ROUNDS[0];
   save.cupLast = undefined;

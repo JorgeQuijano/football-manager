@@ -91,7 +91,41 @@ export function questionPool(save: SaveGame): PressQuestion[] {
     .sort((a, b) => overallFor(b) - overallFor(a))[0];
   const qs: PressQuestion[] = [];
 
-  if (losses >= 3) {
+  // the board's patience is a story now (v0.44): a vote of confidence changes the questions
+  const boardHeat = save.career?.warning ?? 0;
+  if (boardHeat >= 1) {
+    qs.push({
+      id: "pressure",
+      hint:
+        boardHeat >= 2
+          ? "The board have gone public with their concern."
+          : "The board are watching this run closely.",
+      text: `The board's patience is being tested at ${club.name}. How do you answer the people above you?`,
+      answers: [
+        {
+          label: "The board hired me to do a job. Judge me at the end of the season.",
+          reply: "A cool head. The press admire it; boardrooms prefer it to panic.",
+          fans: -1,
+          respect: 5,
+          morale: 1
+        },
+        {
+          label: "The dressing room is with me. That's all that matters right now.",
+          reply: "The players will hear that answer. It buys you something in there.",
+          fans: 1,
+          respect: -1,
+          morale: 5
+        },
+        {
+          label: "I understand the concern. I'd be worried too, in their seats.",
+          reply: "Honesty, unvarnished. The fans appreciate it — the board rather less.",
+          fans: 2,
+          respect: 2,
+          morale: -2
+        }
+      ]
+    });
+  } else if (losses >= 3) {
     qs.push({
       id: "crisis",
       hint: "Three defeats in your last four.",

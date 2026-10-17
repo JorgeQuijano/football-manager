@@ -11,10 +11,11 @@ import type {
   RoleId,
   SetPiece,
   SetPiecePlan,
-  StrokeOut
+  StrokeOut,
+  TacticStyle
 } from "./types";
 import { hashSeed, mulberry32, pick, pickWeighted, randInt, type Rng } from "./rng";
-import { T } from "./tuning";
+import { POSSESSION, T, styleOf } from "./tuning";
 import {
   LAW_TEXT,
   attackersOf,
@@ -23,8 +24,10 @@ import {
   flagGoesUp,
   handballVerdict,
   keeperPicksItUp,
+  offsideLine,
   restartAfterOut
 } from "./laws";
+import { shapeFor, toFrame, ysInOtherFrame } from "./positions";
 import { hasTrait } from "./traits";
 import { aerialOf, bestAerial, crossShareFor, duelFactor, headerWeight } from "./aerial";
 import { aiOppInstructions, oiEffect, oiOn, piEffect, piOf, shoutScale, talkDefFor } from "./talks";
@@ -39,6 +42,7 @@ import {
   suitability
 } from "./ratings";
 import { defaultRoleFor, roleFinish, ROLE_DEFS } from "./roles";
+import { playMove, type MoveResult } from "./possession";
 import { DEFAULT_CONDITIONS, conditionEffects, refOf, weatherOf } from "./conditions";
 import { jadedFactor, jadedOf, pronenessOf, sharpnessFactor } from "./physical";
 import { formFactor } from "./stats";
@@ -152,6 +156,9 @@ export interface MatchInputs {
   awayBench: Player[];
   homeMentality: Mentality;
   awayMentality: Mentality;
+  /** playing styles (v0.45) — omitted = balanced */
+  homeStyle?: TacticStyle;
+  awayStyle?: TacticStyle;
   homeRoles: RoleId[];
   awayRoles: RoleId[];
   homeCoords: [number, number][];
@@ -308,6 +315,7 @@ const buildSide = (
   xi: Player[],
   bench: Player[],
   mentality: Mentality,
+  style: TacticStyle,
   roles: RoleId[],
   coords: [number, number][],
   poss0: Position[],
@@ -336,6 +344,7 @@ const buildSide = (
     coords: cds,
     bench: bench.map((p) => p.id),
     mentality,
+    style,
     goals: 0,
     subs: 0,
     windows: 0,
@@ -351,6 +360,7 @@ const buildSide = (
 
 export function startMatch(inp: MatchInputs): MatchState {
   const rng = inp.rng;
+  const flowSeed = rng.state;
   const total = 90 + randInt(rng, 1, 5);
   const state: MatchState = {
     round: inp.round,
@@ -359,9 +369,10 @@ export function startMatch(inp: MatchInputs): MatchState {
     minute: 0,
     total,
     rngState: 0,
+    flowSeed,
     userSide: inp.userSide,
-    home: buildSide(inp.homeClub, inp.homeXI, inp.homeBench, inp.homeMentality, inp.homeRoles, inp.homeCoords, inp.homePoss, inp.homePlan),
-    away: buildSide(inp.awayClub, inp.awayXI, inp.awayBench, inp.awayMentality, inp.awayRoles, inp.awayCoords, inp.awayPoss, inp.awayPlan),
+    home: buildSide(inp.homeClub, inp.homeXI, inp.homeBench, inp.homeMentality, inp.homeStyle ?? "balanced", inp.homeRoles, inp.homeCoords, inp.homePoss, inp.homePlan),
+    away: buildSide(inp.awayClub, inp.awayXI, inp.awayBench, inp.awayMentality, inp.awayStyle ?? "balanced", inp.awayRoles, inp.awayCoords, inp.awayPoss, inp.awayPlan),
     events: [],
     timeline: [],
     ratings: {},
@@ -375,7 +386,9 @@ export function startMatch(inp: MatchInputs): MatchState {
     stamina: {},
     staminaRate: {},
     cond: inp.conditions ?? DEFAULT_CONDITIONS,
-    big: inp.bigMatch === true
+    big: inp.bigMatch === true,
+    // the home side kicks off: the ball is at the centre spot (v0.48)
+    ballSpot: { side: "home", y: 50 }
   };
   for (const p of [...inp.homeXI, ...inp.homeBench, ...inp.awayXI, ...inp.awayBench]) {
     state.ratings[p.id] = T.ratingBase;
@@ -385,20 +398,20 @@ export function startMatch(inp: MatchInputs): MatchState {
     state.played.push(p.id);
     state.pin[p.id] = { s: 0, pos: p.pos };
     state.stamina[p.id] = staminaStart(p);
-    state.staminaRate[p.id] = staminaDrainPerMinute(p);
+    state.staminaRate[p.id] = staminaDrainPerMinute(p) * styleOf(inp.homeStyle).stamina;
   }
   for (const p of inp.awayXI.slice(0, 11)) {
     state.entryMinute[p.id] = 0;
     state.played.push(p.id);
     state.pin[p.id] = { s: 1, pos: p.pos };
     state.stamina[p.id] = staminaStart(p);
-    state.staminaRate[p.id] = staminaDrainPerMinute(p);
+    state.staminaRate[p.id] = staminaDrainPerMinute(p) * styleOf(inp.awayStyle).stamina;
   }
   for (const p of inp.homeBench) state.pin[p.id] = { s: 0, pos: p.pos };
   for (const p of inp.awayBench) state.pin[p.id] = { s: 1, pos: p.pos };
   // the AI reads your team and sets its own instructions (yours start blank)
-  if (inp.userSide !== "home") state.home.oi = aiOppInstructions(inp.awayXI);
-  if (inp.userSide !== "away") state.away.oi = aiOppInstructions(inp.homeXI);
+  if (inp.userSide !== "home") state.home.oi = aiOppInstructions(inp.awayXI, inp.awayRoles);
+  if (inp.userSide !== "away") state.away.oi = aiOppInstructions(inp.homeXI, inp.homeRoles);
   state.rngState = rng.state;
   // conditions: announce the weather and the referee
   const w = weatherOf(state.cond.weather);
@@ -419,37 +432,6 @@ export function startMatch(inp: MatchInputs): MatchState {
   }
   return state;
 }
-
-/** Random-walk a pass chain through the side's shape; optionally ending at a chosen slot. */
-const buildChain = (
-  side: MatchSideState,
-  atk: Proto[],
-  rng: Rng,
-  endSlot?: number
-): number[] => {
-  if (!atk.length) return [];
-  const y = (slot: number) => clamp(side.coords[slot]?.[1] ?? 50, 0, 100);
-  const cur0 = pickWeighted(
-    rng,
-    atk,
-    (x) => Math.pow(y(x.slot) / 100, 2.2) * (x.p.pos === "GK" ? 0.35 : 1) + 0.12
-  ).slot;
-  const chain = [cur0];
-  let cur = cur0;
-  const passes = randInt(rng, T.chainPasses[0], T.chainPasses[1]);
-  for (let k = 0; k < passes - 1; k++) {
-    const opts = atk.filter((x) => x.slot !== cur && x.slot !== endSlot);
-    if (!opts.length) break;
-    const next = pickWeighted(rng, opts, (x) => {
-      const prog = y(cur) - y(x.slot); // positive = forward
-      return Math.max(0.12, 1 + clamp(prog, -15, 30) * 0.07) * (x.p.pos === "GK" ? 0.15 : 1);
-    });
-    chain.push(next.slot);
-    cur = next.slot;
-  }
-  if (endSlot !== undefined && chain[chain.length - 1] !== endSlot) chain.push(endSlot);
-  return chain;
-};
 
 const pickFromBench = (
   side: MatchSideState,
@@ -480,7 +462,7 @@ const enterSlot = (
   side.subs++;
   s.entryMinute[p.id] = m;
   s.stamina[p.id] = staminaStart(p);
-  s.staminaRate[p.id] = staminaDrainPerMinute(p);
+  s.staminaRate[p.id] = staminaDrainPerMinute(p) * styleOf(side.style).stamina;
   if (!s.played.includes(p.id)) s.played.push(p.id);
   s.pin[p.id] = { s: side === s.home ? 0 : 1, pos: p.pos };
 };
@@ -493,7 +475,114 @@ const leaveSlot = (s: MatchState, side: MatchSideState, slot: number, m: number)
 
 const isHome = (s: MatchState, side: MatchSideState) => side === s.home;
 
+/** The ball changes hands: remember who won it, where, and when (v0.45). */
+const noteTurnover = (
+  s: MatchState,
+  winner: MatchSideState,
+  slot: number | undefined,
+  m: number,
+  atY?: number
+) => {
+  const y =
+    atY !== undefined
+      ? clamp(atY, 0, 100)
+      : typeof slot === "number"
+        ? clamp(winner.coords[slot]?.[1] ?? 50, 0, 100)
+        : 50;
+  s.lastTurnover = { side: isHome(s, winner) ? "home" : "away", y, minute: m };
+};
+
+/**
+ * The ball is with this side, here (its own frame, 0 = own goal): the next
+ * minute's move resumes from it (v0.48). Every ending of a move — a goal kick,
+ * a throw, a save, a turnover — leaves the ball somewhere for the minute after.
+ * `contest` marks a live ball (a carry or a won ball) that the other side can
+ * still win back between minutes; a restart (a keeper's ball, a kick-off) is
+ * theirs until their move gives it away.
+ */
+const giveBall = (s: MatchState, side: MatchSideState, y: number, contest = false) => {
+  s.ballSpot = {
+    side: isHome(s, side) ? "home" : "away",
+    y: clamp(y, 0, 100),
+    ...(contest ? { contest: true } : {})
+  };
+};
+
+/** The first minute after winning the ball high: counter sides smell blood (v0.45). */
+const transitionEdge = (s: MatchState, sideKey: "home" | "away", m: number): number => {
+  const t = s.lastTurnover;
+  if (!t || t.side !== sideKey || m - t.minute > 1) return 1;
+  if (t.y >= 55) return 1; // won deep in their own half: no rush
+  const st = styleOf(sideKey === "home" ? s.home.style : s.away.style);
+  return 1 + 0.12 * st.counterBias;
+};
+
 // --- timeline phases ------------------------------------------------
+
+/** The ball ran out of play: a corner, a goal kick or a throw. */
+const outOfPlay = (
+  s: MatchState,
+  side: MatchSideState,
+  opp: MatchSideState,
+  m: number,
+  rng: Rng,
+  players: Map<string, Player>,
+  opts: { deep: boolean; xOut: number; y: number }
+) => {
+  const oppos = attackersOf(opp, players);
+  if (opts.deep) {
+    // over the goal line: a defender's touch is a corner, the attacker's is a goal kick
+    const deflected = rng() < T.cornerFromOut;
+    const verdict = restartAfterOut(deflected ? "def" : "atk", "goal-line-defending", true);
+    if (verdict.restart === "corner") {
+      resolveCorner(s, side, opp, m, rng, players);
+      return;
+    }
+    const gk = oppos.find((x) => x.p.pos === "GK") ?? oppos[0];
+    s.events.push({
+      minute: m,
+      type: "info",
+      clubId: opp.clubId,
+      playerId: gk?.p.id,
+      text: pick(rng, LAW_TEXT.goalKick)(opp.short)
+    });
+    s.timeline.push({
+      m,
+      h: isHome(s, opp) ? 1 : 0,
+      p: gk ? [gk.slot] : [],
+      o: "out",
+      sp: "goalkick",
+      t: 50
+    });
+    // the keeper restarts from his box (v0.48)
+    giveBall(s, opp, 94);
+    return;
+  }
+  // the touchline: the throw belongs to the other side, taken by one of their own
+  const verdict = restartAfterOut("atk", "touchline", false);
+  const theirs = verdict.to === "def" ? oppos.filter((x) => x.p.pos !== "GK") : [];
+  const taker = theirs.length
+    ? pickWeighted(rng, theirs, (x) => 1 + (x.p.attrs.physical ?? 50) / 100).slot
+    : undefined;
+  if (taker !== undefined) {
+    s.events.push({
+      minute: m,
+      type: "info",
+      clubId: opp.clubId,
+      text: `${opp.short} have the throw.`
+    });
+  }
+  s.timeline.push({
+    m,
+    h: isHome(s, verdict.to === "def" ? opp : side) ? 1 : 0,
+    p: taker !== undefined ? [taker] : [],
+    o: "out",
+    t: opts.xOut,
+    sp: "throw"
+  });
+  // the throw is on the touchline, at the height the ball went out (v0.48)
+  giveBall(s, verdict.to === "def" ? opp : side, 100 - opts.y);
+};
 
 const possessionPhase = (
   s: MatchState,
@@ -505,7 +594,32 @@ const possessionPhase = (
 ) => {
   const atk = proto(side, players);
   if (!atk.length) return;
-  const chain = buildChain(side, atk, rng);
+  // the move is played (v0.46): real targets, real pressure, real failures.
+  // v0.47: the move is also the chance — a completed pass into the shooting
+  // range ends it as a shot, so chance volume emerges from progression
+  // the move resumes where the ball actually is (v0.48): the retention roll
+  // synced the ballSpot to whichever side plays this minute, so the move starts
+  // with the man nearest it — possession has somewhere to resume
+  const bs = s.ballSpot;
+  const mine = isHome(s, side) ? "home" : "away";
+  const fromY = bs && bs.side === mine ? bs.y : undefined;
+  const move = playMove({
+    s,
+    atk: side,
+    def: opp,
+    players,
+    minute: m,
+    shootRange: T.shootRange,
+    fromY
+  });
+  const chain = move.chain;
+  if (move.end === "arrived") {
+    const shooter = atk.find((x) => x.slot === chain[chain.length - 1]);
+    if (shooter) {
+      resolveShot(s, side, opp, m, rng, players, move, shooter);
+      return;
+    }
+  }
 
   // --- the back-pass rule: a deliberate ball back to the keeper (v0.42) ---
   const backTo = backPassTarget(chain, atk);
@@ -519,7 +633,11 @@ const possessionPhase = (
       playerId: keeper?.p.id,
       text: pick(rng, LAW_TEXT.backPass)(keeper?.p.name ?? "the keeper")
     });
-    s.timeline.push({ m, h: isHome(s, side) ? 1 : 0, p: chain, o: "foul" });
+    s.timeline.push({ m, h: isHome(s, side) ? 1 : 0, p: chain, o: "foul", pd: move.pd, pf: move.pf, pc: move.pc });
+    noteTurnover(s, opp, undefined, m);
+    // the indirect free kick is at the spot of the handling — right by the
+    // offender's goal, which is the goal this side attacks (v0.48)
+    giveBall(s, opp, 6);
     s.timeline.push({
       m,
       h: isHome(s, opp) ? 1 : 0,
@@ -531,64 +649,47 @@ const possessionPhase = (
     return;
   }
 
-  if (rng() < 0.2) {
-    const lastSlot = chain[chain.length - 1];
-    const deepInAttack = lastSlot !== undefined && (side.coords[lastSlot]?.[1] ?? 100) < 40;
-    const oppos = attackersOf(opp, players);
-    if (deepInAttack) {
-      // over the goal line: a defender's touch is a corner, the attacker's is a goal kick
-      const deflected = rng() < T.cornerFromOut;
-      const verdict = restartAfterOut(deflected ? "def" : "atk", "goal-line-defending", true);
-      if (verdict.restart === "corner") {
-        resolveCorner(s, side, opp, m, rng, players);
-        return;
-      }
-      const gk = oppos.find((x) => x.p.pos === "GK") ?? oppos[0];
-      s.events.push({
-        minute: m,
-        type: "info",
-        clubId: opp.clubId,
-        playerId: gk?.p.id,
-        text: pick(rng, LAW_TEXT.goalKick)(opp.short)
-      });
-      s.timeline.push({
-        m,
-        h: isHome(s, opp) ? 1 : 0,
-        p: gk ? [gk.slot] : [],
-        o: "out",
-        sp: "goalkick",
-        t: 50
-      });
-      return;
-    }
-    // the touchline: the throw belongs to the other side, taken by one of their own
-    const verdict = restartAfterOut("atk", "touchline", false);
-    const theirs = verdict.to === "def" ? oppos.filter((x) => x.p.pos !== "GK") : [];
-    const taker = theirs.length
-      ? pickWeighted(rng, theirs, (x) => 1 + (x.p.attrs.physical ?? 50) / 100).slot
-      : undefined;
-    const xOut = rng() < 0.5 ? 4 : 96;
-    if (taker !== undefined) {
-      s.events.push({
-        minute: m,
-        type: "info",
-        clubId: opp.clubId,
-        text: `${opp.short} have the throw.`
-      });
-    }
+  // out of passes in a good position: the side keeps it (v0.48) — a patient
+  // build-up camps instead of gifting the clearance, and the next minute's
+  // move resumes from here
+  if (move.end === "held") {
+    giveBall(s, side, move.last[1], true);
     s.timeline.push({
       m,
-      h: isHome(s, verdict.to === "def" ? opp : side) ? 1 : 0,
-      p: taker !== undefined ? [taker] : [],
-      o: "out",
-      t: xOut,
-      sp: "throw"
+      h: isHome(s, side) ? 1 : 0,
+      p: chain,
+      o: "held",
+      pd: move.pd,
+      pf: move.pf,
+      pc: move.pc
     });
     return;
   }
+
+  // the move itself ran out of play — the ball is where it actually went
+  if (move.end === "out") {
+    outOfPlay(s, side, opp, m, rng, players, {
+      deep: move.last[1] < 40,
+      xOut: move.last[0] < 50 ? 4 : 96,
+      y: move.last[1]
+    });
+    return;
+  }
+
+  // the old forced-out roll: some moves just end over the line (corner volume)
+  if (rng() < 0.2) {
+    outOfPlay(s, side, opp, m, rng, players, {
+      deep: move.last[1] < 40,
+      xOut: rng() < 0.5 ? 4 : 96,
+      y: move.last[1]
+    });
+    return;
+  }
+
+  // a turnover: the model names the interceptor; the old pick is the fallback
   const dfn = proto(opp, players);
-  let b: number | undefined;
-  if (dfn.length) {
+  let b = move.interceptor;
+  if (b === undefined && dfn.length) {
     const inter = pickWeighted(
       rng,
       dfn,
@@ -600,44 +701,48 @@ const possessionPhase = (
     );
     b = inter.slot;
   }
-  s.timeline.push({ m, h: isHome(s, side) ? 1 : 0, p: chain, o: "turnover", b });
+  noteTurnover(s, opp, b, m, 100 - move.last[1]);
+  // the interceptor's side has it where the move died (v0.48) — a live ball
+  giveBall(s, opp, 100 - move.last[1], true);
+  s.timeline.push({
+    m,
+    h: isHome(s, side) ? 1 : 0,
+    p: chain,
+    o: "turnover",
+    b,
+    pd: move.pd,
+    pf: move.pf,
+    pc: move.pc,
+    ty: 100 - move.last[1]
+  });
 };
 
-const resolveChance = (
+const resolveShot = (
   s: MatchState,
   atkSide: MatchSideState,
   defSide: MatchSideState,
   m: number,
   rng: Rng,
-  players: Map<string, Player>
+  players: Map<string, Player>,
+  move: MoveResult,
+  shooter: { slot: number; p: Player; role: RoleId }
 ) => {
   const atk = proto(atkSide, players);
   const dfn = proto(defSide, players);
-  const shooters = atk.filter((x) => x.p.pos !== "GK");
-  if (!shooters.length) return;
-  const shooter = pickWeighted(
-    rng,
-    shooters,
-    (x) =>
-      (x.p.pos === "FW" ? 4 : x.p.pos === "MF" ? 2.4 : 0.7) *
-      (0.5 + x.p.attrs.shooting / 100) *
-      ROLE_DEFS[x.role].shot *
-      (hasTrait(x.p, "shoots_on_sight") ? 1.25 : 1) *
-      attEdge(s, x.p) *
-      instrFor(s, x.p, "shot")
-  );
-  const chain = buildChain(atkSide, atk, rng, shooter.slot);
+  const chain = move.chain;
   const gk = dfn.find((x) => x.p.pos === "GK");
+  // the men who can attack a cross
+  const shooters = atk.filter((x) => x.p.pos !== "GK");
 
-  // --- offside, judged from where the players actually are (v0.42) ---
-  const ruling = checkOffside(
-    atkSide,
-    defSide,
-    attackersOf(defSide, players),
-    atk,
-    chain.length > 1 ? chain[chain.length - 2] : undefined,
-    shooter.slot
-  );
+  // --- offside, judged from where the players actually are (v0.46) ---
+  // the line is the second-last defender of the *live* block at the moment the
+  // releasing pass was played, and the receiver/passer are the move's own points
+  const passFrom = move.pts[move.pts.length - 2] ?? move.pts[0] ?? move.last;
+  const passerY = move.pts.length > 1 ? passFrom[1] : undefined;
+  const receiverY = move.pts.length > 1 ? move.last[1] : undefined;
+  const defShape = shapeFor(defSide, { ball: toFrame(passFrom), phase: "defend" });
+  const line = offsideLine(ysInOtherFrame(defShape));
+  const ruling = checkOffside(shooter.p.pos, passerY, receiverY, line);
   if (flagGoesUp(ruling, rng)) {
     s.events.push({
       minute: m,
@@ -646,7 +751,7 @@ const resolveChance = (
       playerId: shooter.p.id,
       text: pick(rng, LAW_TEXT.offsideFlag)(shooter.p.name)
     });
-    s.timeline.push({ m, h: isHome(s, atkSide) ? 1 : 0, p: chain, o: "offside" });
+    s.timeline.push({ m, h: isHome(s, atkSide) ? 1 : 0, p: chain, o: "offside", pd: move.pd, pf: move.pf, pc: move.pc });
     // the defence restarts with the free kick where he strayed
     const setter = attackersOf(defSide, players).find((x) => x.p.pos === "GK");
     s.timeline.push({
@@ -656,6 +761,8 @@ const resolveChance = (
       o: "turnover",
       b: setter?.slot
     });
+    // the free kick is where he strayed, deep in the defending half (v0.48)
+    giveBall(s, defSide, 100 - move.last[1]);
     return;
   }
 
@@ -670,8 +777,11 @@ const resolveChance = (
       playerId: keeper?.p.id,
       text: pick(rng, LAW_TEXT.backPass)(keeper?.p.name ?? "the keeper")
     });
-    s.timeline.push({ m, h: isHome(s, atkSide) ? 1 : 0, p: chain, o: "foul" });
+    s.timeline.push({ m, h: isHome(s, atkSide) ? 1 : 0, p: chain, o: "foul", pd: move.pd, pf: move.pf, pc: move.pc });
     const setter = attackersOf(defSide, players).find((x) => x.p.pos === "GK");
+    noteTurnover(s, defSide, setter?.slot, m);
+    // the indirect free kick is at the offender's goal, which this side attacks
+    giveBall(s, defSide, 6);
     s.timeline.push({ m, h: isHome(s, defSide) ? 1 : 0, p: setter ? [setter.slot] : [], o: "turnover", b: setter?.slot });
     return;
   }
@@ -679,13 +789,18 @@ const resolveChance = (
   // aerial target on the end of it can be, and the tall men get on the end of those.
   const lastPasser = chain.length > 1 ? atk.find((x) => x.slot === chain[chain.length - 2]) : undefined;
   const wide = !!lastPasser && (() => {
-    const x = atkSide.coords[lastPasser.slot]?.[0] ?? 50;
+    const x = move.pts[chain.length - 2]?.[0] ?? atkSide.coords[lastPasser.slot]?.[0] ?? 50;
     return x < 22 || x > 78;
   })();
   const aerialTargets = shooters.filter((x) => aerialOf(x.p) >= 45);
   const crossed = rng() < crossShareFor(wide, aerialTargets.length > 0);
   const headerMan = crossed
-    ? pickWeighted(rng, shooters, (x) => headerWeight(x.p) * ROLE_DEFS[x.role].finish)
+    ? pickWeighted(
+        rng,
+        shooters,
+        // a marked man is harder to find in the box too (v0.47)
+        (x) => headerWeight(x.p) * ROLE_DEFS[x.role].finish * instrFor(s, x.p, "shot")
+      )
     : null;
   const defendHeader = crossed ? bestAerial(dfn.filter((x) => x.p.pos !== "GK").map((x) => x.p)) : undefined;
   const defHeads = dfn.filter((x) => x.p.pos !== "GK").map((x) => x.p);
@@ -698,8 +813,17 @@ const resolveChance = (
   const attemptFinish = headerMan
     ? roleFinish(headerMan.p, headerMan.role) * ROLE_DEFS[headerMan.role].finish * attEdge(s, headerMan.p)
     : finish;
+  // where the shot was taken from (v0.47): distance to goal decides how much of
+  // the chance is real — the penalty spot and the edge of the D are not the
+  // same shot, which is what makes tiki-taka's balls into the box worth more
+  // than a direct side's hopeful ones
+  const sdx = move.last[0] - 50;
+  const sdy = move.last[1];
+  const distGoal = Math.sqrt(sdx * sdx + sdy * sdy);
+  const distF = clamp(1.25 - distGoal / 42, 0.4, 1.15);
   let pGoal =
     T.conversionBase *
+    distF *
     (1 + (attemptFinish - 60) / 120) *
     (1 + (60 - gkSkill) / 160) *
     eff.conversion *
@@ -715,51 +839,34 @@ const resolveChance = (
 
   if (rng() < pGoal) {
     // --- the flag, and the VAR room: was he onside? -------------------------------
-    // the review asks the law: was he actually beyond the line?
-    const review = checkOffside(
-      atkSide,
-      defSide,
-      attackersOf(defSide, players),
-      atk,
-      chain.length > 1 ? chain[chain.length - 2] : undefined,
-      shooter.slot
-    );
+    // the review asks the law the same question, from the same live positions
+    const review = checkOffside(shooter.p.pos, passerY, receiverY, line);
     const trulyOffside = review.offside;
-    const missRate = T.linesmanMiss;
     let disallowed = false;
     if (trulyOffside) {
-      if (rng() >= missRate) {
-        // flagged, as it should be
-        disallowed = true;
-        if (rng() < T.varReview) {
+      // the flag stayed down when the ball was received — a tight one the
+      // assistant missed. The goal stands unless the VAR room catches it (v0.46)
+      if (rng() < T.varReview) {
+        if (rng() < T.varCatch) {
+          disallowed = true;
+          vr = "overturned";
+          s.events.push({
+            minute: m,
+            type: "var",
+            clubId: defSide.clubId,
+            playerId: shooter.p.id,
+            text: pick(rng, VAR_TEXT)("the goal is overturned, offside in the build-up", "VAR review")
+          });
+        } else {
           vr = "stands";
           s.events.push({
             minute: m,
             type: "var",
             clubId: defSide.clubId,
             playerId: shooter.p.id,
-            text: pick(rng, VAR_TEXT)("the decision stands, no goal", "Offside")
-          });
-        } else {
-          s.events.push({
-            minute: m,
-            type: "offside",
-            clubId: atkSide.clubId,
-            playerId: shooter.p.id,
-            text: pick(rng, OFFSIDE_TEXT)(shooter.p.name, "")
+            text: pick(rng, VAR_TEXT)("the decision stands, the goal is given", "VAR review")
           });
         }
-      } else if (rng() < T.varReview * T.varCatch) {
-        // the flag missed it, but the VAR room caught it
-        disallowed = true;
-        vr = "overturned";
-        s.events.push({
-          minute: m,
-          type: "var",
-          clubId: defSide.clubId,
-          playerId: shooter.p.id,
-          text: pick(rng, VAR_TEXT)("the goal is overturned, offside in the build-up", "VAR review")
-        });
       }
     } else if (rng() < T.linesmanWrong) {
       // a wrong flag — the goal comes off, and VAR may put it back
@@ -796,8 +903,11 @@ const resolveChance = (
     }
     if (disallowed) {
       // no goal: the restart is a free kick to the defending side
-      s.timeline.push({ m, h: isHome(s, atkSide) ? 1 : 0, p: chain, o: "offside", r: s.events.length - 1, vr });
+      s.timeline.push({ m, h: isHome(s, atkSide) ? 1 : 0, p: chain, o: "offside", r: s.events.length - 1, vr, pd: move.pd, pf: move.pf, pc: move.pc });
       const setter = proto(defSide, players).find((x) => x.p.pos === "GK") ?? proto(defSide, players)[0];
+      noteTurnover(s, defSide, setter?.slot, m);
+      // the free kick is where the flag went up (v0.48)
+      giveBall(s, defSide, 100 - move.last[1]);
       s.timeline.push({
         m,
         h: isHome(s, defSide) ? 1 : 0,
@@ -921,14 +1031,26 @@ const resolveChance = (
     b,
     r: s.events.length > evBefore ? s.events.length - 1 : undefined,
     xg: Math.round(pGoal * 1000) / 1000,
+    pd: move.pd,
+    pf: move.pf,
+    pc: move.pc,
     ...(out === "goal" && typeof vr !== "undefined" ? { vr } : {})
   });
+
+  // where the ball goes next (v0.48): a goal is a kick-off, a save dies with
+  // the keeper, a block is a defender's ball, a miss is a goal kick — and a
+  // corner plays on into its own resolution
+  if (out === "goal") giveBall(s, defSide, 50);
+  else if (out === "save") giveBall(s, defSide, 95);
+  else if (out === "block") giveBall(s, defSide, 85);
+  else giveBall(s, defSide, 94);
 
   if (corner) {
     resolveCorner(s, atkSide, defSide, m, rng, players);
   } else if (goalKick) {
     const gk2 = dfn.find((x) => x.p.pos === "GK");
     if (gk2) {
+      noteTurnover(s, defSide, gk2.slot, m);
       s.timeline.push({
         m,
         h: isHome(s, defSide) ? 1 : 0,
@@ -1048,6 +1170,8 @@ const resolvePenalty = (
         text: "VAR review: the penalty is overturned — no infringement spotted on the monitor."
       });
       s.timeline.push({ m, h: isHome(s, defSide) ? 1 : 0, p: [], o: "turnover", vr: "overturned" });
+      // the defending side restarts from its own box (v0.48)
+      giveBall(s, defSide, 95);
       return;
     }
     s.events.push({
@@ -1116,6 +1240,9 @@ const resolvePenalty = (
       text: pick(rng, PEN_MISS_TEXT)(taker.p.name, atkSide.short)
     });
   }
+  // the restart (v0.48): a scored penalty is a kick-off, a saved or missed one
+  // is the keeper's ball
+  giveBall(s, defSide, out === "goal" ? 50 : out === "miss" ? 94 : 95);
   s.timeline.push({
     m,
     h: isHome(s, atkSide) ? 1 : 0,
@@ -1264,6 +1391,9 @@ const resolveFreeKick = (
       });
     }
   }
+  // the restart (v0.48): a goal is a kick-off, a save the keeper's, a block a
+  // defender's, a miss a goal kick
+  giveBall(s, defSide, out === "goal" ? 50 : out === "save" ? 95 : out === "block" ? 85 : 94);
   s.timeline.push({
     m,
     h: isHome(s, atkSide) ? 1 : 0,
@@ -1428,6 +1558,9 @@ const resolveCorner = (
     tg: [flagX, 2],
     xg: Math.round(pGoal * 1000) / 1000
   });
+  // the restart (v0.48): a goal is a kick-off; a cleared corner is headed away
+  // to the edge of the box
+  giveBall(s, defSide, out === "goal" ? 50 : 55);
 };
 
 const processInjury = (
@@ -1520,28 +1653,60 @@ const minuteStep = (s: MatchState, m: number, rng: Rng, players: Map<string, Pla
   const aPlayers = ap.map((x) => x.p);
   const aRoles = ap.map((x) => x.role);
   // the away side's instructions press the home attackers (and vice versa)
-  const attH = attackStrength(hPlayers, hRoles, s.home.mentality) * T.homeAdvantage * oiPressure(s.away);
-  const attA = attackStrength(aPlayers, aRoles, s.away.mentality) * oiPressure(s.home);
-  const defH = defenseStrength(hPlayers, hRoles, s.home.mentality);
-  const defA = defenseStrength(aPlayers, aRoles, s.away.mentality);
-  const pH = clamp(T.baseChancePerMinute * 2 * (attH / (attH + defA)), 0.02, 0.45);
-  const pA = clamp(T.baseChancePerMinute * 2 * (attA / (attA + defH)), 0.02, 0.45);
+  const stH = styleOf(s.home.style);
+  const stA = styleOf(s.away.style);
+  const attH =
+    attackStrength(hPlayers, hRoles, s.home.mentality) *
+    T.homeAdvantage *
+    oiPressure(s.away) *
+    stH.att *
+    transitionEdge(s, "home", m);
+  const attA =
+    attackStrength(aPlayers, aRoles, s.away.mentality) *
+    oiPressure(s.home) *
+    stA.att *
+    transitionEdge(s, "away", m);
+  // who keeps the ball: strength, and how much each style wants it (v0.45).
+  // With the chance dice gone (v0.47), possession share *is* the attack volume:
+  // the side that keeps the ball plays more moves, and moves make shots
+  const pPossHome = clamp(
+    0.5 + 0.35 * ((attH - attA) / (attH + attA)) + 0.12 * (stH.retention - stA.retention),
+    0.22,
+    0.78
+  );
 
-  const hChance = rng() < pH;
-  const aChance = rng() < pA;
-  if (hChance) resolveChance(s, s.home, s.away, m, rng, players);
-  if (aChance) resolveChance(s, s.away, s.home, m, rng, players);
-  if (!hChance && !aChance) {
-    const pPossHome = clamp(0.5 + 0.35 * ((attH - attA) / (attH + attA)), 0.25, 0.75);
-    const possHome = rng() < pPossHome;
-    possessionPhase(s, possHome ? s.home : s.away, possHome ? s.away : s.home, m, rng, players);
+  // who plays the minute's move (v0.48): the side with the ball keeps it —
+  // possession is a sequence, not a fresh coin flip. A live ball (a carry, a
+  // won ball) is contested: it stays with the carrier unless the other side
+  // wins it back between minutes, at p_side-bent odds that keep the share
+  // converging to pPossHome. A restart is theirs outright.
+  const bs = s.ballSpot;
+  let possHome: boolean;
+  if (bs && bs.contest) {
+    const pSide = bs.side === "home" ? pPossHome : 1 - pPossHome;
+    const keep = clamp(
+      POSSESSION.keepBase + 2 * (1 - POSSESSION.keepBase) * (pSide - 0.5),
+      POSSESSION.keepMin,
+      POSSESSION.keepMax
+    );
+    const keeps = rng() < keep;
+    possHome = keeps ? bs.side === "home" : bs.side !== "home";
+    // the ball itself did not move: if it changed hands, the same spot reads
+    // in the other frame
+    s.ballSpot = { side: possHome ? "home" : "away", y: clamp(keeps ? bs.y : 100 - bs.y, 0, 100), contest: true };
+  } else if (bs) {
+    possHome = bs.side === "home";
+  } else {
+    // a state from before v0.48 (no ballSpot): fall back to the coin flip
+    possHome = rng() < pPossHome;
   }
+  possessionPhase(s, possHome ? s.home : s.away, possHome ? s.away : s.home, m, rng, players);
 
   const pFoul = (T.foulPerMatch / 90) * conditionEffects(s.cond).fouls;
   if (rng() < pFoul) {
     // instructions change who fouls — but the aggression mostly shows up in the book
-    const fh = 1 + (foulScaleOf(s.home) - 1) * 0.35;
-    const fa = 1 + (foulScaleOf(s.away) - 1) * 0.35;
+    const fh = (1 + (foulScaleOf(s.home) - 1) * 0.35) * stH.fouls;
+    const fa = (1 + (foulScaleOf(s.away) - 1) * 0.35) * stA.fouls;
     const homeCommits = rng() < fh / (fh + fa);
     processFoul(
       s,
@@ -1573,6 +1738,8 @@ const minuteStep = (s: MatchState, m: number, rng: Rng, players: Map<string, Pla
       type: "half",
       text: `Half time: ${s.home.short} ${s.home.goals}–${s.away.goals} ${s.away.short}.`
     });
+    // the away side kicks off the second half (v0.48)
+    s.ballSpot = { side: "away", y: 50 };
   }
 };
 
